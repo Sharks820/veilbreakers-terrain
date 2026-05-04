@@ -20,7 +20,9 @@ All pure-logic -- no Blender required.
 """
 
 import math
+from typing import TypeAlias
 
+import numpy as np
 import pytest
 
 from veilbreakers_terrain.handlers.terrain_materials import (
@@ -30,54 +32,61 @@ from veilbreakers_terrain.handlers.terrain_materials import (
     REQUIRED_PALETTE_KEYS,
     TERRAIN_MATERIALS,
     VALID_LAYER_NAMES,
+    _sample_splatmap_weights_at_vertex,
     auto_assign_terrain_layers,
     compute_biome_transition,
     compute_world_splatmap_weights,
 )
+
+Vertex: TypeAlias = tuple[float, float, float]
+Normal: TypeAlias = tuple[float, float, float]
+Face: TypeAlias = tuple[int, ...]
+Weight4: TypeAlias = tuple[float, float, float, float]
+Hsv: TypeAlias = tuple[float, float, float]
 
 
 # ---------------------------------------------------------------------------
 # Canonical geometry fixtures
 # ---------------------------------------------------------------------------
 
-FLAT_QUAD_VERTS = [
+FLAT_QUAD_VERTS: list[Vertex] = [
     (0.0, 0.0, 5.0), (1.0, 0.0, 5.0), (1.0, 1.0, 5.0), (0.0, 1.0, 5.0),
 ]
-FLAT_QUAD_FACES = [(0, 1, 2, 3)]
-FLAT_QUAD_NORMALS = [(0.0, 0.0, 1.0)]
+FLAT_QUAD_FACES: list[Face] = [(0, 1, 2, 3)]
+FLAT_QUAD_NORMALS: list[Normal] = [(0.0, 0.0, 1.0)]
 
 # All verts at same Z so height gradient does not trigger special channel.
-VERT_WALL_VERTS = [
+VERT_WALL_VERTS: list[Vertex] = [
     (0.0, 0.0, 5.0), (1.0, 0.0, 5.0), (1.0, 1.0, 5.0), (0.0, 1.0, 5.0),
 ]
-VERT_WALL_FACES = [(0, 1, 2, 3)]
-VERT_WALL_NORMALS = [(0.0, 1.0, 0.0)]
+VERT_WALL_FACES: list[Face] = [(0, 1, 2, 3)]
+VERT_WALL_NORMALS: list[Normal] = [(0.0, 1.0, 0.0)]
 
 _N45 = 1.0 / math.sqrt(2.0)
 # All verts at same Z so height gradient does not trigger special channel.
-SLOPE_45_VERTS = [
+SLOPE_45_VERTS: list[Vertex] = [
     (0.0, 0.0, 5.0), (1.0, 0.0, 5.0), (1.0, 1.0, 5.0), (0.0, 1.0, 5.0),
 ]
-SLOPE_45_FACES = [(0, 1, 2, 3)]
-SLOPE_45_NORMALS = [(0.0, _N45, _N45)]
+SLOPE_45_FACES: list[Face] = [(0, 1, 2, 3)]
+SLOPE_45_NORMALS: list[Normal] = [(0.0, _N45, _N45)]
 
-MULTI_ZONE_VERTS = [
+MULTI_ZONE_VERTS: list[Vertex] = [
     (0.0, 0.0, 5.0), (1.0, 0.0, 5.0), (1.0, 1.0, 5.0), (0.0, 1.0, 5.0),
     (2.0, 0.0, 5.0), (3.0, 0.0, 5.0), (3.0, 1.0, 6.0), (2.0, 1.0, 6.0),
     (4.0, 0.0, 5.0), (5.0, 0.0, 5.0), (5.0, 0.0, 6.0), (4.0, 0.0, 6.0),
 ]
-MULTI_ZONE_FACES = [(0, 1, 2, 3), (4, 5, 6, 7), (8, 9, 10, 11)]
-MULTI_ZONE_NORMALS = [(0.0, 0.0, 1.0), (0.0, _N45, _N45), (0.0, 1.0, 0.0)]
+MULTI_ZONE_FACES: list[Face] = [(0, 1, 2, 3), (4, 5, 6, 7), (8, 9, 10, 11)]
+MULTI_ZONE_NORMALS: list[Normal] = [(0.0, 0.0, 1.0), (0.0, _N45, _N45), (0.0, 1.0, 0.0)]
 
-HEIGHT_EXTREME_VERTS = [
+HEIGHT_EXTREME_VERTS: list[Vertex] = [
     (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0),
     (2.0, 0.0, 100.0), (3.0, 0.0, 100.0), (3.0, 1.0, 100.0), (2.0, 1.0, 100.0),
 ]
-HEIGHT_EXTREME_FACES = [(0, 1, 2, 3), (4, 5, 6, 7)]
-HEIGHT_EXTREME_NORMALS = [(0.0, 0.0, 1.0), (0.0, 0.0, 1.0)]
+HEIGHT_EXTREME_FACES: list[Face] = [(0, 1, 2, 3), (4, 5, 6, 7)]
+HEIGHT_EXTREME_NORMALS: list[Normal] = [(0.0, 0.0, 1.0), (0.0, 0.0, 1.0)]
 
 
-def _rgb_to_hsv(r, g, b):
+def _rgb_to_hsv(r: float, g: float, b: float) -> Hsv:
     mx = max(r, g, b)
     mn = min(r, g, b)
     diff = mx - mn
@@ -123,39 +132,39 @@ class TestBiomePaletteStructure:
         assert set(BIOME_PALETTES_V2.keys()) == self.EXPECTED_BIOMES
 
     @pytest.mark.parametrize("biome_name", list(BIOME_PALETTES_V2.keys()))
-    def test_biome_has_4_layers(self, biome_name):
+    def test_biome_has_4_layers(self, biome_name: str):
         palette = BIOME_PALETTES_V2[biome_name]
         assert set(palette.keys()) == VALID_LAYER_NAMES
 
     @pytest.mark.parametrize("biome_name", list(BIOME_PALETTES_V2.keys()))
-    def test_each_layer_has_required_keys(self, biome_name):
+    def test_each_layer_has_required_keys(self, biome_name: str):
         palette = BIOME_PALETTES_V2[biome_name]
         for layer_name, layer_def in palette.items():
             missing = REQUIRED_LAYER_KEYS - set(layer_def.keys())
             assert not missing, f"{biome_name}.{layer_name} missing: {missing}"
 
     @pytest.mark.parametrize("biome_name", list(BIOME_PALETTES_V2.keys()))
-    def test_base_color_is_4_tuple(self, biome_name):
-        for layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
+    def test_base_color_is_4_tuple(self, biome_name: str):
+        for _layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
             bc = layer_def["base_color"]
             assert len(bc) == 4
             for v in bc:
                 assert 0.0 <= v <= 1.0
 
     @pytest.mark.parametrize("biome_name", list(BIOME_PALETTES_V2.keys()))
-    def test_roughness_in_valid_range(self, biome_name):
-        for layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
+    def test_roughness_in_valid_range(self, biome_name: str):
+        for _layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
             assert 0.0 <= layer_def["roughness"] <= 1.0
 
     @pytest.mark.parametrize("biome_name", list(BIOME_PALETTES_V2.keys()))
-    def test_node_recipe_is_valid(self, biome_name):
+    def test_node_recipe_is_valid(self, biome_name: str):
         valid = {"stone", "wood", "metal", "organic", "terrain", "fabric"}
-        for layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
+        for _layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
             assert layer_def["node_recipe"] in valid
 
     @pytest.mark.parametrize("biome_name", list(BIOME_PALETTES_V2.keys()))
-    def test_description_nonempty(self, biome_name):
-        for layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
+    def test_description_nonempty(self, biome_name: str):
+        for _layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
             assert isinstance(layer_def["description"], str)
             assert len(layer_def["description"]) > 0
 
@@ -194,27 +203,27 @@ class TestAutoAssignBasics:
 
 class TestAutoAssignSlope:
     def test_flat_surface_mostly_R(self):
-        for r, g, b, a in auto_assign_terrain_layers(FLAT_QUAD_VERTS, FLAT_QUAD_NORMALS, FLAT_QUAD_FACES):
+        for r, g, b, _a in auto_assign_terrain_layers(FLAT_QUAD_VERTS, FLAT_QUAD_NORMALS, FLAT_QUAD_FACES):
             assert r > 0.5
             assert r > g and r > b
 
     def test_vertical_surface_mostly_B(self):
-        for r, g, b, a in auto_assign_terrain_layers(VERT_WALL_VERTS, VERT_WALL_NORMALS, VERT_WALL_FACES):
+        for r, g, b, _a in auto_assign_terrain_layers(VERT_WALL_VERTS, VERT_WALL_NORMALS, VERT_WALL_FACES):
             assert b > 0.5
             assert b > r and b > g
 
     def test_45_degree_slope_has_G(self):
-        for r, g, b, a in auto_assign_terrain_layers(SLOPE_45_VERTS, SLOPE_45_NORMALS, SLOPE_45_FACES):
+        for _r, g, _b, _a in auto_assign_terrain_layers(SLOPE_45_VERTS, SLOPE_45_NORMALS, SLOPE_45_FACES):
             assert g > 0.3
 
     def test_multi_zone_flat_verts_R_dominant(self):
         result = auto_assign_terrain_layers(MULTI_ZONE_VERTS, MULTI_ZONE_NORMALS, MULTI_ZONE_FACES)
-        for r, g, b, a in result[0:4]:
+        for r, g, b, _a in result[0:4]:
             assert r >= g and r >= b
 
     def test_multi_zone_cliff_verts_B_dominant(self):
         result = auto_assign_terrain_layers(MULTI_ZONE_VERTS, MULTI_ZONE_NORMALS, MULTI_ZONE_FACES)
-        for r, g, b, a in result[8:12]:
+        for r, g, b, _a in result[8:12]:
             assert b >= r and b >= g
 
     def test_R_decreases_with_steeper_slope(self):
@@ -236,16 +245,16 @@ class TestAutoAssignSlope:
 class TestAutoAssignHeight:
     def test_low_height_has_special(self):
         result = auto_assign_terrain_layers(HEIGHT_EXTREME_VERTS, HEIGHT_EXTREME_NORMALS, HEIGHT_EXTREME_FACES)
-        for r, g, b, a in result[0:4]:
+        for _r, _g, _b, a in result[0:4]:
             assert a > 0.0
 
     def test_high_height_has_special(self):
         result = auto_assign_terrain_layers(HEIGHT_EXTREME_VERTS, HEIGHT_EXTREME_NORMALS, HEIGHT_EXTREME_FACES)
-        for r, g, b, a in result[4:8]:
+        for _r, _g, _b, a in result[4:8]:
             assert a > 0.0
 
     def test_mid_height_no_special(self):
-        for r, g, b, a in auto_assign_terrain_layers(FLAT_QUAD_VERTS, FLAT_QUAD_NORMALS, FLAT_QUAD_FACES):
+        for _r, _g, _b, a in auto_assign_terrain_layers(FLAT_QUAD_VERTS, FLAT_QUAD_NORMALS, FLAT_QUAD_FACES):
             assert a == 0.0
 
     def test_special_preserves_sum_1(self):
@@ -282,14 +291,14 @@ class TestAutoAssignHeight:
 
 class TestDarkFantasyCompliance:
     @pytest.mark.parametrize("biome_name", list(BIOME_PALETTES_V2.keys()))
-    def test_saturation_under_50(self, biome_name):
+    def test_saturation_under_50(self, biome_name: str):
         for layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
             bc = layer_def["base_color"]
             _, s, _ = _rgb_to_hsv(bc[0], bc[1], bc[2])
             assert s <= 50.0, f"{biome_name}.{layer_name} sat={s:.1f}%"
 
     @pytest.mark.parametrize("biome_name", list(BIOME_PALETTES_V2.keys()))
-    def test_value_under_55(self, biome_name):
+    def test_value_under_55(self, biome_name: str):
         for layer_name, layer_def in BIOME_PALETTES_V2[biome_name].items():
             bc = layer_def["base_color"]
             _, _, v = _rgb_to_hsv(bc[0], bc[1], bc[2])
@@ -308,7 +317,7 @@ class TestEdgeCases:
 
     def test_same_height_no_special(self):
         verts = [(0.0, 0.0, 3.0), (1.0, 0.0, 3.0), (1.0, 1.0, 3.0), (0.0, 1.0, 3.0)]
-        for r, g, b, a in auto_assign_terrain_layers(verts, [(0.0, 0.0, 1.0)], [(0, 1, 2, 3)]):
+        for _r, _g, _b, a in auto_assign_terrain_layers(verts, [(0.0, 0.0, 1.0)], [(0, 1, 2, 3)]):
             assert a == 0.0
 
     def test_all_biomes_accepted(self):
@@ -319,7 +328,7 @@ class TestEdgeCases:
     def test_downward_normal_is_cliff(self):
         verts = [(0.0, 0.0, 5.0), (1.0, 0.0, 5.0), (1.0, 1.0, 5.0), (0.0, 1.0, 5.0)]
         result = auto_assign_terrain_layers(verts, [(0.0, 0.0, -1.0)], [(0, 1, 2, 3)])
-        for r, g, b, a in result:
+        for r, g, b, _a in result:
             assert b > r and b > g
 
 
@@ -336,22 +345,22 @@ class TestV1PaletteNewBiomes:
         assert len(BIOME_PALETTES) == 16
 
     @pytest.mark.parametrize("biome_name", NEW_BIOMES)
-    def test_new_biome_exists_in_v1(self, biome_name):
+    def test_new_biome_exists_in_v1(self, biome_name: str):
         assert biome_name in BIOME_PALETTES
 
     @pytest.mark.parametrize("biome_name", NEW_BIOMES)
-    def test_new_biome_has_required_zones(self, biome_name):
+    def test_new_biome_has_required_zones(self, biome_name: str):
         palette = BIOME_PALETTES[biome_name]
         assert set(palette.keys()) == REQUIRED_PALETTE_KEYS
 
     @pytest.mark.parametrize("biome_name", NEW_BIOMES)
-    def test_new_biome_zones_are_nonempty(self, biome_name):
+    def test_new_biome_zones_are_nonempty(self, biome_name: str):
         palette = BIOME_PALETTES[biome_name]
         for zone, mats in palette.items():
             assert len(mats) > 0, f"{biome_name}.{zone} is empty"
 
     @pytest.mark.parametrize("biome_name", NEW_BIOMES)
-    def test_new_biome_materials_exist(self, biome_name):
+    def test_new_biome_materials_exist(self, biome_name: str):
         """All material keys referenced by new biomes exist in TERRAIN_MATERIALS."""
         palette = BIOME_PALETTES[biome_name]
         for zone, mat_keys in palette.items():
@@ -384,11 +393,11 @@ class TestNewTerrainMaterialsCompliance:
     ]
 
     @pytest.mark.parametrize("mat_key", NEW_MATERIAL_KEYS)
-    def test_material_exists(self, mat_key):
+    def test_material_exists(self, mat_key: str):
         assert mat_key in TERRAIN_MATERIALS
 
     @pytest.mark.parametrize("mat_key", NEW_MATERIAL_KEYS)
-    def test_material_has_base_color(self, mat_key):
+    def test_material_has_base_color(self, mat_key: str):
         mat = TERRAIN_MATERIALS[mat_key]
         bc = mat["base_color"]
         assert len(bc) == 4
@@ -396,26 +405,26 @@ class TestNewTerrainMaterialsCompliance:
             assert 0.0 <= v <= 1.0
 
     @pytest.mark.parametrize("mat_key", NEW_MATERIAL_KEYS)
-    def test_material_saturation_under_50(self, mat_key):
+    def test_material_saturation_under_50(self, mat_key: str):
         mat = TERRAIN_MATERIALS[mat_key]
         bc = mat["base_color"]
         _, s, _ = _rgb_to_hsv(bc[0], bc[1], bc[2])
         assert s <= 50.0, f"{mat_key} saturation={s:.1f}%"
 
     @pytest.mark.parametrize("mat_key", NEW_MATERIAL_KEYS)
-    def test_material_value_under_55(self, mat_key):
+    def test_material_value_under_55(self, mat_key: str):
         mat = TERRAIN_MATERIALS[mat_key]
         bc = mat["base_color"]
         _, _, v = _rgb_to_hsv(bc[0], bc[1], bc[2])
         assert v <= 55.0, f"{mat_key} value={v:.1f}%"
 
     @pytest.mark.parametrize("mat_key", NEW_MATERIAL_KEYS)
-    def test_material_roughness_valid(self, mat_key):
+    def test_material_roughness_valid(self, mat_key: str):
         mat = TERRAIN_MATERIALS[mat_key]
         assert 0.0 <= mat["roughness"] <= 1.0
 
     @pytest.mark.parametrize("mat_key", NEW_MATERIAL_KEYS)
-    def test_material_node_recipe_valid(self, mat_key):
+    def test_material_node_recipe_valid(self, mat_key: str):
         valid = {"stone", "wood", "metal", "organic", "terrain", "fabric"}
         mat = TERRAIN_MATERIALS[mat_key]
         assert mat["node_recipe"] in valid
@@ -571,7 +580,7 @@ class TestBiomeTransition:
         extremes). This makes the transition blend visible.
         """
         # Grid with height variation so biome weights differ per vertex
-        verts = []
+        verts: list[Vertex] = []
         for y_i in range(5):
             y_val = float(y_i) * 20.0
             for x_i in range(-2, 3):
@@ -580,8 +589,8 @@ class TestBiomeTransition:
                 verts.append((float(x_i), y_val, z))
         cols = 5
         rows = 5
-        normals = []
-        faces = []
+        normals: list[Normal] = []
+        faces: list[Face] = []
         for r in range(rows - 1):
             for c in range(cols - 1):
                 idx = r * cols + c
@@ -610,10 +619,10 @@ class TestBiomeTransition:
         # We verify this structurally: noise output varies with position.
         from veilbreakers_terrain.handlers.terrain_materials import _simple_noise_2d
 
-        noise_values = set()
+        noise_values: set[float] = set()
         for y_i in range(5):
             y_val = float(y_i) * 20.0
-            nval = _simple_noise_2d(y_val * 0.05, 50.0 * 0.05, seed=42)
+            nval = float(_simple_noise_2d(y_val * 0.05, 50.0 * 0.05, seed=42))
             noise_values.add(round(nval, 4))
         # Noise should produce at least 3 distinct values across 5 samples
         assert len(noise_values) >= 3, (
@@ -794,12 +803,12 @@ class TestTerrainMaterialDedup:
 
         call_count = [0]
 
-        def mock_materials_get(name):
+        def mock_materials_get(name: str) -> object | None:
             if call_count[0] == 0:
                 return None  # First call: not found
             return mock_mat  # Second call: found
 
-        def mock_materials_new(name):
+        def mock_materials_new(name: str) -> object:
             call_count[0] += 1
             return mock_mat
 
@@ -841,3 +850,107 @@ class TestTerrainMaterialDedup:
 
             with pytest.raises(ValueError, match="Unknown biome"):
                 create_biome_terrain_material("not_a_real_biome")
+
+
+# ===========================================================================
+# B14-11: _sample_splatmap_weights_at_vertex — Blender preview splatmap fix
+# ===========================================================================
+
+
+class _MockStack:
+    """Minimal stack stub for _sample_splatmap_weights_at_vertex tests."""
+
+    def __init__(self, weights, world_origin_x=0.0, world_origin_y=0.0, cell_size=1.0):
+        self.splatmap_weights_layer = weights
+        self.world_origin_x = world_origin_x
+        self.world_origin_y = world_origin_y
+        self.cell_size = cell_size
+
+
+class TestSampleSplatmapWeightsAtVertex:
+    """FIX-B14-11: Blender preview must sample authoritative splatmap_weights_layer."""
+
+    def test_returns_correct_weights_at_origin_cell(self):
+        """Vertex at world origin maps to cell (0, 0); weights must match."""
+        weights = np.zeros((4, 4, 4), dtype=np.float32)
+        weights[0, 0, :] = [0.5, 0.3, 0.2, 0.0]
+        stack = _MockStack(weights)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is not None
+        assert abs(result[0] - 0.5) < 1e-6
+        assert abs(result[1] - 0.3) < 1e-6
+        assert abs(result[2] - 0.2) < 1e-6
+        assert abs(result[3] - 0.0) < 1e-6
+
+    def test_returns_4_tuple(self):
+        """Return value is always a 4-tuple regardless of layer count."""
+        weights = np.ones((2, 2, 4), dtype=np.float32)
+        stack = _MockStack(weights)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is not None
+        assert len(result) == 4
+
+    def test_fewer_than_4_layers_pads_with_zeros(self):
+        """When splatmap has fewer than 4 layers, missing ones are padded with 0.0."""
+        weights = np.ones((2, 2, 2), dtype=np.float32) * 0.5
+        stack = _MockStack(weights)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is not None
+        assert abs(result[0] - 0.5) < 1e-6
+        assert abs(result[1] - 0.5) < 1e-6
+        assert abs(result[2] - 0.0) < 1e-6
+        assert abs(result[3] - 0.0) < 1e-6
+
+    def test_returns_none_when_stack_is_none(self):
+        result = _sample_splatmap_weights_at_vertex(None, 0.0, 0.0, 0.0)
+        assert result is None
+
+    def test_returns_none_when_splatmap_weights_layer_is_none(self):
+        stack = _MockStack(None)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is None
+
+    def test_world_position_maps_to_correct_cell(self):
+        """A vertex at (2.0, 3.0) with cell_size=1 maps to col=2, row=3."""
+        weights = np.zeros((8, 8, 4), dtype=np.float32)
+        weights[3, 2, :] = [0.1, 0.2, 0.3, 0.4]
+        stack = _MockStack(weights, world_origin_x=0.0, world_origin_y=0.0, cell_size=1.0)
+        result = _sample_splatmap_weights_at_vertex(stack, 2.0, 3.0, 99.0)
+        assert result is not None
+        assert abs(result[0] - 0.1) < 1e-6
+        assert abs(result[1] - 0.2) < 1e-6
+        assert abs(result[2] - 0.3) < 1e-6
+        assert abs(result[3] - 0.4) < 1e-6
+
+    def test_out_of_bounds_vertex_is_clamped(self):
+        """Vertices outside the grid are clamped to the nearest valid cell."""
+        weights = np.zeros((4, 4, 4), dtype=np.float32)
+        weights[3, 3, :] = [0.9, 0.0, 0.0, 0.1]
+        stack = _MockStack(weights)
+        # Vertex far outside the 4×4 grid
+        result = _sample_splatmap_weights_at_vertex(stack, 999.0, 999.0, 0.0)
+        assert result is not None
+        assert abs(result[0] - 0.9) < 1e-6
+
+    def test_non_zero_world_origin(self):
+        """world_origin offsets the grid lookup correctly."""
+        weights = np.zeros((4, 4, 4), dtype=np.float32)
+        weights[0, 0, :] = [0.7, 0.1, 0.1, 0.1]
+        stack = _MockStack(weights, world_origin_x=10.0, world_origin_y=20.0, cell_size=1.0)
+        # vx=10.5, vy=20.5 → col=0, row=0
+        result = _sample_splatmap_weights_at_vertex(stack, 10.5, 20.5, 0.0)
+        assert result is not None
+        assert abs(result[0] - 0.7) < 1e-6
+
+    def test_blender_preview_reads_splatmap_weights_when_populated(self):
+        """Integration: helper returns stack value at cell (0,0) for vertex at origin."""
+        weights = np.zeros((4, 4, 4), dtype=np.float32)
+        weights[0, 0, :] = [0.6, 0.2, 0.1, 0.1]
+        stack = _MockStack(weights)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is not None, "Expected weights from splatmap_weights_layer"
+        expected = list(weights[0, 0, :])
+        assert abs(result[0] - expected[0]) < 1e-6
+        assert abs(result[1] - expected[1]) < 1e-6
+        assert abs(result[2] - expected[2]) < 1e-6
+        assert abs(result[3] - expected[3]) < 1e-6

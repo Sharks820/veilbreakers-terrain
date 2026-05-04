@@ -147,11 +147,14 @@ def test_wiring_bundle_a_default_pipeline_runs(monkeypatch):
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     TerrainPassController.clear_registry()
 
+    # pool_deepening_delta was removed from _DELTA_CHANNELS (it was already baked
+    # into erosion.height — double-applying it corrupted riverbeds). erosion no
+    # longer produces any pending delta channels, so integrate_deltas is not
+    # auto-injected into this sequence.
     assert [r.pass_name for r in results] == [
         "macro_world",
         "structural_masks",
         "erosion",
-        "integrate_deltas",
         "validation_minimal",
     ]
     for r in results:

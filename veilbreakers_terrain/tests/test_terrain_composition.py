@@ -6,18 +6,38 @@ feature hierarchy/budget, rhythm analysis, and negative-space enforcement.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from importlib import import_module
+from typing import TypedDict, cast
+
 import numpy as np
 import pytest
 
 from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
     HeroFeatureSpec,
+    PassResult,
     TerrainIntentState,
     TerrainMaskStack,
     TerrainPipelineState,
     TerrainSceneRead,
+    ValidationIssue,
 )
 from veilbreakers_terrain.handlers import terrain_masks
+
+
+Vantage = tuple[float, float, float]
+
+
+class MeshSpecFixture(TypedDict):
+    vertices: list[tuple[int, int, int]]
+    faces: list[object]
+    metadata: dict[str, object]
+
+
+class NaturalArchSpecFixture(TypedDict):
+    mesh_spec: MeshSpecFixture
+    world_pos: tuple[float, float, float]
 
 
 # ---------------------------------------------------------------------------
@@ -51,16 +71,25 @@ def _make_stack(tile: int = 32) -> TerrainMaskStack:
     return stack
 
 
-def _set_channel(stack: TerrainMaskStack, channel: str, value):
+def _set_channel(stack: TerrainMaskStack, channel: str, value: np.ndarray) -> np.ndarray:
     stack.set(channel, value, "test_fixture")
     return value
 
 
+def _require_channel(value: np.ndarray | None) -> np.ndarray:
+    assert value is not None
+    return value
+
+
+def _pass_result(pass_name: str = "test") -> PassResult:
+    return PassResult(pass_name=pass_name, status="ok", duration_seconds=0.0)
+
+
 def _make_intent(
     *,
-    vantages=(),
-    hero_features=(),
-    framing_clearance=3.0,
+    vantages: Sequence[Vantage] = (),
+    hero_features: Sequence[HeroFeatureSpec] = (),
+    framing_clearance: float = 3.0,
 ) -> TerrainIntentState:
     return TerrainIntentState(
         seed=1234,
@@ -181,10 +210,10 @@ class TestSaliency:
 
         height = np.array([[0.0, 10.0], [20.0, 30.0]], dtype=np.float64)
 
-        assert _sample_height_bilinear(height, 0.5, 0.5) == pytest.approx(15.0)
-        assert _sample_height_bilinear(height, -10.0, -10.0) == pytest.approx(0.0)
-        assert _sample_height_bilinear(height, 99.0, 99.0) == pytest.approx(30.0)
-        assert _sample_height_bilinear(np.array([[7.0]], dtype=np.float64), 0.5, 0.5) == pytest.approx(7.0)
+        assert np.isclose(_sample_height_bilinear(height, 0.5, 0.5), 15.0)
+        assert np.isclose(_sample_height_bilinear(height, -10.0, -10.0), 0.0)
+        assert np.isclose(_sample_height_bilinear(height, 99.0, 99.0), 30.0)
+        assert np.isclose(_sample_height_bilinear(np.array([[7.0]], dtype=np.float64), 0.5, 0.5), 7.0)
 
     def test_compute_vantage_silhouettes_shape(self):
         from veilbreakers_terrain.handlers.terrain_saliency import compute_vantage_silhouettes
@@ -220,7 +249,7 @@ class TestSaliency:
         assert empty.shape == stack.height.shape
         assert np.count_nonzero(empty) == 0
         assert raster.shape == stack.height.shape
-        assert raster.max() == pytest.approx(1.0)
+        assert np.isclose(raster.max(), 1.0)
         assert raster.min() >= 0.0
 
     def test_compute_8factor_saliency_uses_vantage_mask_and_clamps(self):
@@ -260,14 +289,16 @@ class TestSaliency:
         stack = _make_stack()
         intent = _make_intent(vantages=())
         state = _make_state(stack, intent)
-        before = stack.saliency_macro.copy()
+        saliency = _require_channel(stack.saliency_macro)
+        before = saliency.copy()
         result = pass_saliency_refine(state, None)
         assert result.status == "ok"
         assert result.metrics["vantage_count"] == 0
         assert result.metrics["scoring_factors"] == 8
-        assert not np.allclose(stack.saliency_macro, before)
-        assert stack.saliency_macro.max() <= 1.0
-        assert stack.saliency_macro.min() >= 0.0
+        saliency_after = _require_channel(stack.saliency_macro)
+        assert not np.allclose(saliency_after, before)
+        assert saliency_after.max() <= 1.0
+        assert saliency_after.min() >= 0.0
 
     def test_pass_saliency_refine_changes_with_vantages(self):
         from veilbreakers_terrain.handlers.terrain_saliency import pass_saliency_refine
@@ -275,14 +306,16 @@ class TestSaliency:
         stack = _make_stack()
         intent = _make_intent(vantages=[(0.0, 0.0, 70.0), (32.0, 32.0, 70.0)])
         state = _make_state(stack, intent)
-        before = stack.saliency_macro.copy()
+        saliency = _require_channel(stack.saliency_macro)
+        before = saliency.copy()
         result = pass_saliency_refine(state, None)
         assert result.status == "ok"
         assert result.metrics["vantage_count"] == 2
         # Should modify saliency meaningfully
-        assert not np.allclose(stack.saliency_macro, before)
-        assert stack.saliency_macro.max() <= 1.0
-        assert stack.saliency_macro.min() >= 0.0
+        saliency_after = _require_channel(stack.saliency_macro)
+        assert not np.allclose(saliency_after, before)
+        assert saliency_after.max() <= 1.0
+        assert saliency_after.min() >= 0.0
 
     def test_register_saliency_pass(self):
         from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
@@ -294,19 +327,26 @@ class TestSaliency:
         TerrainPassController.clear_registry()
 
     def test_saliency_quality_gate_flags_missing_flat_and_clipped_maps(self):
-        from veilbreakers_terrain.handlers.terrain_saliency import _saliency_quality_gate
+        saliency_quality_gate = cast(
+            Callable[[PassResult, TerrainMaskStack], list[ValidationIssue]],
+            getattr(
+                import_module("veilbreakers_terrain.handlers.terrain_saliency"),
+                "_saliency_quality_gate",
+            ),
+        )
+        result = _pass_result("saliency_refine")
 
         missing = _make_stack(tile=8)
         object.__setattr__(missing, "saliency_macro", None)
-        missing_issues = _saliency_quality_gate(None, missing)
+        missing_issues = saliency_quality_gate(result, missing)
 
         flat = _make_stack(tile=8)
         flat.set("saliency_macro", np.full_like(flat.height, 0.5, dtype=np.float64), "fixture")
-        flat_issues = _saliency_quality_gate(None, flat)
+        flat_issues = saliency_quality_gate(result, flat)
 
         clipped = _make_stack(tile=8)
         clipped.set("saliency_macro", np.full_like(clipped.height, 0.99, dtype=np.float64), "fixture")
-        clipped_issues = _saliency_quality_gate(None, clipped)
+        clipped_issues = saliency_quality_gate(result, clipped)
 
         varied = _make_stack(tile=8)
         varied.set(
@@ -314,7 +354,7 @@ class TestSaliency:
             np.linspace(0.1, 0.9, varied.height.size, dtype=np.float64).reshape(varied.height.shape),
             "fixture",
         )
-        varied_issues = _saliency_quality_gate(None, varied)
+        varied_issues = saliency_quality_gate(result, varied)
 
         assert {issue.code for issue in missing_issues} == {"SALIENCY_MACRO_MISSING"}
         assert "SALIENCY_FLAT" in {issue.code for issue in flat_issues}
@@ -357,9 +397,11 @@ class TestMorphology:
         rng_b = _rng_from_seed(123)
 
         np.testing.assert_array_equal(rng_a.integers(0, 100, size=5), rng_b.integers(0, 100, size=5))
-        assert _template_by_id("ridge_low_rolling").template_id == "ridge_low_rolling"
+        ridge_template = _template_by_id("ridge_low_rolling")
+        assert ridge_template is not None
+        assert ridge_template.template_id == "ridge_low_rolling"
         assert _template_by_id("missing") is None
-        assert _default_world_pos(stack) == pytest.approx((4.5, 4.5, float(stack.height.mean())))
+        np.testing.assert_allclose(_default_world_pos(stack), (4.5, 4.5, float(stack.height.mean())))
 
     def test_default_templates_count(self):
         from veilbreakers_terrain.handlers.terrain_morphology import DEFAULT_TEMPLATES
@@ -484,14 +526,24 @@ class TestMorphology:
         assert pass_def.produces_channels == ("morphology_delta",)
         TerrainPassController.clear_registry()
 
-    def test_get_natural_arch_specs_places_mesh_specs(self, monkeypatch):
+    def test_get_natural_arch_specs_places_mesh_specs(self, monkeypatch: pytest.MonkeyPatch):
         import veilbreakers_terrain.handlers.terrain_features as terrain_features
-        from veilbreakers_terrain.handlers.terrain_morphology import get_natural_arch_specs
+
+        get_natural_arch_specs = cast(
+            Callable[..., list[NaturalArchSpecFixture]],
+            getattr(
+                import_module("veilbreakers_terrain.handlers.terrain_morphology"),
+                "get_natural_arch_specs",
+            ),
+        )
+
+        def fake_generate_natural_arch(**kwargs: object) -> MeshSpecFixture:
+            return {"vertices": [(0, 0, 0)], "faces": [], "metadata": kwargs}
 
         monkeypatch.setattr(
             terrain_features,
             "generate_natural_arch",
-            lambda **kwargs: {"vertices": [(0, 0, 0)], "faces": [], "metadata": kwargs},
+            fake_generate_natural_arch,
         )
         stack = _make_stack(tile=12)
 
@@ -600,7 +652,8 @@ class TestHierarchy:
 
         stack = _make_stack()
         # Force saliency high at a known position
-        stack.saliency_macro[16, 16] = 0.95
+        saliency = _require_channel(stack.saliency_macro)
+        saliency[16, 16] = 0.95
         f = HeroFeatureSpec(
             feature_id="s",
             feature_kind="spire",
@@ -613,7 +666,7 @@ class TestHierarchy:
 
     def test_enforce_feature_budget_prunes(self):
         from veilbreakers_terrain.handlers.terrain_hierarchy import (
-            DEFAULT_BUDGETS,
+            FeatureBudget,
             FeatureTier,
             enforce_feature_budget,
         )
@@ -621,13 +674,17 @@ class TestHierarchy:
         features = [
             {"feature_id": f"f{i}", "footprint_m": 50.0} for i in range(50)
         ]
-        pruned = enforce_feature_budget(features, DEFAULT_BUDGETS[FeatureTier.PRIMARY])
+        budgets = cast(
+            dict[FeatureTier, FeatureBudget],
+            getattr(import_module("veilbreakers_terrain.handlers.terrain_hierarchy"), "DEFAULT_BUDGETS"),
+        )
+        pruned = enforce_feature_budget(features, budgets[FeatureTier.PRIMARY])
         # Primary tier max is 0.5 per km² -> rounds to 1
         assert len(pruned) <= 1
 
     def test_enforce_feature_budget_drops_oversized(self):
         from veilbreakers_terrain.handlers.terrain_hierarchy import (
-            DEFAULT_BUDGETS,
+            FeatureBudget,
             FeatureTier,
             enforce_feature_budget,
         )
@@ -636,7 +693,11 @@ class TestHierarchy:
             {"feature_id": "small", "footprint_m": 20.0},
             {"feature_id": "giant", "footprint_m": 9999.0},
         ]
-        pruned = enforce_feature_budget(features, DEFAULT_BUDGETS[FeatureTier.AMBIENT])
+        budgets = cast(
+            dict[FeatureTier, FeatureBudget],
+            getattr(import_module("veilbreakers_terrain.handlers.terrain_hierarchy"), "DEFAULT_BUDGETS"),
+        )
+        pruned = enforce_feature_budget(features, budgets[FeatureTier.AMBIENT])
         ids = {f["feature_id"] for f in pruned}
         assert "giant" not in ids
         assert "small" in ids
@@ -728,19 +789,21 @@ class TestNegativeSpace:
         from veilbreakers_terrain.handlers.terrain_negative_space import compute_quiet_zone_ratio
 
         stack = _make_stack()
-        _set_channel(stack, "saliency_macro", np.zeros_like(stack.saliency_macro))
-        stack.saliency_macro[:16, :] = 0.9  # half busy
+        saliency = _require_channel(stack.saliency_macro)
+        _set_channel(stack, "saliency_macro", np.zeros_like(saliency))
+        saliency = _require_channel(stack.saliency_macro)
+        saliency[:16, :] = 0.9  # half busy
         ratio = compute_quiet_zone_ratio(stack)
-        assert ratio == pytest.approx(
-            (stack.saliency_macro < 0.3).sum() / stack.saliency_macro.size
-        )
+        expected_ratio = float((saliency < 0.3).sum() / saliency.size)
+        assert np.isclose(ratio, expected_ratio)
 
     def test_enforce_quiet_zone_meets_min_ratio(self):
         from veilbreakers_terrain.handlers.terrain_negative_space import enforce_quiet_zone
 
         stack = _make_stack()
         # Force everything busy
-        _set_channel(stack, "saliency_macro", np.ones_like(stack.saliency_macro) * 0.9)
+        saliency = _require_channel(stack.saliency_macro)
+        _set_channel(stack, "saliency_macro", np.ones_like(saliency) * 0.9)
         mask = enforce_quiet_zone(stack, min_ratio=0.5)
         assert mask.dtype == bool
         assert mask.sum() / mask.size >= 0.5
@@ -749,7 +812,8 @@ class TestNegativeSpace:
         from veilbreakers_terrain.handlers.terrain_negative_space import validate_negative_space
 
         stack = _make_stack()
-        _set_channel(stack, "saliency_macro", np.zeros_like(stack.saliency_macro))
+        saliency = _require_channel(stack.saliency_macro)
+        _set_channel(stack, "saliency_macro", np.zeros_like(saliency))
         issues = validate_negative_space(stack, min_ratio=0.4)
         # A fully quiet saliency map must not trip any validator:
         # no insufficient quiet zone, no density budget overflow, no
@@ -760,7 +824,8 @@ class TestNegativeSpace:
         from veilbreakers_terrain.handlers.terrain_negative_space import validate_negative_space
 
         stack = _make_stack()
-        _set_channel(stack, "saliency_macro", np.ones_like(stack.saliency_macro) * 0.9)
+        saliency = _require_channel(stack.saliency_macro)
+        _set_channel(stack, "saliency_macro", np.ones_like(saliency) * 0.9)
         issues = validate_negative_space(stack, min_ratio=0.4)
         # A fully busy map trips quiet-zone, feature-density, AND
         # peak-spacing validators — all three signals are legitimate

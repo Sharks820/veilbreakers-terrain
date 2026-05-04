@@ -15,11 +15,24 @@ mask stack. Golden snapshot library seed must produce >= 20 snapshots.
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
+from collections.abc import Generator, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_budget_enforcer import TerrainBudget
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+        ValidationIssue,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +41,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _register_passes():
+def register_passes() -> Generator[None, None, None]:
     from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
@@ -40,7 +53,12 @@ def _register_passes():
     TerrainPassController.clear_registry()
 
 
-def _build_stack(tile_size: int = 16, seed: int = 1234, *, extras: bool = True):
+def _build_stack(
+    tile_size: int = 16,
+    seed: int = 1234,
+    *,
+    extras: bool = True,
+) -> "TerrainMaskStack":
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
@@ -62,7 +80,7 @@ def _build_stack(tile_size: int = 16, seed: int = 1234, *, extras: bool = True):
     return stack
 
 
-def _build_state(tile_size: int = 16, seed: int = 1234):
+def _build_state(tile_size: int = 16, seed: int = 1234) -> "TerrainPipelineState":
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
@@ -142,12 +160,20 @@ def test_bundle_n_registrar_is_callable():
     assert "run_determinism_check" in contract["opt_in_post_pipeline"]
 
 
-def test_bundle_n_pipeline_hooks_attach_budget_issues_and_readability(monkeypatch):
+def test_bundle_n_pipeline_hooks_attach_budget_issues_and_readability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import veilbreakers_terrain.handlers.terrain_bundle_n as bundle_n
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import ValidationIssue
 
-    def _fake_enforce_budget(stack, intent, budget):
+    def _fake_enforce_budget(
+        stack: "TerrainMaskStack",
+        intent: "TerrainIntentState",
+        budget: "TerrainBudget",
+    ) -> list["ValidationIssue"]:
+        assert stack.tile_size == intent.tile_size
+        assert budget.max_tri_lod0 > 0
         return [
             ValidationIssue(
                 code="BUNDLE_N_SOFT",
@@ -258,21 +284,19 @@ def test_bundle_n_pipeline_opt_in_records_telemetry_and_golden():
 
 
 def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import veilbreakers_terrain.handlers.terrain_bundle_n as bundle_n
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
-    captured = {}
+    captured: dict[str, object] = {}
 
-    def _fake_run_determinism_check(controller, seed, runs=3, *, pass_sequence=None):
+    def _fake_run_determinism_check_subprocess(
+        seed: int,
+        runs: int = 3,
+    ) -> dict[str, object]:
         captured["seed"] = seed
         captured["runs"] = runs
-        captured["pass_sequence"] = tuple(pass_sequence or ())
-        captured["baseline_hash"] = controller.state.mask_stack.compute_hash()
-        captured["skip_post_pipeline_hooks"] = controller.state.intent.composition_hints[
-            "bundle_n_runtime"
-        ]["skip_post_pipeline_hooks"]
         return {
             "deterministic": True,
             "run_count": runs,
@@ -281,12 +305,11 @@ def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
 
     monkeypatch.setattr(
         bundle_n.terrain_determinism_ci,
-        "run_determinism_check",
-        _fake_run_determinism_check,
+        "run_determinism_check_subprocess",
+        _fake_run_determinism_check_subprocess,
     )
 
     state = _build_state(tile_size=8, seed=4141)
-    baseline_hash = state.mask_stack.compute_hash()
     state.intent.composition_hints["bundle_n_runtime"] = {"determinism_runs": 2}
 
     controller = TerrainPassController(state)
@@ -295,9 +318,6 @@ def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
     bundle_n_metrics = results[-1].metrics["bundle_n"]
     assert captured["seed"] == 4141
     assert captured["runs"] == 2
-    assert captured["pass_sequence"] == ("macro_world",)
-    assert captured["baseline_hash"] == baseline_hash
-    assert captured["skip_post_pipeline_hooks"] is True
     assert bundle_n_metrics["deterministic"] is True
     assert bundle_n_metrics["determinism_run_count"] == 2
 
@@ -340,7 +360,7 @@ def test_determinism_check_no_regression_on_equal_hashes():
     assert detect_determinism_regressions("abc123", "abc123") == []
 
 
-def test_hash_tile_output_hashes_nested_relative_paths(tmp_path):
+def test_hash_tile_output_hashes_nested_relative_paths(tmp_path: Path) -> None:
     from veilbreakers_terrain.handlers.terrain_determinism_ci import _hash_tile_output
 
     (tmp_path / "a").mkdir()
@@ -354,17 +374,26 @@ def test_hash_tile_output_hashes_nested_relative_paths(tmp_path):
     assert first != second
 
 
-def test_run_determinism_check_subprocess_uses_temp_dirs(monkeypatch):
-    import subprocess
-
+def test_run_determinism_check_subprocess_uses_temp_dirs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from veilbreakers_terrain.handlers import terrain_determinism_ci as det
 
     seen_dirs: list[str] = []
 
-    def _fake_run(cmd, capture_output, text, check):
+    def _fake_run(
+        cmd: list[str],
+        capture_output: bool,
+        text: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        assert capture_output is True
+        assert text is True
+        assert check is True
         out_dir = cmd[cmd.index("--output-dir") + 1]
         seen_dirs.append(out_dir)
         Path(out_dir, "tile.json").write_text('{"ok":true}', encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
@@ -529,7 +558,7 @@ def test_budget_report_as_dict_serializes_nested_budget_fields():
 
     assert payload["tile_km2"] == 0.25
     assert payload["lod0_tris"]["current"] == 100
-    assert payload["lod0_tris"]["utilization"] == pytest.approx(100 / 250_000)
+    assert abs(payload["lod0_tris"]["utilization"] - (100 / 250_000)) < 1e-12
     assert payload["unique_materials"]["current"] == 3
     assert payload["scatter_instances"]["current"] == 50
     assert payload["npz_mb"]["current"] == 12.5
@@ -684,7 +713,7 @@ def test_golden_library_seeds_at_least_20_snapshots():
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
-        def build(seed: int, tile_x: int, tile_y: int):
+        def build(seed: int, tile_x: int, tile_y: int) -> "TerrainPipelineState":
             state = _build_state(tile_size=8, seed=seed)
             # Override tile coords in the fresh stack
             state.mask_stack.tile_x = tile_x

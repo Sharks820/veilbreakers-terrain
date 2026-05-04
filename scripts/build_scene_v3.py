@@ -29,21 +29,27 @@ import random
 import sys
 import traceback
 from pathlib import Path
+from typing import Any, TypeAlias
 
 import bpy
 import bmesh
 import numpy as np
-from mathutils import Vector, Matrix
+from mathutils import Vector
+
+Heightmap: TypeAlias = Any
+MeshSpec: TypeAlias = dict[str, Any]
+AssetTemplate: TypeAlias = dict[str, Any]
+ScatterCounts: TypeAlias = dict[str, int]
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-_SCRIPT_PATH = Path(__file__).resolve()
-if _SCRIPT_PATH.name != "build_scene_v3.py" or not (_SCRIPT_PATH.parent.parent / "scripts" / "build_scene_v3.py").exists():
+_script_path = Path(__file__).resolve()
+if _script_path.name != "build_scene_v3.py" or not (_script_path.parent.parent / "scripts" / "build_scene_v3.py").exists():
     # Blender Text.as_module() can report __file__ under the Blender install
     # directory. Keep active-session execution anchored to this repository.
-    _SCRIPT_PATH = Path(r"C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_scene_v3.py")
-REPO_ROOT = _SCRIPT_PATH.parents[1]
+    _script_path = Path(r"C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_scene_v3.py")
+REPO_ROOT = _script_path.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -81,9 +87,9 @@ OFF_NODE_WATER_BODY_TYPE = "off_node_large_water_body"
 
 AZIMUTH_RAD = 2.356  # 135 degrees
 
-FAILURES: list[dict] = []
+FAILURES: list[dict[str, str]] = []
 
-def lake_shore_radius(angle):
+def lake_shore_radius(angle: Any) -> Any:
     return LAKE_RADIUS * (
         0.88
         + 0.050 * np.sin(angle * 3.0 + 0.35)
@@ -232,16 +238,24 @@ def log_fail(stage: str, exc: BaseException) -> None:
 # ---------------------------------------------------------------------------
 # Heightmap — numpy, deterministic, 320m peak
 # ---------------------------------------------------------------------------
-def compose_heightmap():
+def compose_heightmap() -> Heightmap:
     xs = np.linspace(X_MIN, X_MAX, HM_RES)
     ys = np.linspace(Y_MIN, Y_MAX, HM_RES)
     X, Y = np.meshgrid(xs, ys, indexing="xy")
 
-    def smoothstep01(v):
+    def smoothstep01(v: Any) -> Any:
         v = np.clip(v, 0.0, 1.0)
         return v * v * (3.0 - 2.0 * v)
 
-    def fbm(x, y, octaves=6, base_freq=0.008, persistence=0.55, lacunarity=2.1, seed_val=0):
+    def fbm(
+        x: Any,
+        y: Any,
+        octaves: int = 6,
+        base_freq: float = 0.008,
+        persistence: float = 0.55,
+        lacunarity: float = 2.1,
+        seed_val: int = 0,
+    ) -> Any:
         rn = np.random.default_rng(seed_val)
         total = np.zeros_like(x, dtype=np.float64)
         amp, freq, amp_sum = 1.0, base_freq, 0.0
@@ -278,7 +292,7 @@ def compose_heightmap():
     elev_norm = np.clip(heightmap / 280.0, 0.0, 1.0)
     heightmap = heightmap + noise_lo * (3.0 + 12.0 * elev_norm) + noise_hi * (1.4 + 5.0 * elev_norm)
 
-    def segment_distance(pts):
+    def segment_distance(pts: list[tuple[float, float]]) -> Any:
         best = np.full_like(heightmap, 1e9)
         for i in range(len(pts) - 1):
             x0, y0 = pts[i]
@@ -297,8 +311,6 @@ def compose_heightmap():
     lower_xy = river_xy[5:]
     upper_d = segment_distance(upper_xy)
     lower_d = segment_distance(lower_xy)
-    river_d = np.minimum(upper_d, lower_d)
-
     # A broad natural ravine funnels the spring and waterfall. It is a shallow
     # valley with shoulders, not a vertical wall.
     ravine_axis = segment_distance([(-314.0, 282.0), (-238.0, 174.0), (-198.0, 112.0), (-118.0, 28.0)])
@@ -403,8 +415,7 @@ def compose_heightmap():
     return heightmap
 
 
-def sample_h(hm, x: float, y: float) -> float:
-    import numpy as np
+def sample_h(hm: Heightmap, x: float, y: float) -> float:
     u = (x - X_MIN) / (X_MAX - X_MIN) * (HM_RES - 1)
     v = (y - Y_MIN) / (Y_MAX - Y_MIN) * (HM_RES - 1)
     u = max(0.0, min(float(HM_RES - 1.001), u))
@@ -425,11 +436,20 @@ def _world_to_grid(x: float, y: float) -> tuple[int, int]:
     return max(0, min(HM_RES - 1, row)), max(0, min(HM_RES - 1, col))
 
 
-def _path_points_with_height(hm, points: list[tuple[float, float]], lift: float = 0.10) -> tuple[tuple[float, float, float], ...]:
+def _path_points_with_height(
+    hm: Heightmap,
+    points: list[tuple[float, float]],
+    lift: float = 0.10,
+) -> tuple[tuple[float, float, float], ...]:
     return tuple((float(x), float(y), sample_h(hm, x, y) + lift) for x, y in points)
 
 
-def _materialize_mesh_spec(name: str, spec: dict, material: bpy.types.Material, parent=None) -> bpy.types.Object:
+def _materialize_mesh_spec(
+    name: str,
+    spec: MeshSpec,
+    material: bpy.types.Material,
+    parent: bpy.types.Object | None = None,
+) -> bpy.types.Object:
     mesh = bpy.data.meshes.new(f"{name}_Mesh")
     mesh.from_pydata(spec.get("vertices", []), [], spec.get("faces", []))
     mesh.update()
@@ -443,7 +463,7 @@ def _materialize_mesh_spec(name: str, spec: dict, material: bpy.types.Material, 
     return obj
 
 
-def build_bridge_and_approach_paths(terrain_obj: bpy.types.Object, hm) -> dict:
+def build_bridge_and_approach_paths(terrain_obj: bpy.types.Object, hm: Heightmap) -> dict[str, Any]:
     """Build the requested river bridge and approach paths via canonical callables."""
     from veilbreakers_terrain.handlers import COMMAND_HANDLERS
     from veilbreakers_terrain.handlers._bridge_mesh import generate_terrain_bridge_mesh
@@ -464,7 +484,7 @@ def build_bridge_and_approach_paths(terrain_obj: bpy.types.Object, hm) -> dict:
         (60.0, -180.0),
         (120.0, -220.0),
     ]
-    road_results: list[dict] = []
+    road_results: list[dict[str, Any]] = []
     route_grade_degrees = {
         "route_in": 13.0,
         "route_out": 18.5,
@@ -503,7 +523,10 @@ def build_bridge_and_approach_paths(terrain_obj: bpy.types.Object, hm) -> dict:
 
     route_in_points = _path_points_with_height(hm, route_in_xy, lift=0.18)
     route_out_points = _path_points_with_height(hm, route_out_xy, lift=0.18)
-    bridge_points = tuple(tuple(float(v) for v in p) for p in bridge_profile["centerline_points"])
+    bridge_points: tuple[tuple[float, float, float], ...] = tuple(
+        (float(p[0]), float(p[1]), float(p[2]))
+        for p in bridge_profile["centerline_points"]
+    )
     path_contract = PathNetworkContract(
         node_id=NODE_ID,
         continuation_edges=("north", "south", "east", "west"),
@@ -562,7 +585,12 @@ def build_bridge_and_approach_paths(terrain_obj: bpy.types.Object, hm) -> dict:
     }
 
 
-def validate_node_generation_contracts(hm, bridge_path_result: dict, *, scatter_counts: dict) -> dict:
+def validate_node_generation_contracts(
+    hm: Heightmap,
+    bridge_path_result: dict[str, Any],
+    *,
+    scatter_counts: ScatterCounts,
+) -> dict[str, Any]:
     from veilbreakers_terrain.handlers.terrain_scatter_points import (
         ScatterPoint,
         ScatterPointTable,
@@ -624,7 +652,7 @@ def validate_node_generation_contracts(hm, bridge_path_result: dict, *, scatter_
 # ---------------------------------------------------------------------------
 # Terrain mesh
 # ---------------------------------------------------------------------------
-def build_terrain_mesh(hm):
+def build_terrain_mesh(hm: Heightmap) -> bpy.types.Object:
     import numpy as np
     idx = np.linspace(0, HM_RES - 1, MESH_RES).astype(int)
     hm_down = hm[np.ix_(idx, idx)]
@@ -772,7 +800,7 @@ def make_terrain_material() -> bpy.types.Material:
 # ---------------------------------------------------------------------------
 # Water material (shared factory)
 # ---------------------------------------------------------------------------
-def make_water_material(name: str, tint=(0.04, 0.10, 0.18, 1),
+def make_water_material(name: str, tint: tuple[float, float, float, float] = (0.04, 0.10, 0.18, 1),
                         emission: float = 0.0,
                         roughness: float = 0.10,
                         transparency: float = 0.0) -> bpy.types.Material:
@@ -984,7 +1012,7 @@ def _build_foam_ring(name: str, radius_inner: float, radius_outer: float,
     return obj
 
 
-def _build_river_edge_foam(material: bpy.types.Material, hm) -> None:
+def _build_river_edge_foam(material: bpy.types.Material, hm: Heightmap) -> None:
     for side_name, side_sign in (("L", 1.0), ("R", -1.0)):
         pts = []
         widths = []
@@ -1008,7 +1036,7 @@ def _build_river_edge_foam(material: bpy.types.Material, hm) -> None:
         obj.visible_shadow = False
 
 
-def _sample_river_path(hm, src: list[tuple[float, float, float]], *,
+def _sample_river_path(hm: Heightmap, src: list[tuple[float, float, float]], *,
                        water_lift: float, width_scale: float,
                        width_offset: int = 0,
                        steps_per_segment: int = 9,
@@ -1039,7 +1067,7 @@ def _sample_river_path(hm, src: list[tuple[float, float, float]], *,
     return pts, widths
 
 
-def _build_water_depth_disk(hm, water_mats: list[bpy.types.Material],
+def _build_water_depth_disk(hm: Heightmap, water_mats: list[bpy.types.Material],
                             bed_mat: bpy.types.Material) -> bpy.types.Object:
     ring_n = 144
     bm = bmesh.new()
@@ -1096,7 +1124,7 @@ def _build_water_depth_disk(hm, water_mats: list[bpy.types.Material],
 
     bed_bm = bmesh.new()
     bed_fracs = [0.10, 0.36, 0.62, 0.84, 1.02]
-    bed_rings: list[list] = []
+    bed_rings: list[list[bmesh.types.BMVert]] = []
     for ri, frac in enumerate(bed_fracs):
         row = []
         for k in range(ring_n):
@@ -1128,7 +1156,7 @@ def _build_water_depth_disk(hm, water_mats: list[bpy.types.Material],
     return lake_obj
 
 
-def _build_waterfall_volume(hm, material: bpy.types.Material,
+def _build_waterfall_volume(hm: Heightmap, material: bpy.types.Material,
                             foam_mat: bpy.types.Material) -> None:
     """Layered falling water volume, replacing the former terrain-hugging strip."""
     top = RIVER_POINTS[4]
@@ -1205,7 +1233,7 @@ def _build_waterfall_volume(hm, material: bpy.types.Material,
                      center_xy=(bot[0], bot[1]))
 
 
-def _build_bank_ribbon(name: str, hm, src: list[tuple[float, float, float]], *,
+def _build_bank_ribbon(name: str, hm: Heightmap, src: list[tuple[float, float, float]], *,
                        water_lift: float, width_scale: float, width_offset: int,
                        material: bpy.types.Material) -> bpy.types.Object:
     pts, widths = _sample_river_path(hm, src, water_lift=water_lift,
@@ -1220,7 +1248,7 @@ def _build_bank_ribbon(name: str, hm, src: list[tuple[float, float, float]], *,
     return obj
 
 
-def _build_plunge_pool(hm, water_mat: bpy.types.Material,
+def _build_plunge_pool(hm: Heightmap, water_mat: bpy.types.Material,
                        foam_mat: bpy.types.Material,
                        bed_mat: bpy.types.Material) -> None:
     cx, cy = RIVER_POINTS[6][0], RIVER_POINTS[6][1]
@@ -1299,7 +1327,7 @@ def _make_grass_clump_mesh(name: str, blade_count: int, height: float,
     return mesh
 
 
-def _surface_slope(hm, x: float, y: float, step: float = 3.0) -> float:
+def _surface_slope(hm: Heightmap, x: float, y: float, step: float = 3.0) -> float:
     dx = sample_h(hm, min(X_MAX, x + step), y) - sample_h(hm, max(X_MIN, x - step), y)
     dy = sample_h(hm, x, min(Y_MAX, y + step)) - sample_h(hm, x, max(Y_MIN, y - step))
     return math.hypot(dx, dy) / (step * 2.0)
@@ -1445,7 +1473,7 @@ def _retint_model_asset_mesh_to_biome(mesh: bpy.types.Mesh, label: str) -> None:
 
 
 def _import_model_asset_template(label: str, path: Path, target_faces: int,
-                           target_height: float) -> dict | None:
+                           target_height: float) -> AssetTemplate | None:
     if not path.exists():
         return None
     before = set(bpy.data.objects)
@@ -1494,8 +1522,8 @@ def _import_model_asset_template(label: str, path: Path, target_faces: int,
     return {"label": label, "mesh": obj.data, "height": height, "radius": radius}
 
 
-def _load_model_asset_templates(asset_specs: list[tuple[str, Path, int, float]]) -> list[dict]:
-    templates = []
+def _load_model_asset_templates(asset_specs: list[tuple[str, Path, int, float]]) -> list[AssetTemplate]:
+    templates: list[AssetTemplate] = []
     for label, path, target_faces, target_height in asset_specs:
         tpl = _import_model_asset_template(label.replace(".glb", ""), path, target_faces, target_height)
         if tpl is not None:
@@ -1503,7 +1531,7 @@ def _load_model_asset_templates(asset_specs: list[tuple[str, Path, int, float]])
     return templates
 
 
-def build_water_surfaces(hm):
+def build_water_surfaces(hm: Heightmap) -> None:
     lake_bed_mat = _simple_principled_material("VB_LakeBedWetSilt", (0.045, 0.070, 0.055, 1),
                                                roughness=0.94)
     stream_bed_mat = _simple_principled_material("VB_StreamBedPebbleSilt", (0.085, 0.105, 0.080, 1),
@@ -1583,12 +1611,12 @@ def build_water_surfaces(hm):
 # ---------------------------------------------------------------------------
 # Beach ring — sandy shore for player water entry/exit
 # ---------------------------------------------------------------------------
-def build_beach_ring(hm):
+def build_beach_ring(hm: Heightmap) -> bpy.types.Object:
     """Sandy/gravel beach ring around lake. Gradual wading shelf — 20-50m wide."""
     bm = bmesh.new()
     segs = 80
-    inner_verts: list = []
-    outer_verts: list = []
+    inner_verts: list[bmesh.types.BMVert] = []
+    outer_verts: list[bmesh.types.BMVert] = []
     for k in range(segs):
         ang = 2 * math.pi * k / segs
         c, s = math.cos(ang), math.sin(ang)
@@ -1644,7 +1672,7 @@ def build_beach_ring(hm):
 # ---------------------------------------------------------------------------
 # Cave boolean carve
 # ---------------------------------------------------------------------------
-def carve_cave(terrain_obj):
+def carve_cave(terrain_obj: bpy.types.Object) -> None:
     cps = [
         (CAVE_ENTRY[0], CAVE_ENTRY[1] - 8.0, CAVE_ENTRY[2]),
         (CAVE_ENTRY[0], CAVE_ENTRY[1] + 20.0, CAVE_ENTRY[2] - 5.0),
@@ -1659,12 +1687,16 @@ def carve_cave(terrain_obj):
     for i in range(len(cps) - 1):
         for step in range(segs_per_leg):
             t = step / segs_per_leg
-            dense.append(tuple(cps[i][k] * (1 - t) + cps[i + 1][k] * t for k in range(3)))  # type: ignore[misc]
+            dense.append((
+                cps[i][0] * (1 - t) + cps[i + 1][0] * t,
+                cps[i][1] * (1 - t) + cps[i + 1][1] * t,
+                cps[i][2] * (1 - t) + cps[i + 1][2] * t,
+            ))
     dense.append(cps[-1])
 
     bm = bmesh.new()
-    first_ring: list | None = None
-    prev_ring: list | None = None
+    first_ring: list[bmesh.types.BMVert] | None = None
+    prev_ring: list[bmesh.types.BMVert] | None = None
     for idx, p in enumerate(dense):
         if idx < len(dense) - 1:
             tv = tuple(dense[idx + 1][k] - p[k] for k in range(3))
@@ -1679,7 +1711,7 @@ def carve_cave(terrain_obj):
         rl = math.sqrt(sum(x * x for x in r)) or 1.0
         r = tuple(x / rl for x in r)
         u2 = (r[1] * tv[2] - r[2] * tv[1], r[2] * tv[0] - r[0] * tv[2], r[0] * tv[1] - r[1] * tv[0])
-        ring: list = []
+        ring: list[bmesh.types.BMVert] = []
         for k in range(ring_n):
             ang = 2 * math.pi * k / ring_n
             off = (
@@ -1840,11 +1872,16 @@ def make_broad_tree_mesh() -> bpy.types.Mesh:
     return mesh
 
 
-def scatter_trees(terrain_obj, hm, pine_mesh, broad_mesh, count: int = 120) -> int:
+def scatter_trees(
+    terrain_obj: bpy.types.Object,
+    hm: Heightmap,
+    pine_mesh: bpy.types.Mesh,
+    broad_mesh: bpy.types.Mesh,
+    count: int = 120,
+) -> int:
     """Scatter linked tree instances on terrain. Pines on slopes/altitude, broad-leaf on flatland."""
     trees_col = bpy.data.collections.new("VB_Trees")
     bpy.context.scene.collection.children.link(trees_col)
-    mat_world = terrain_obj.matrix_world
     placed = 0
     attempts = 0
     placed_xys: list[tuple[float, float]] = []
@@ -1905,7 +1942,7 @@ def scatter_trees(terrain_obj, hm, pine_mesh, broad_mesh, count: int = 120) -> i
     return placed
 
 
-def scatter_model_asset_trees(terrain_obj, hm, count: int = 170) -> int:
+def scatter_model_asset_trees(terrain_obj: bpy.types.Object, hm: Heightmap, count: int = 170) -> int:
     templates = _load_model_asset_templates(_model_tree_asset_specs() or MODEL_TREE_ASSETS)
     if not templates:
         log("model_asset trees: no usable GLB templates found")
@@ -1984,7 +2021,7 @@ def scatter_model_asset_trees(terrain_obj, hm, count: int = 170) -> int:
 # ---------------------------------------------------------------------------
 # Rocks — deformed icospheres, 4 template meshes, linked instances
 # ---------------------------------------------------------------------------
-def scatter_rocks(terrain_obj, hm, count: int = 80) -> int:
+def scatter_rocks(terrain_obj: bpy.types.Object, hm: Heightmap, count: int = 80) -> int:
     rocks_col = bpy.data.collections.new("VB_Rocks")
     bpy.context.scene.collection.children.link(rocks_col)
     rock_mat = bpy.data.materials.new("VB_RockMat")
@@ -2035,7 +2072,11 @@ def scatter_rocks(terrain_obj, hm, count: int = 80) -> int:
     return placed
 
 
-def scatter_model_asset_detail_assets(hm, foliage_count: int = 850, rock_count: int = 130) -> dict:
+def scatter_model_asset_detail_assets(
+    hm: Heightmap,
+    foliage_count: int = 850,
+    rock_count: int = 130,
+) -> ScatterCounts:
     foliage_templates = _load_model_asset_templates(_model_foliage_asset_specs() or MODEL_FOLIAGE_ASSETS)
     rock_templates = _load_model_asset_templates(_model_rock_asset_specs() or MODEL_ROCK_ASSETS)
     col = bpy.data.collections.new("VB_ModelAssetGroundDetail")
@@ -2044,7 +2085,7 @@ def scatter_model_asset_detail_assets(hm, foliage_count: int = 850, rock_count: 
     counts = {"foliage": 0, "rocks": 0}
     occupied: list[tuple[float, float, float]] = []
 
-    def place_instance(name_prefix: str, tpl: dict, wx: float, wy: float, wz: float,
+    def place_instance(name_prefix: str, tpl: AssetTemplate, wx: float, wy: float, wz: float,
                        scale: float, radius_mult: float = 1.6) -> bool:
         radius = tpl["radius"] * scale * radius_mult
         if any((px - wx) ** 2 + (py - wy) ** 2 < (radius + pr * 0.45) ** 2 for px, py, pr in occupied[-1400:]):
@@ -2131,7 +2172,7 @@ def scatter_model_asset_detail_assets(hm, foliage_count: int = 850, rock_count: 
     return counts
 
 
-def scatter_water_surface_assets(hm, count: int = 95) -> int:
+def scatter_water_surface_assets(hm: Heightmap, count: int = 95) -> int:
     """Place floating plant assets only on calm lake water, never on banks or river flow."""
     log("water surface foliage: disabled until flat external lily meshes are rebuilt without radial backface artifacts")
     return 0
@@ -2181,7 +2222,7 @@ def scatter_water_surface_assets(hm, count: int = 95) -> int:
     return placed
 
 
-def build_cliff_strata_and_talus(hm, talus_count: int = 165) -> int:
+def build_cliff_strata_and_talus(hm: Heightmap, talus_count: int = 165) -> int:
     """Add readable sediment bands and broken talus to the south cliff face."""
     strata_mat = _simple_principled_material("VB_CliffStrataDark", (0.13, 0.11, 0.09, 1),
                                              roughness=0.96)
@@ -2301,11 +2342,8 @@ def build_cliff_strata_and_talus(hm, talus_count: int = 165) -> int:
 # Falls back silently when catalog.json is absent or all entries missing on
 # disk so the build completes without provider auth.
 # ---------------------------------------------------------------------------
-def scatter_model_asset_catalog(terrain_obj, hm, count: int = 40) -> int:
-    import json
-    from pathlib import Path as _Path
-
-    repo_root = _Path(__file__).resolve().parents[1]
+def scatter_model_asset_catalog(terrain_obj: bpy.types.Object, hm: Heightmap, count: int = 40) -> int:
+    repo_root = Path(__file__).resolve().parents[1]
     cat_path = repo_root / "assets" / "foliage" / "catalog.json"
 
     if not cat_path.exists():
@@ -2323,11 +2361,11 @@ def scatter_model_asset_catalog(terrain_obj, hm, count: int = 40) -> int:
     asset_map = catalog.get("assets", {})
     entries = list(asset_map.values()) if isinstance(asset_map, dict) else asset_map
 
-    def _lod0(entry):
+    def _lod0(entry: dict[str, Any]) -> str:
         lods = entry.get("lods", [])
         return str(lods[0].get("path", "")) if lods else ""
 
-    valid = [e for e in entries if _lod0(e) and _Path(_lod0(e)).exists()]
+    valid = [e for e in entries if _lod0(e) and Path(_lod0(e)).exists()]
 
     if not valid:
         log(f"model_asset_catalog: {len(entries)} catalog entries, 0 GLBs on disk — skipping")
@@ -2395,7 +2433,7 @@ def scatter_model_asset_catalog(terrain_obj, hm, count: int = 40) -> int:
 # ---------------------------------------------------------------------------
 # Grass — hair particle system, vertex-group restricted to gentle flat terrain
 # ---------------------------------------------------------------------------
-def add_grass(terrain_obj, hm):
+def add_grass(terrain_obj: bpy.types.Object, hm: Heightmap) -> None:
     # Grass blade: 3 crossed quads, origin at Z=0 (base), tapered toward tip
     gbm = bmesh.new()
     blade_h = 0.42
@@ -2438,7 +2476,7 @@ def add_grass(terrain_obj, hm):
     log(f"grass vertex group: {len(grass_vi)}/{len(all_vi)} verts weighted")
 
     # Particle system
-    ps_mod = terrain_obj.modifiers.new("GrassPS", type="PARTICLE_SYSTEM")
+    terrain_obj.modifiers.new("GrassPS", type="PARTICLE_SYSTEM")
     psys = terrain_obj.particle_systems[-1]
     settings = psys.settings
     settings.type = "HAIR"
@@ -2472,7 +2510,7 @@ def add_grass(terrain_obj, hm):
     log("grass particle system added")
 
 
-def scatter_grass_clumps(terrain_obj, hm, count: int = 1500) -> int:
+def scatter_grass_clumps(terrain_obj: bpy.types.Object, hm: Heightmap, count: int = 1500) -> int:
     grass_col = bpy.data.collections.new("VB_GrassClumps")
     bpy.context.scene.collection.children.link(grass_col)
 
@@ -2549,7 +2587,7 @@ def scatter_grass_clumps(terrain_obj, hm, count: int = 1500) -> int:
 # ---------------------------------------------------------------------------
 # Lighting, world, compositor
 # ---------------------------------------------------------------------------
-def setup_world():
+def setup_world() -> None:
     world = bpy.context.scene.world
     if world is None:
         world = bpy.data.worlds.new("World")
@@ -2572,7 +2610,7 @@ def setup_world():
     nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
 
 
-def setup_sun():
+def setup_sun() -> bpy.types.Object:
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 100))
     sun = bpy.context.view_layer.objects.active
     sun.name = "VB_Sun"
@@ -2616,7 +2654,7 @@ def setup_sun():
     return sun
 
 
-def setup_compositor():
+def setup_compositor() -> None:
     scn = bpy.context.scene
     scn.use_nodes = True
     nt = scn.node_tree
@@ -2690,7 +2728,7 @@ def setup_cave_pov_camera() -> bpy.types.Object:
 # ---------------------------------------------------------------------------
 # Render
 # ---------------------------------------------------------------------------
-def configure_render(samples: int = 64, res_x: int = 1920, res_y: int = 1080):
+def configure_render(samples: int = 64, res_x: int = 1920, res_y: int = 1080) -> None:
     scn = bpy.context.scene
     scn.render.engine = "CYCLES"
     scn.cycles.samples = samples
@@ -2718,14 +2756,14 @@ def configure_render(samples: int = 64, res_x: int = 1920, res_y: int = 1080):
         pass
 
 
-def render_to(filepath: Path):
+def render_to(filepath: Path) -> None:
     bpy.context.scene.render.filepath = str(filepath)
     bpy.ops.render.render(write_still=True)
     log(f"rendered -> {filepath.name}")
 
 
 def render_orbit(out_dir: Path, frames: int = 8,
-                 radius: float = 480.0, height: float = 420.0):
+                 radius: float = 480.0, height: float = 420.0) -> None:
     orbit_dir = out_dir / "orbit"
     orbit_dir.mkdir(exist_ok=True)
     configure_render(samples=96, res_x=1280, res_y=720)
@@ -2784,7 +2822,7 @@ def main() -> int:
         log_fail("water", exc)
 
     # ---- Bridge + approach paths: canonical callables and contracts ----
-    bridge_path_result: dict = {}
+    bridge_path_result: dict[str, Any] = {}
     log("building bridge crossing and approach paths...")
     try:
         bridge_path_result = build_bridge_and_approach_paths(terrain, hm)
@@ -2880,7 +2918,7 @@ def main() -> int:
         log_fail("grass", exc)
 
     # ---- Node-level guardrail contracts ----
-    node_contracts: dict = {}
+    node_contracts: dict[str, Any] = {}
     log("validating node generation contracts...")
     try:
         node_contracts = validate_node_generation_contracts(
@@ -2920,7 +2958,6 @@ def main() -> int:
     render_orbit(OUT_DIR, frames=8)
 
     # ---- Summary ----
-    import numpy as np
     summary = {
         "tile_m": TILE_M,
         "heightmap_min_m": float(hm.min()),

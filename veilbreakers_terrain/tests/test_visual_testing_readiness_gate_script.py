@@ -16,10 +16,47 @@ import importlib
 import json
 import struct
 import sys
-import types
 import zlib
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypeAlias, TypedDict, cast
+
+import pytest
+
+
+JsonValue: TypeAlias = (
+    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+)
+JsonMap: TypeAlias = dict[str, JsonValue]
+Handler: TypeAlias = Callable[..., JsonMap]
+
+
+class GateModule(Protocol):
+    THUMBNAIL_NAME: str
+    PIXEL_DIFF_CHANNEL_THRESHOLD: float
+
+    def run_gate(
+        self,
+        *,
+        allow_no_blender: bool,
+        screenshot_width: int,
+        screenshot_height: int,
+    ) -> tuple[JsonMap, int]: ...
+
+    def main(self, argv: list[str] | None = None) -> int: ...
+
+    def _compute_perceptual_hash(self, blob: bytes) -> str: ...
+
+
+class StubState(TypedDict):
+    screenshot_payload: JsonMap
+
+
+class RedirectedPaths(TypedDict):
+    output_dir: Path
+    reference_dir: Path
+    thumbnail: Path
+    reference: Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -28,16 +65,16 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 
-def _load_gate_module():
+def _load_gate_module() -> GateModule:
     # Ensure a fresh import so module-level REPO_ROOT / constants reflect test
     # state (they don't rely on tmp_path, but re-importing avoids stale test
     # dispatch stubs bleeding across tests).
     if "visual_testing_readiness_gate" in sys.modules:
         del sys.modules["visual_testing_readiness_gate"]
-    return importlib.import_module("visual_testing_readiness_gate")
+    return cast(GateModule, importlib.import_module("visual_testing_readiness_gate"))
 
 
-def _force_no_blender(monkeypatch) -> None:
+def _force_no_blender(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure the gate observes blender_runtime_detected=False.
 
     We cannot simply remove ``bpy`` from ``sys.modules`` because the gate uses
@@ -51,6 +88,21 @@ def _force_no_blender(monkeypatch) -> None:
 
     _StubBpy.__module__ = "unittest.mock"
     monkeypatch.setitem(sys.modules, "bpy", _StubBpy())
+
+
+def _json_mapping(value: JsonValue) -> Mapping[str, JsonValue]:
+    assert isinstance(value, dict)
+    return value
+
+
+def _json_list(value: JsonValue) -> list[JsonValue]:
+    assert isinstance(value, list)
+    return value
+
+
+def _json_number(value: JsonValue) -> int | float:
+    assert isinstance(value, (int, float))
+    return value
 
 
 def _make_png(width: int, height: int, fill_rgb: tuple[int, int, int]) -> bytes:
@@ -97,31 +149,43 @@ def _make_png(width: int, height: int, fill_rgb: tuple[int, int, int]) -> bytes:
     )
 
 
-def _stub_handlers(monkeypatch) -> dict:
+def _stub_handlers(monkeypatch: pytest.MonkeyPatch) -> StubState:
     """Install a minimally wired COMMAND_HANDLERS + dispatch stack.
 
     Returns the per-test state dict so tests can tweak individual probes.
     """
 
-    state: dict = {"screenshot_payload": {"status": "ok", "result": {}}}
+    state: StubState = {"screenshot_payload": {"status": "ok", "result": {}}}
 
-    handlers = {
-        "terrain_capture_scene_read": lambda **kw: {"status": "ok", "result": {}},
-        "terrain_read_viewport_vantage": lambda **kw: {"status": "ok", "result": {"vantage": {}}},
-        "terrain_assert_vantage_fresh": lambda **kw: {"status": "ok", "result": {}},
-        "terrain_is_in_frustum": lambda **kw: {"status": "ok", "result": {}},
-        "visual_qa_setup_camera": lambda **kw: {"status": "ok", "result": {}},
-        "visual_qa_set_shading": lambda **kw: {"status": "ok", "result": {}},
-        "visual_qa_capture_screenshot": lambda **kw: state["screenshot_payload"],
-        "material_create_procedural": lambda **kw: {
+    def ok_empty(**_kw: object) -> JsonMap:
+        return {"status": "ok", "result": {}}
+
+    def ok_viewport(**_kw: object) -> JsonMap:
+        return {"status": "ok", "result": {"vantage": {}}}
+
+    def ok_screenshot(**_kw: object) -> JsonMap:
+        return state["screenshot_payload"]
+
+    def ok_materials(**_kw: object) -> JsonMap:
+        return {
             "status": "ok",
             "result": {"count": 60, "materials": []},
-        },
-        "terrain_generate_lods": lambda **kw: {"status": "ok", "result": {}},
-        "terrain_validation": lambda **kw: {"status": "ok", "result": {}},
+        }
+
+    handlers: dict[str, Handler] = {
+        "terrain_capture_scene_read": ok_empty,
+        "terrain_read_viewport_vantage": ok_viewport,
+        "terrain_assert_vantage_fresh": ok_empty,
+        "terrain_is_in_frustum": ok_empty,
+        "visual_qa_setup_camera": ok_empty,
+        "visual_qa_set_shading": ok_empty,
+        "visual_qa_capture_screenshot": ok_screenshot,
+        "material_create_procedural": ok_materials,
+        "terrain_generate_lods": ok_empty,
+        "terrain_validation": ok_empty,
     }
 
-    locations = {
+    locations: dict[str, str] = {
         "scene_read": "terrain_capture_scene_read",
         "viewport_read": "terrain_read_viewport_vantage",
         "viewport_fresh": "terrain_assert_vantage_fresh",
@@ -134,14 +198,14 @@ def _stub_handlers(monkeypatch) -> dict:
         "validation": "terrain_validation",
     }
 
-    def fake_dispatch(location, params):
+    def fake_dispatch(location: str, params: Mapping[str, object]) -> JsonMap:
         command = locations.get(location)
         if command is None:
             return {"status": "error", "error": "unknown_location"}
         handler = handlers[command]
         payload = handler(**params)
         # Wrap into the standard dispatch envelope the gate expects.
-        envelope = {
+        envelope: JsonMap = {
             "status": payload.get("status", "ok"),
             "command": command,
             "result": payload.get("result", {}),
@@ -153,20 +217,8 @@ def _stub_handlers(monkeypatch) -> dict:
             }
         return envelope
 
-    def fake_resolve(location):
+    def fake_resolve(location: str) -> str | None:
         return locations.get(location)
-
-    # Build fake modules so the gate's ``from ... import`` calls pick them up.
-    fake_handlers_mod = types.ModuleType(
-        "veilbreakers_terrain.handlers._gate_stub_handlers"
-    )
-    fake_handlers_mod.COMMAND_HANDLERS = handlers
-
-    fake_blender_server = types.ModuleType(
-        "veilbreakers_terrain.src.veilbreakers_mcp._gate_stub_blender_server"
-    )
-    fake_blender_server.dispatch = fake_dispatch
-    fake_blender_server.resolve_command = fake_resolve
 
     import veilbreakers_terrain.handlers as real_handlers
     import veilbreakers_terrain.src.veilbreakers_mcp.blender_server as real_bs
@@ -178,7 +230,9 @@ def _stub_handlers(monkeypatch) -> dict:
     return state
 
 
-def _redirect_outputs(monkeypatch, gate_mod, tmp_path: Path) -> dict:
+def _redirect_outputs(
+    monkeypatch: pytest.MonkeyPatch, gate_mod: GateModule, tmp_path: Path
+) -> RedirectedPaths:
     output_dir = tmp_path / "visual_readiness"
     reference_dir = output_dir / "reference"
     thumbnail = output_dir / gate_mod.THUMBNAIL_NAME
@@ -205,7 +259,7 @@ def _redirect_outputs(monkeypatch, gate_mod, tmp_path: Path) -> dict:
 
 
 def _set_screenshot_result(
-    state: dict,
+    state: StubState,
     thumbnail: Path,
     *,
     width: int,
@@ -232,7 +286,9 @@ def _set_screenshot_result(
 # ---------------------------------------------------------------------------
 
 
-def test_gate_fails_hard_when_blender_runtime_missing(monkeypatch, tmp_path):
+def test_gate_fails_hard_when_blender_runtime_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)
@@ -248,10 +304,12 @@ def test_gate_fails_hard_when_blender_runtime_missing(monkeypatch, tmp_path):
     assert code == 1
     assert payload["ready_for_visual_testing"] is False
     assert payload["blender_runtime_detected"] is False
-    assert "no_blender_runtime" in payload["blockers"]
+    assert "no_blender_runtime" in _json_list(payload["blockers"])
 
 
-def test_gate_allow_no_blender_exits_zero_but_not_ready(monkeypatch, tmp_path):
+def test_gate_allow_no_blender_exits_zero_but_not_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)
@@ -266,11 +324,13 @@ def test_gate_allow_no_blender_exits_zero_but_not_ready(monkeypatch, tmp_path):
     assert code == 0
     assert payload["ready_for_visual_testing"] is False
     assert payload["allow_no_blender"] is True
-    assert "no_blender_runtime" in payload["blockers"]
+    assert "no_blender_runtime" in _json_list(payload["blockers"])
     assert payload["placeholder_png"] is False
 
 
-def test_gate_rejects_placeholder_png_even_with_allow_flag(monkeypatch, tmp_path):
+def test_gate_rejects_placeholder_png_even_with_allow_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)
@@ -285,11 +345,13 @@ def test_gate_rejects_placeholder_png_even_with_allow_flag(monkeypatch, tmp_path
     payload, code = gate.run_gate(allow_no_blender=True, screenshot_width=320, screenshot_height=180)
     assert code == 1  # placeholder trumps --allow-no-blender
     assert payload["placeholder_png"] is True
-    assert "placeholder_png" in payload["blockers"]
-    assert payload["captured_byte_length"] < 500
+    assert "placeholder_png" in _json_list(payload["blockers"])
+    assert _json_number(payload["captured_byte_length"]) < 500
 
 
-def test_gate_rejects_corrupt_nonplaceholder_png(monkeypatch: Any, tmp_path: Path):
+def test_gate_rejects_corrupt_nonplaceholder_png(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)
@@ -308,11 +370,13 @@ def test_gate_rejects_corrupt_nonplaceholder_png(monkeypatch: Any, tmp_path: Pat
     assert code == 1
     assert payload["placeholder_png"] is False
     assert payload["thumbnail_decode_failed"] is True
-    assert "thumbnail_decode_failed" in payload["blockers"]
-    assert payload["pixel_diff"]["compared"] is False
+    assert "thumbnail_decode_failed" in _json_list(payload["blockers"])
+    assert _json_mapping(payload["pixel_diff"])["compared"] is False
 
 
-def test_gate_detects_pixel_diff_exceedance(monkeypatch, tmp_path):
+def test_gate_detects_pixel_diff_exceedance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)
@@ -332,12 +396,16 @@ def test_gate_detects_pixel_diff_exceedance(monkeypatch, tmp_path):
     payload, code = gate.run_gate(allow_no_blender=True, screenshot_width=320, screenshot_height=180)
     assert code == 1
     assert payload["pixel_diff_exceeded"] is True
-    assert "pixel_diff_exceeded" in payload["blockers"]
-    assert payload["pixel_diff"]["compared"] is True
-    assert payload["pixel_diff"].get("mean_abs_diff", 0.0) > gate.PIXEL_DIFF_CHANNEL_THRESHOLD
+    assert "pixel_diff_exceeded" in _json_list(payload["blockers"])
+    pixel_diff = _json_mapping(payload["pixel_diff"])
+    assert pixel_diff["compared"] is True
+    mean_abs_diff = pixel_diff.get("mean_abs_diff", 0.0)
+    assert _json_number(mean_abs_diff) > gate.PIXEL_DIFF_CHANNEL_THRESHOLD
 
 
-def test_gate_honours_requested_screenshot_shape(monkeypatch, tmp_path):
+def test_gate_honours_requested_screenshot_shape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)
@@ -360,11 +428,13 @@ def test_gate_honours_requested_screenshot_shape(monkeypatch, tmp_path):
 
     payload, _ = gate.run_gate(allow_no_blender=True, screenshot_width=320, screenshot_height=180)
     assert payload["screenshot_contract_ok"] is False
-    assert "screenshot_contract" in payload["blockers"]
+    assert "screenshot_contract" in _json_list(payload["blockers"])
     assert payload["requested_screenshot_shape"] == [320, 180]
 
 
-def test_gate_rejects_failed_capture_even_with_stale_png(monkeypatch, tmp_path):
+def test_gate_rejects_failed_capture_even_with_stale_png(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)
@@ -382,10 +452,12 @@ def test_gate_rejects_failed_capture_even_with_stale_png(monkeypatch, tmp_path):
 
     payload, _ = gate.run_gate(allow_no_blender=True, screenshot_width=320, screenshot_height=180)
     assert payload["screenshot_contract_ok"] is False
-    assert "screenshot_contract" in payload["blockers"]
+    assert "screenshot_contract" in _json_list(payload["blockers"])
 
 
-def test_gate_rejects_blender_runtime_without_reference(monkeypatch, tmp_path):
+def test_gate_rejects_blender_runtime_without_reference(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)
@@ -405,10 +477,10 @@ def test_gate_rejects_blender_runtime_without_reference(monkeypatch, tmp_path):
     payload, code = gate.run_gate(allow_no_blender=False, screenshot_width=320, screenshot_height=180)
     assert code == 1
     assert payload["reference_present"] is False
-    assert "missing_visual_reference" in payload["blockers"]
+    assert "missing_visual_reference" in _json_list(payload["blockers"])
 
 
-def test_perceptual_hash_is_stable_and_decodable():
+def test_perceptual_hash_is_stable_and_decodable() -> None:
     gate = _load_gate_module()
     png_a = _make_png(8, 8, (50, 50, 50))
     png_b = _make_png(8, 8, (50, 50, 50))
@@ -424,13 +496,15 @@ def test_perceptual_hash_is_stable_and_decodable():
     assert isinstance(h_c, str)
 
 
-def test_perceptual_hash_handles_garbage_bytes_gracefully():
+def test_perceptual_hash_handles_garbage_bytes_gracefully() -> None:
     gate = _load_gate_module()
     h = gate._compute_perceptual_hash(b"not a png at all")
     assert h.startswith("raw:")
 
 
-def test_main_writes_json_artifact(monkeypatch, tmp_path):
+def test_main_writes_json_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     gate = _load_gate_module()
     state = _stub_handlers(monkeypatch)
     paths = _redirect_outputs(monkeypatch, gate, tmp_path)

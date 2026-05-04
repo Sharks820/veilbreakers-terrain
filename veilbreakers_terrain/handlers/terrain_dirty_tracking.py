@@ -465,30 +465,92 @@ def attach_dirty_tracker(state: TerrainPipelineState) -> DirtyTracker:
 
     import types as _types
 
+    import numpy as _np
+
     def _hooked_set(
         self_stack: object,
         channel: str,
         value: object,
         pass_name: str,
     ) -> None:
+        # --- Capture before-state BEFORE the set ----------------------------
+        ms = state.mask_stack
+        old_arr = getattr(ms, channel, None)
+        # Only capture a before-array for ndarray channels; opaque/dict
+        # channels always get a full-tile mark (first-write semantics).
+        if old_arr is not None and isinstance(old_arr, _np.ndarray):
+            old_arr_snapshot = old_arr.copy()
+        else:
+            old_arr_snapshot = None
+
+        # --- Perform the actual set -----------------------------------------
         _original_set(channel, value, pass_name)
-        # Mark the full tile as dirty for this channel using world bounds.
-        wb = tracker.world_bounds
-        if wb is None:
-            # Fallback: derive from mask stack coordinate contract.
-            ms = state.mask_stack
+
+        # --- Compute world bounds for dirty-region marking ------------------
+        def _get_world_bounds() -> Optional[BBox]:
+            wb = tracker.world_bounds
+            if wb is not None:
+                return wb
             try:
                 tile_world_size = ms.tile_size * ms.cell_size
-                wb = BBox(
+                return BBox(
                     min_x=ms.world_origin_x,
                     min_y=ms.world_origin_y,
                     max_x=ms.world_origin_x + tile_world_size,
                     max_y=ms.world_origin_y + tile_world_size,
                 )
             except AttributeError:
-                # mask_stack does not expose coordinate metadata — skip mark.
-                return
-        tracker.mark_dirty(channel, wb)
+                return None
+
+        wb = _get_world_bounds()
+        if wb is None:
+            return
+
+        # --- Compute actual changed-cell bounding box -----------------------
+        new_arr = getattr(ms, channel, None)
+
+        if old_arr_snapshot is None or not isinstance(new_arr, _np.ndarray):
+            # First write to this channel (or non-ndarray channel): mark full tile.
+            tracker.mark_dirty(channel, wb)
+            return
+
+        if old_arr_snapshot.shape != new_arr.shape:
+            # Shape changed — mark full tile.
+            tracker.mark_dirty(channel, wb)
+            return
+
+        # Both before and after are ndarrays with the same shape: find the
+        # tight bounding box of cells that actually changed.
+        changed_mask = new_arr != old_arr_snapshot
+        changed_indices = _np.argwhere(changed_mask)
+
+        if changed_indices.size == 0:
+            # No cells changed — nothing to mark dirty.
+            return
+
+        # changed_indices is (N, 2) with (row, col) for each changed cell.
+        row_min = int(changed_indices[:, 0].min())
+        row_max = int(changed_indices[:, 0].max())
+        col_min = int(changed_indices[:, 1].min())
+        col_max = int(changed_indices[:, 1].max())
+
+        # Convert cell indices to world-space coordinates.
+        try:
+            cell_size = float(ms.cell_size)
+            ox = float(ms.world_origin_x)
+            oy = float(ms.world_origin_y)
+        except AttributeError:
+            # Cannot resolve coordinate metadata — fall back to full tile.
+            tracker.mark_dirty(channel, wb)
+            return
+
+        dirty_bbox = BBox(
+            min_x=ox + col_min * cell_size,
+            min_y=oy + row_min * cell_size,
+            max_x=ox + (col_max + 1) * cell_size,
+            max_y=oy + (row_max + 1) * cell_size,
+        )
+        tracker.mark_dirty(channel, dirty_bbox)
 
     # Bind as an instance method so `self_stack` receives the mask_stack
     # instance; then install on the instance (shadows the class method).

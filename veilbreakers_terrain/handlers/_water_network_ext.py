@@ -1051,7 +1051,7 @@ def compute_riverbed_caustics(
     stack: "Any",
     *,
     depth_channel: str = "water_depth",
-    water_surface_channel: str = "water_surface",
+    water_surface_channel: str = "water_surface_elevation_m",
     base_caustic_scale: float = 6.0,
     detail_caustic_scale: float = 18.0,
     beer_lambert_k: float = 0.35,

@@ -9,6 +9,8 @@ be restricted in this workspace.
 from __future__ import annotations
 
 import random
+import math
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -21,8 +23,9 @@ def test_import_addon_package_returns_live_terrain_package():
 
     pkg = _import_addon_package()
 
-    assert pkg.__name__ == "veilbreakers_terrain"
-    assert pkg.bl_info["version"] >= (1, 0, 0)
+    assert getattr(pkg, "__name__") == "veilbreakers_terrain"
+    bl_info = cast(dict[str, Any], getattr(pkg, "bl_info"))
+    assert bl_info["version"] >= (1, 0, 0)
 
 
 def test_feature_tier_from_str_normalizes_case_and_defaults_secondary():
@@ -33,12 +36,14 @@ def test_feature_tier_from_str_normalizes_case_and_defaults_secondary():
     assert FeatureTier.from_str("author_typo") == FeatureTier.SECONDARY
 
 
-def test_reload_biome_rules_and_reload_material_rules_report_successes(monkeypatch):
+def test_reload_biome_rules_and_reload_material_rules_report_successes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from veilbreakers_terrain.handlers import terrain_hot_reload as hot_reload
 
     calls: list[str] = []
 
-    def fake_safe_reload(name: str):
+    def fake_safe_reload(name: str) -> tuple[bool, None]:
         calls.append(name)
         return (not name.endswith("terrain_banded"), None)
 
@@ -71,10 +76,10 @@ def test_vertex_paint_dist3d_dist2d_and_falloff_weight_boundaries():
         _falloff_weight,
     )
 
-    assert _dist3d((0, 0, 0), (2, 3, 6)) == pytest.approx(7.0)
-    assert _dist2d((0, 0), (3, 4)) == pytest.approx(5.0)
-    assert _falloff_weight(0.0, 10.0, "LINEAR") == pytest.approx(1.0)
-    assert _falloff_weight(10.0, 10.0, "CONSTANT") == pytest.approx(0.0)
+    assert math.isclose(_dist3d((0, 0, 0), (2, 3, 6)), 7.0)
+    assert math.isclose(_dist2d((0, 0), (3, 4)), 5.0)
+    assert math.isclose(cast(float, _falloff_weight(0.0, 10.0, "LINEAR")), 1.0)
+    assert math.isclose(cast(float, _falloff_weight(10.0, 10.0, "CONSTANT")), 0.0)
     assert _falloff_weight(10.1, 10.0, "SMOOTH") is None
     assert _falloff_weight(0.0, 0.0, "SMOOTH") is None
 
@@ -91,9 +96,9 @@ def test_vertex_paint_empty_inputs_return_empty_and_invalid_shapes_fail():
     assert compute_paint_weights_uv([(0.0, 0.0)], (0.0, 0.0), -1.0, "SMOOTH") == []
 
     with pytest.raises(ValueError, match="triples"):
-        compute_paint_weights([(0.0, 0.0)], (0.0, 0.0, 0.0), 5.0, "SMOOTH")
+        compute_paint_weights(cast(Any, [(0.0, 0.0)]), (0.0, 0.0, 0.0), 5.0, "SMOOTH")
     with pytest.raises(ValueError, match="pairs"):
-        compute_paint_weights_uv([(0.0, 0.0, 0.0)], (0.0, 0.0), 5.0, "SMOOTH")
+        compute_paint_weights_uv(cast(Any, [(0.0, 0.0, 0.0)]), (0.0, 0.0), 5.0, "SMOOTH")
 
 
 def test_blend_colors_array_clamps_weights_and_rejects_shape_mismatch():
@@ -131,7 +136,7 @@ def test_world_map_dist2d_and_nearest_region_contract():
         Region("b", "frozen_tundra", (10.0, 0.0), (9.0, 0.0, 11.0, 1.0), 2.0),
     ]
 
-    assert _dist2d((0.0, 0.0), (6.0, 8.0)) == pytest.approx(10.0)
+    assert math.isclose(_dist2d((0.0, 0.0), (6.0, 8.0)), 10.0)
     assert _nearest_region((8.0, 0.0), regions).name == "b"
     with pytest.raises(ValueError, match="regions"):
         _nearest_region((0.0, 0.0), [])

@@ -51,9 +51,21 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
+
+Vec2 = Sequence[float]
+Vec3 = Sequence[float]
+Face = Sequence[int]
+
+__all__ = [
+    "_compute_edge_face_counts",
+    "_dot",
+    "evaluate_mesh_quality",
+    "select_fix_action",
+]
 
 # ---------------------------------------------------------------------------
 # AAA topology grading thresholds
@@ -80,7 +92,7 @@ AAA_UV_COVERAGE_MIN: float = 0.25
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _cross(a: tuple, b: tuple) -> tuple:
+def _cross(a: Vec3, b: Vec3) -> Vec3:
     return (
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -88,26 +100,26 @@ def _cross(a: tuple, b: tuple) -> tuple:
     )
 
 
-def _dot(a: tuple, b: tuple) -> float:
+def _dot(a: Vec3, b: Vec3) -> float:
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
-def _sub(a: tuple, b: tuple) -> tuple:
+def _sub(a: Vec3, b: Vec3) -> Vec3:
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
 
-def _length(v: tuple) -> float:
+def _length(v: Vec3) -> float:
     return math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
 
 
-def _normalize(v: tuple) -> tuple | None:
-    l = _length(v)
-    if l < 1e-12:
+def _normalize(v: Vec3) -> Vec3 | None:
+    length = _length(v)
+    if length < 1e-12:
         return None
-    return (v[0] / l, v[1] / l, v[2] / l)
+    return (v[0] / length, v[1] / length, v[2] / length)
 
 
-def _face_normal(verts: list, face: tuple) -> tuple | None:
+def _face_normal(verts: Sequence[Vec3], face: Face) -> Vec3 | None:
     """Compute face normal via Newell's method (works for n-gons)."""
     n = len(face)
     if n < 3:
@@ -122,7 +134,7 @@ def _face_normal(verts: list, face: tuple) -> tuple | None:
     return _normalize((nx, ny, nz))
 
 
-def _is_degenerate(verts: list, face: tuple) -> bool:
+def _is_degenerate(verts: Sequence[Vec3], face: Face) -> bool:
     """True if all vertices of the face are collinear (zero area)."""
     n = len(face)
     if n < 3:
@@ -138,12 +150,12 @@ def _is_degenerate(verts: list, face: tuple) -> bool:
     return True
 
 
-def _edge_key(a: int, b: int) -> tuple:
+def _edge_key(a: int, b: int) -> tuple[int, int]:
     return (min(a, b), max(a, b))
 
 
-def _compute_edge_face_counts(faces: list) -> dict[tuple, int]:
-    counts: dict[tuple, int] = defaultdict(int)
+def _compute_edge_face_counts(faces: Sequence[Face]) -> dict[tuple[int, int], int]:
+    counts: dict[tuple[int, int], int] = defaultdict(int)
     for face in faces:
         n = len(face)
         for i in range(n):
@@ -152,7 +164,7 @@ def _compute_edge_face_counts(faces: list) -> dict[tuple, int]:
     return counts
 
 
-def _uv_triangle_area(uv0: tuple, uv1: tuple, uv2: tuple) -> float:
+def _uv_triangle_area(uv0: Vec2, uv1: Vec2, uv2: Vec2) -> float:
     ax = uv1[0] - uv0[0]
     ay = uv1[1] - uv0[1]
     bx = uv2[0] - uv0[0]
@@ -160,7 +172,7 @@ def _uv_triangle_area(uv0: tuple, uv1: tuple, uv2: tuple) -> float:
     return abs(ax * by - ay * bx) * 0.5
 
 
-def _face_uv_area(uvs: list, face: tuple) -> float:
+def _face_uv_area(uvs: Sequence[Vec2], face: Face) -> float:
     """Sum of triangle fan areas for a polygon face in UV space."""
     if len(face) < 3:
         return 0.0
@@ -189,9 +201,9 @@ def _grade_worse_than(grade: str, target: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def evaluate_mesh_quality(
-    verts: list,
-    faces: list,
-    uvs: list | None = None,
+    verts: Sequence[Vec3],
+    faces: Sequence[Face],
+    uvs: Sequence[Vec2] | None = None,
 ) -> dict[str, Any]:
     """Evaluate mesh quality and return a metrics dict.
 
@@ -287,6 +299,8 @@ def evaluate_mesh_quality(
     degenerate_face_count = 0
 
     tri_indices = np.where(tri_mask)[0]
+    tri_faces = np.empty((0, 3), dtype=np.int64)
+    cross_mag = np.empty((0,), dtype=np.float64)
     if tri_indices.size > 0:
         tri_faces = np.array([faces[i] for i in tri_indices], dtype=np.int64)  # (T, 3)
         v0 = V[tri_faces[:, 0]]  # (T, 3)
@@ -313,7 +327,8 @@ def evaluate_mesh_quality(
     # Build a flat (total_half_edges, 2) array where each row is a sorted
     # vertex-index pair for one directed half-edge.  np.unique with
     # return_counts gives valence per unique undirected edge in O(E log E).
-    half_edge_rows = []
+    half_edge_rows: list[tuple[int, int]] = []
+    edge_arr = np.empty((0, 2), dtype=np.int64)
     for face in faces:
         n = len(face)
         for i in range(n):
@@ -454,30 +469,57 @@ def evaluate_mesh_quality(
             PQ = Q - P                                          # (B, 3)
             pq_len_sq = (PQ * PQ).sum(axis=1)                  # (B,)
 
-            # For each boundary edge, check all vertices for T-junction.
-            # Vectorized per-edge over all vertices: project V onto segment,
-            # clamp t to (eps, 1-eps), compute closest point, check distance.
-            # This is O(B * N_verts) but boundary edges are rare in good meshes.
+            # Spatial-hash T-junction detection — O(B × avg_bucket_size)
+            # instead of O(B × N_verts).  FIX-B14-P1-37.
             _eps = 1e-6
             _tol_sq = _eps * _eps
+            # Build a 3-D spatial hash: bucket each vertex by a grid cell of
+            # size (tol).  Use an integer key (ix, iy, iz) in a plain dict.
+            _cell = max(_eps * 10, 1e-4)
+            _vtx_buckets: dict = {}
+            for vi, vpos in enumerate(V):
+                key = (
+                    int(vpos[0] / _cell),
+                    int(vpos[1] / _cell),
+                    int(vpos[2] / _cell),
+                )
+                _vtx_buckets.setdefault(key, []).append(vi)
+
             for bi in range(boundary_packed.size):
                 if pq_len_sq[bi] < _tol_sq:
                     continue
                 p = P[bi]                # (3,)
                 pq = PQ[bi]              # (3,)
-                # t = dot(V - p, pq) / |pq|^2 for all vertices
-                diff = V - p             # (N_verts, 3)
-                t = (diff * pq).sum(axis=1) / pq_len_sq[bi]  # (N_verts,)
-                # Only interior of segment is a T-junction (not the endpoints).
-                interior = (t > _eps) & (t < 1.0 - _eps)
-                if not interior.any():
-                    continue
-                # Closest point on segment for candidate vertices.
-                t_clamped = t[interior, np.newaxis]            # (K, 1)
-                proj = p + t_clamped * pq                      # (K, 3)
-                dist_sq = ((V[interior] - proj) ** 2).sum(axis=1)
-                if (dist_sq < _tol_sq).any():
-                    t_junction_count += 1
+                pq_len = pq_len_sq[bi] ** 0.5
+                # AABB of the edge segment (expanded by _cell for border cells).
+                lo = np.minimum(p, p + pq)
+                hi = np.maximum(p, p + pq)
+                ix0, iy0, iz0 = (int(lo[k] / _cell) - 1 for k in range(3))
+                ix1, iy1, iz1 = (int(hi[k] / _cell) + 1 for k in range(3))
+                found = False
+                for ix in range(ix0, ix1 + 1):
+                    if found:
+                        break
+                    for iy in range(iy0, iy1 + 1):
+                        if found:
+                            break
+                        for iz in range(iz0, iz1 + 1):
+                            candidates = _vtx_buckets.get((ix, iy, iz))
+                            if not candidates:
+                                continue
+                            cand_v = V[candidates]      # (K, 3)
+                            diff = cand_v - p           # (K, 3)
+                            t = (diff * pq).sum(axis=1) / pq_len_sq[bi]
+                            interior = (t > _eps) & (t < 1.0 - _eps)
+                            if not interior.any():
+                                continue
+                            t_int = t[interior, np.newaxis]
+                            proj = p + t_int * pq
+                            dist_sq = ((cand_v[interior] - proj) ** 2).sum(axis=1)
+                            if (dist_sq < _tol_sq).any():
+                                t_junction_count += 1
+                                found = True
+                                break
 
     # ------------------------------------------------------------------
     # UV coverage (vectorized triangle fan for polygons)

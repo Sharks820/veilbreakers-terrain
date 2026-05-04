@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import math
 import time
-from typing import List, Optional, Sequence, Tuple
+import importlib
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
@@ -22,6 +23,20 @@ from .terrain_semantics import (
     TerrainMaskStack,
     TerrainPipelineState,
 )
+
+_ArrayFilter = Callable[..., np.ndarray]
+_ArrayDistance = Callable[..., np.ndarray]
+
+
+def _load_scipy_glacial_filters() -> tuple[_ArrayDistance | None, _ArrayFilter | None]:
+    try:
+        ndimage = importlib.import_module("scipy.ndimage")
+    except ImportError:
+        return None, None
+    return (
+        cast(_ArrayDistance, getattr(ndimage, "distance_transform_edt")),
+        cast(_ArrayFilter, getattr(ndimage, "gaussian_filter")),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +79,6 @@ def carve_u_valley(
 
     Not applied in place — caller decides whether to write.
     """
-    if stack.height is None:
-        raise ValueError("carve_u_valley requires stack.height")
     if width_m <= 0 or depth_m <= 0:
         raise ValueError("width_m and depth_m must be positive")
 
@@ -89,11 +102,7 @@ def carve_u_valley(
         for t in np.linspace(0.0, 1.0, n):
             dense.append((r0 + (r1 - r0) * t, c0 + (c1 - c0) * t))
 
-    try:
-        from scipy.ndimage import distance_transform_edt as _edt, gaussian_filter as _gf
-        _HAS_SCIPY = True
-    except ImportError:
-        _HAS_SCIPY = False
+    edt_filter, gaussian_filter = _load_scipy_glacial_filters()
 
     dense_arr = np.array(dense)  # (N, 2)
 
@@ -102,7 +111,7 @@ def carve_u_valley(
     cmin = max(0, int(dense_arr[:, 1].min() - half_cells - 2))
     cmax = min(W, int(dense_arr[:, 1].max() + half_cells + 3))
 
-    if _HAS_SCIPY:
+    if edt_filter is not None and gaussian_filter is not None:
         path_mask = np.ones((H, W), dtype=np.uint8)
         for (pr, pc) in dense:
             ri = int(round(pr))
@@ -111,7 +120,7 @@ def carve_u_valley(
                 path_mask[ri, ci] = 0
 
         # O(H*W) Euclidean distance transform — pixel distances from path
-        dist_pixels = _edt(path_mask)
+        dist_pixels = np.asarray(edt_filter(path_mask), dtype=np.float64)
 
         # Hack's law depth proxy: if flow_accumulation present, scale depth
         # per-path using mean accumulation along the path centreline.
@@ -131,7 +140,7 @@ def carve_u_valley(
                 hack_scale = float(np.clip(hack_scale, 0.5, 2.0))
                 eff_depth = depth_m * hack_scale
 
-        dist_crop = dist_pixels[rmin:rmax, cmin:cmax]
+        dist_crop = np.asarray(dist_pixels[rmin:rmax, cmin:cmax], dtype=np.float64)
         # Parabolic U-valley profile: h(d) = -D * sqrt(1 - (d/R)^2) for d < R
         frac = dist_crop / half_cells
         carve = np.sqrt(np.maximum(0.0, 1.0 - np.minimum(frac, 1.0) ** 2))
@@ -142,7 +151,7 @@ def carve_u_valley(
 
         # Gaussian smoothing to remove EDT quantisation noise (sigma = R/4)
         sigma = max(0.5, half_cells * 0.25)
-        carve_full = _gf(carve_full, sigma=sigma)
+        carve_full = np.asarray(gaussian_filter(carve_full, sigma=sigma), dtype=np.float64)
 
         delta = -eff_depth * carve_full
     else:
@@ -221,7 +230,7 @@ def scatter_moraines(
         return pos, nhat
 
     # --- Terminal moraine (arcuate ridge at snout) ---
-    snout_pos, snout_n = _interp(1.0)
+    snout_pos, _ = _interp(1.0)
     moraines.append((float(snout_pos[0]), float(snout_pos[1]),
                      float(rng.uniform(12.0, 25.0))))
     # Arc flanks: two points offset along the normal and slightly up-valley
@@ -273,9 +282,6 @@ def compute_snow_line(
     50-meter transition band. Slope also reduces snow accumulation
     (steep cliff faces shed snow).
     """
-    if stack.height is None:
-        raise ValueError("compute_snow_line requires stack.height")
-
     h = np.asarray(stack.height, dtype=np.float64)
     band = 50.0
     raw = (h - snow_line_altitude_m) / band
@@ -375,7 +381,7 @@ def get_ice_formation_specs(
     *,
     max_formations: int = 5,
     seed: int = 42,
-) -> list:
+) -> List[Dict[str, Any]]:
     """Return MeshSpec dicts for ice formations at high-altitude glacial sites.
 
     Scans the snow_line_factor channel for cells with high snow coverage
@@ -392,8 +398,6 @@ def get_ice_formation_specs(
 
     rng = np.random.default_rng(seed)
     h = np.asarray(stack.height, dtype=np.float64)
-    rows, cols = h.shape
-
     # Find candidate cells with strong snow coverage
     candidates = np.argwhere(np.asarray(factor) > 0.7)
     if len(candidates) == 0:
@@ -401,18 +405,19 @@ def get_ice_formation_specs(
 
     # Subsample to avoid excessive geometry
     indices = rng.choice(len(candidates), size=min(max_formations, len(candidates)), replace=False)
-    results = []
+    results: List[Dict[str, Any]] = []
     for idx in indices:
         r, c = int(candidates[idx][0]), int(candidates[idx][1])
         wx = stack.world_origin_x + c * stack.cell_size
         wy = stack.world_origin_y + r * stack.cell_size
         wz = float(h[r, c])
+        ice_wall = cast(int, rng.integers(0, 2)) == 1
         spec = generate_ice_formation(
             width=rng.uniform(3.0, 8.0),
             height=rng.uniform(2.0, 6.0),
             depth=rng.uniform(2.0, 5.0),
             stalactite_count=int(rng.integers(4, 12)),
-            ice_wall=bool(rng.random() > 0.5),
+            ice_wall=ice_wall,
             seed=int(rng.integers(0, 2**31)),
         )
         results.append({"mesh_spec": spec, "world_pos": (wx, wy, wz)})

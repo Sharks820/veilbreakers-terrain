@@ -33,11 +33,10 @@ import warnings
 from functools import partial
 from typing import Any
 
-try:
-    import numpy as np
-except ImportError:
-    np = None  # type: ignore[assignment]
+import numpy as np
+from numpy.typing import NDArray
 
+from .terrain_biome_registry import CANONICAL_BIOME_IDS  # noqa: F401 — re-exported for callers
 from .terrain_math import stack_world_to_cell
 from .terrain_rng import make_rng as _make_rng
 
@@ -297,7 +296,7 @@ def compute_vegetation_placement(
     seed: int = 42,
     min_distance: float = 3.0,
     water_level: float = _DEFAULT_WATER_LEVEL,
-    exclusion_zones: list[dict] | None = None,
+    exclusion_zones: list[dict[str, Any]] | None = None,
     moisture_map: Any | None = None,
     competition_radius: float = 0.0,
     lod_distances: list[float] | None = None,
@@ -430,8 +429,8 @@ def compute_vegetation_placement(
         normal_arr.shape == (len(terrain_vertices), 3)
         and x_axis.size * y_axis.size == len(terrain_vertices)
     )
-    height_grid: np.ndarray | None = None
-    slope_grid: np.ndarray | None = None
+    height_grid: NDArray[np.float64] | None = None
+    slope_grid: NDArray[np.float64] | None = None
 
     if use_raster_sample:
         x_lookup = {float(x): i for i, x in enumerate(x_axis.tolist())}
@@ -472,7 +471,7 @@ def compute_vegetation_placement(
             gj = max(0, min(gj, grid_res - 1))
             vertex_grid.setdefault((gi, gj), []).append(i)
 
-    def _nearest_axis_index(axis: np.ndarray, value: float) -> int:
+    def _nearest_axis_index(axis: NDArray[Any], value: float) -> int:
         idx = int(np.searchsorted(axis, value))
         if idx <= 0:
             return 0
@@ -663,9 +662,10 @@ def compute_vegetation_placement(
             # from primary biome entries, adjacent biome entries, or both.
             # ecotone_alpha_fn returns primary-biome weight [0,1].
             # 0.0 = full adjacent, 1.0 = full primary.
-            use_ecotone = adj_entries and ecotone_alpha_fn is not None
-            if use_ecotone:
-                primary_alpha = float(ecotone_alpha_fn(wx, wy))
+            alpha_fn = ecotone_alpha_fn
+            use_ecotone = bool(adj_entries and alpha_fn is not None)
+            if alpha_fn is not None and use_ecotone:
+                primary_alpha = float(alpha_fn(wx, wy))
                 primary_alpha = max(0.0, min(1.0, primary_alpha))
             else:
                 primary_alpha = 1.0
@@ -1080,9 +1080,6 @@ def build_biome_density_map(
         The density map written to the stack (may be empty if ``biome_id`` is
         not populated or ``biome_name`` is unknown).
     """
-    if np is None:
-        return {}
-
     if biome_name not in BIOME_VEGETATION_SETS:
         return {}
 
@@ -1093,7 +1090,7 @@ def build_biome_density_map(
 
     # Collect all species entries across categories for this biome.
     biome = BIOME_VEGETATION_SETS[biome_name]
-    all_entries: list[dict] = []
+    all_entries: list[dict[str, Any]] = []
     for category in ("trees", "ground_cover", "rocks"):
         for entry in biome.get(category, []):
             all_entries.append(entry)
@@ -1139,8 +1136,8 @@ def build_biome_density_map(
 
 
 def scatter_biome_vegetation(
-    params: dict,
-) -> dict:
+    params: dict[str, Any],
+) -> dict[str, Any]:
     """Materialize per-biome vegetation on terrain using quality placement.
 
     Combines biome vegetation sets with Poisson disk sampling, slope/height/
@@ -1204,340 +1201,27 @@ def scatter_biome_vegetation(
     if not biome_name:
         raise ValueError("'biome_name' is required")
 
-    # Optional TerrainMaskStack — when provided, biome density is written to
-    # stack.detail_density so environment_scatter.py reads real values.
-    _mask_stack = params.get("stack")
+    # P1-6: Delegate to handle_scatter_vegetation in environment_scatter.
+    # Build a compatible params dict: map biome_name to a rules entry and
+    # forward common keys that the new API understands.
+    from .environment_scatter import handle_scatter_vegetation
 
-    min_distance = float(params.get("min_distance", 3.0))
-    seed = int(params.get("seed", 42))
-    max_instances = int(params.get("max_instances", 100_000))
-    season = params.get("season")
-    bake_wind_colors: bool = bool(params.get("bake_wind_colors", False))
-    water_level = float(params.get("water_level", _DEFAULT_WATER_LEVEL))
-    exclusion_zones: list[dict] = params.get("exclusion_zones") or []
-    lod_distances: list[float] = params.get("lod_distances") or [30.0, 80.0, 200.0]
-    competition_radius = float(params.get("competition_radius", 0.0))
-    moisture_map = params.get("moisture_map")
-    spec_only: bool = bool(params.get("spec_only", False))
-    camera_pos_raw = params.get("camera_position")
-    camera_position: tuple[float, float, float] | None = (
-        tuple(camera_pos_raw[:3]) if camera_pos_raw else None  # type: ignore[assignment]
-    )
-
-    # ------------------------------------------------------------------
-    # Ecotone boundary blending parameters.
-    # When adjacent_biome is set we construct an ecotone_alpha_fn that
-    # returns the primary-biome weight [0,1] at any world XY position.
-    # The transition is a smooth-step ramp centred on ecotone_boundary
-    # and spanning ecotone_blend_width.
-    # H-1: prefer per-cell ecotone_blend_weights channel produced by pass_ecotones.
-    # ------------------------------------------------------------------
-    adjacent_biome: str | None = params.get("adjacent_biome")
-    _ecotone_channel = (
-        _mask_stack.get("ecotone_blend_weights") if _mask_stack is not None else None
-    )
-    _use_channel_blend: bool = _ecotone_channel is not None and np is not None
-    ecotone_blend_width: float = float(params.get("ecotone_blend_width", 20.0))
-    ecotone_axis: str = str(params.get("ecotone_axis", "x")).lower()
-
-    adj_entries: list[tuple[str, dict[str, Any]]] = []
-    ecotone_alpha_fn = None
-
-    if adjacent_biome and adjacent_biome in BIOME_VEGETATION_SETS:
-        adj_biome_data = BIOME_VEGETATION_SETS[adjacent_biome]
-        for cat in ("trees", "ground_cover", "rocks"):
-            for entry in adj_biome_data.get(cat, []):
-                adj_entries.append((cat, entry))
-
-        # ecotone_boundary: midpoint coordinate along ecotone_axis.
-        # Will be resolved after we know area_bounds (see below).
-        # Store as a mutable container so the closure can capture it.
-        _ecotone_mid: list[float] = [float(params["ecotone_boundary"])] if "ecotone_boundary" in params else []
-        _half_blend = ecotone_blend_width * 0.5
-
-        def _smoothstep(t: float) -> float:
-            """Smoothstep [0,1] — eliminates visible hard boundary."""
-            t = max(0.0, min(1.0, t))
-            return t * t * (3.0 - 2.0 * t)
-
-        def ecotone_alpha_fn(wx: float, wy: float) -> float:  # type: ignore[misc]
-            """Return primary-biome weight [0,1] at world position."""
-            if _use_channel_blend and _mask_stack is not None and np is not None:
-                iy, ix = _world_to_cell(_mask_stack, float(wx), float(wy))
-                ch = np.asarray(_ecotone_channel)
-                if ch.ndim == 3 and ch.shape[2] > 0:
-                    return float(np.clip(ch[iy, ix, 0], 0.0, 1.0))
-            coord = wx if ecotone_axis == "x" else wy
-            mid = _ecotone_mid[0]
-            # Signed distance from boundary midpoint.
-            # Positive side = primary biome, negative = adjacent biome.
-            signed_dist = coord - mid
-            if signed_dist >= _half_blend:
-                return 1.0  # fully in primary biome
-            if signed_dist <= -_half_blend:
-                return 0.0  # fully in adjacent biome
-            # Normalise to [0,1] and smooth-step
-            t = (signed_dist + _half_blend) / ecotone_blend_width
-            return _smoothstep(t)
-
-    # ------------------------------------------------------------------
-    # Pure-logic spec mode — no Blender required
-    # ------------------------------------------------------------------
-    if spec_only:
-        terrain_vertices: list[tuple[float, float, float]] = params.get("terrain_vertices") or []
-        terrain_normals: list[tuple[float, float, float]] = params.get("terrain_normals") or []
-        terrain_faces: list[tuple[int, ...]] = params.get("terrain_faces") or []
-        area_bounds: tuple[float, float, float, float] = params.get("area_bounds") or (0.0, 0.0, 100.0, 100.0)
-
-        if not terrain_vertices:
-            # Synthesize a flat terrain if no geometry supplied
-            terrain_vertices = [
-                (area_bounds[0], area_bounds[1], 0.0),
-                (area_bounds[2], area_bounds[1], 0.0),
-                (area_bounds[2], area_bounds[3], 0.0),
-                (area_bounds[0], area_bounds[3], 0.0),
-            ]
-            terrain_normals = [(0.0, 0.0, 1.0)] * 4
-            terrain_faces = [(0, 1, 2, 3)]
-
-        # Resolve ecotone boundary midpoint to area centre if not specified.
-        if adj_entries and ecotone_alpha_fn is not None:
-            if not _ecotone_mid:  # type: ignore[possibly-undefined]
-                mid_x = (area_bounds[0] + area_bounds[2]) * 0.5
-                mid_y = (area_bounds[1] + area_bounds[3]) * 0.5
-                _ecotone_mid.append(mid_x if ecotone_axis == "x" else mid_y)  # type: ignore[possibly-undefined]
-
-        placements = compute_vegetation_placement(
-            terrain_vertices,
-            terrain_faces,
-            terrain_normals,
-            biome_name,
-            area_bounds,
-            seed=seed,
-            min_distance=min_distance,
-            water_level=water_level,
-            exclusion_zones=exclusion_zones,
-            moisture_map=moisture_map,
-            competition_radius=competition_radius,
-            lod_distances=lod_distances[:2] if len(lod_distances) >= 2 else lod_distances,
-            camera_position=camera_position,
-            adjacent_biome_entries=adj_entries if adj_entries else None,
-            ecotone_alpha_fn=ecotone_alpha_fn,
-        )
-
-        if len(placements) > max_instances:
-            placements = placements[:max_instances]
-
-        spec = build_vegetation_placement_spec(
-            placements,
-            biome_name=biome_name,
-            lod_distances=lod_distances,
-            camera_position=camera_position,
-        )
-
-        if season:
-            spec["season"] = season
-        if adjacent_biome:
-            spec["adjacent_biome"] = adjacent_biome
-            spec["ecotone_blend_width"] = ecotone_blend_width
-
-        # Write biome density to stack so environment_scatter reads real values.
-        if _mask_stack is not None:
-            build_biome_density_map(_mask_stack, biome_name)
-
-        return spec
-
-    # ------------------------------------------------------------------
-    # Blender materializer mode
-    # ------------------------------------------------------------------
-    try:
-        import bpy
-        import bmesh
-    except ImportError as exc:
-        raise RuntimeError("scatter_biome_vegetation requires Blender") from exc
-
-    terrain_name = params.get("terrain_name")
-    if not terrain_name:
-        raise ValueError("'terrain_name' is required")
-
-    obj = bpy.data.objects.get(terrain_name)
-    if obj is None:
-        raise ValueError(f"Object not found: {terrain_name}")
-
-    # Extract terrain geometry
-    mesh = obj.data
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bm.verts.ensure_lookup_table()
-    bm.faces.ensure_lookup_table()
-    bm.normal_update()
-
-    bm_terrain_vertices = [(v.co.x, v.co.y, v.co.z) for v in bm.verts]
-    bm_terrain_normals = [(v.normal.x, v.normal.y, v.normal.z) for v in bm.verts]
-    bm_terrain_faces = [tuple(v.index for v in f.verts) for f in bm.faces]
-    bm.free()
-
-    dims = obj.dimensions
-    loc = obj.location
-    half_x = dims.x / 2.0
-    half_y = dims.y / 2.0
-    area_bounds = (
-        loc.x - half_x,
-        loc.y - half_y,
-        loc.x + half_x,
-        loc.y + half_y,
-    )
-
-    # Resolve ecotone boundary midpoint to area centre if not specified.
-    if adj_entries and ecotone_alpha_fn is not None:
-        if not _ecotone_mid:  # type: ignore[possibly-undefined]
-            mid_x = (area_bounds[0] + area_bounds[2]) * 0.5
-            mid_y = (area_bounds[1] + area_bounds[3]) * 0.5
-            _ecotone_mid.append(mid_x if ecotone_axis == "x" else mid_y)  # type: ignore[possibly-undefined]
-
-    placements = compute_vegetation_placement(
-        bm_terrain_vertices,
-        bm_terrain_faces,
-        bm_terrain_normals,
-        biome_name,
-        area_bounds,
-        seed=seed,
-        min_distance=min_distance,
-        water_level=water_level,
-        exclusion_zones=exclusion_zones,
-        moisture_map=moisture_map,
-        competition_radius=competition_radius,
-        lod_distances=lod_distances[:2] if len(lod_distances) >= 2 else lod_distances,
-        camera_position=camera_position,
-        adjacent_biome_entries=adj_entries if adj_entries else None,
-        ecotone_alpha_fn=ecotone_alpha_fn,
-    )
-
-    if len(placements) > max_instances:
-        placements = placements[:max_instances]
-
-    # Enrich with LOD assignments
-    spec = build_vegetation_placement_spec(
-        placements,
-        biome_name=biome_name,
-        lod_distances=lod_distances,
-        camera_position=camera_position,
-    )
-    enriched_placements = spec["placements"]
-
-    scatter_coll_name = f"{terrain_name}_{biome_name}_vegetation"
-    scatter_coll = bpy.data.collections.new(scatter_coll_name)
-    bpy.context.scene.collection.children.link(scatter_coll)
-
-    template_coll = bpy.data.collections.new(f"{scatter_coll_name}_templates")
-    bpy.context.scene.collection.children.link(template_coll)
-    templates: dict[str, Any] = {}
-
-    veg_counts: dict[str, int] = {}
-    from .lod_pipeline import _setup_billboard_lod
-
-    veg_types_needed = set(p["type"] for p in enriched_placements)
-    for veg_type in veg_types_needed:
-        templates[veg_type] = _create_biome_vegetation_template(veg_type, template_coll)
-        if veg_type == "tree":
-            _setup_billboard_lod(templates[veg_type], veg_spec=None, veg_type=veg_type)
-            if bake_wind_colors:
-                mesh_data = templates[veg_type].data
-                tree_verts = [(v.co.x, v.co.y, v.co.z) for v in mesh_data.vertices]
-                wind_colors = compute_wind_vertex_colors(tree_verts)
-                if "WindColor" in mesh_data.color_attributes:
-                    mesh_data.color_attributes.remove(mesh_data.color_attributes["WindColor"])
-                attr = mesh_data.color_attributes.new(
-                    name="WindColor", type="FLOAT_COLOR", domain="CORNER"
-                )
-                n_loops = len(mesh_data.loops)
-                rgba = np.zeros((n_loops, 4), dtype=np.float32)
-                for poly in mesh_data.polygons:
-                    for loop_idx, vert_idx in zip(poly.loop_indices, poly.vertices):
-                        r, g, b = wind_colors[vert_idx]
-                        rgba[loop_idx, 0] = r
-                        rgba[loop_idx, 1] = g
-                        rgba[loop_idx, 2] = b
-                        rgba[loop_idx, 3] = 0.0
-                attr.data.foreach_set("color", rgba.ravel())
-
-    for p in enriched_placements:
-        veg_key = p.get("mesh_name", f"{p['type']}_{p['style']}")
-        veg_counts[veg_key] = veg_counts.get(veg_key, 0) + 1
-
-        template = templates.get(p["type"])
-        if template is None:
-            continue
-
-        instance = bpy.data.objects.new(
-            f"{veg_key}_{veg_counts[veg_key]:04d}",
-            template.data,
-        )
-        instance.location = p["position"]
-        s = p["scale"]
-        instance.scale = (s, s, s)
-        instance.rotation_euler = (0, 0, math.radians(p["rotation"]))
-
-        # Tag LOD distances: trees get billboard pipeline, others get custom props.
-        lod_level = p.get("lod_level", 0)
-        if p.get("category") != "trees":
-            _ld = list(lod_distances) + [0.0] * max(0, 3 - len(lod_distances))
-            instance["lod0_distance"] = float(_ld[0])
-            instance["lod1_distance"] = float(_ld[1])
-            instance["lod2_distance"] = float(_ld[2])
-            instance["lod_enabled"] = True
-            instance["lod_level"] = lod_level
-
-        scatter_coll.objects.link(instance)
-
-    total_instances = sum(veg_counts.values())
-
-    result: dict[str, Any] = {
-        "name": scatter_coll_name,
-        "instance_count": total_instances,
-        "vegetation_types": veg_counts,
-        "biome": biome_name,
-        "species_density": spec["species_density"],
-        "lod_distribution": spec["lod_distribution"],
+    delegate_params: dict[str, Any] = {
+        "terrain_name": params.get("terrain_name", ""),
+        "biome_name": biome_name,
+        "min_distance": params.get("min_distance", 3.0),
+        "seed": params.get("seed", 42),
+        "max_instances": params.get("max_instances", 100_000),
+        "moisture_map": params.get("moisture_map"),
+        "stack": params.get("stack"),
+        "season": params.get("season"),
+        "lod_distances": params.get("lod_distances"),
+        "competition_radius": params.get("competition_radius"),
+        "exclusion_zones": params.get("exclusion_zones"),
     }
-
-    if season:
-        result["season"] = season
-    if adjacent_biome:
-        result["adjacent_biome"] = adjacent_biome
-        result["ecotone_blend_width"] = ecotone_blend_width
-
-    # Write biome density to stack so environment_scatter reads real values.
-    if _mask_stack is not None:
-        build_biome_density_map(_mask_stack, biome_name)
-
-    # Emit foliage placement manifest when requested.
-    # See docs/FOLIAGE_MANIFEST_PIPELINE.md for the current schema.
-    if params.get("emit_manifest"):
-        mesh_library_path = params.get("mesh_library_path")
-        if mesh_library_path is None:
-            raise ValueError(
-                "emit_manifest=True requires 'mesh_library_path' in params"
-            )
-        from pathlib import Path as _Path
-
-        mesh_library = load_mesh_library(mesh_library_path)
-        manifest = build_foliage_placement_manifest(
-            spec=spec,
-            mesh_library=mesh_library,
-            stack=_mask_stack,
-            biome_name=biome_name,
-            season=season,
-        )
-        manifest_out_path = params.get("manifest_out_path")
-        if manifest_out_path is None:
-            manifest_out_path = (
-                _Path(mesh_library_path).parent / "foliage_placement_manifest.json"
-            )
-        write_foliage_placement_manifest(manifest, manifest_out_path)
-        result["manifest_path"] = str(manifest_out_path)
-
-    return result
+    if params.get("rules") is not None:
+        delegate_params["rules"] = params["rules"]
+    return handle_scatter_vegetation(delegate_params)
 
 
 # ===========================================================================
@@ -1609,7 +1293,7 @@ def load_mesh_library(library_path: "str | Any") -> dict[str, dict[str, Any]]:
 
 def _derive_cliff_sdf_m(stack: Any) -> "Any | None":
     """Compute a per-cell signed-distance-from-cliff in metres."""
-    if stack is None or np is None:
+    if stack is None:
         return None
     if not hasattr(stack, "get"):
         return None
@@ -1622,12 +1306,12 @@ def _derive_cliff_sdf_m(stack: Any) -> "Any | None":
         return None
     cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
     arr = np.asarray(cliff)
-    return _edt(arr == 0).astype(np.float32) * cell_size
+    return np.asarray(_edt(arr == 0), dtype=np.float32) * cell_size
 
 
 def _derive_water_edge_sdf_m(stack: Any) -> "Any | None":
     """Compute distance-from-water in metres using bathymetry."""
-    if stack is None or np is None:
+    if stack is None:
         return None
     if not hasattr(stack, "get"):
         return None
@@ -1639,7 +1323,10 @@ def _derive_water_edge_sdf_m(stack: Any) -> "Any | None":
     except Exception:
         return None
     cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
-    return _edt(np.asarray(bathy, dtype=np.float32) <= 0).astype(np.float32) * cell_size
+    return (
+        np.asarray(_edt(np.asarray(bathy, dtype=np.float32) <= 0), dtype=np.float32)
+        * cell_size
+    )
 
 
 def build_foliage_placement_manifest(

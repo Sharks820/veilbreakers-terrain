@@ -36,7 +36,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 
@@ -49,6 +49,9 @@ from .terrain_semantics import (
     ValidationIssue,
 )
 from .terrain_math import stack_world_to_cell as _world_to_cell
+
+
+Metadata = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +176,7 @@ def _perlin_noise_2d(
     amp = 1.0
     total = 0.0
     freq = float(frequency)
-    for oct_i in range(octaves):
+    for _ in range(octaves):
         acc += amp * _gradient_noise(freq, int(rng.integers(0, 2**31))).astype(np.float32)
         total += amp
         amp *= persistence
@@ -377,9 +380,9 @@ def compute_speleothem_growth(
 
 
 def validate_entrance_cliff_compatible(
-    entrance_frame: Dict,
+    entrance_frame: Metadata,
     spec: "CaveArchetypeSpec",
-) -> List[ValidationIssue]:
+) -> list[ValidationIssue]:
     """Validate that an entrance frame is CliffStructure-compatible.
 
     CliffStructure compatibility requires:
@@ -398,7 +401,7 @@ def validate_entrance_cliff_compatible(
     These checks replicate the CliffStructure entrance contract from Bundle B
     so caves and cliffs share the same geometry interface.
     """
-    issues: List[ValidationIssue] = []
+    issues: list[ValidationIssue] = []
     arch_id = entrance_frame.get("archetype", "unknown")
 
     lip_w = float(entrance_frame.get("lip_width_m", 0.0))
@@ -518,7 +521,7 @@ class CaveArchetypeSpec:
 
 
 # Default archetype parameter tables (tuned for AAA readability, not generic).
-_ARCHETYPE_DEFAULTS: Dict[CaveArchetype, Dict[str, float]] = {
+_ARCHETYPE_DEFAULTS: dict[CaveArchetype, Metadata] = {
     CaveArchetype.LAVA_TUBE: dict(
         entrance_width_m=6.0,
         entrance_height_m=3.5,
@@ -579,10 +582,10 @@ _ARCHETYPE_DEFAULTS: Dict[CaveArchetype, Dict[str, float]] = {
 
 def make_archetype_spec(
     archetype: CaveArchetype,
-    **overrides: float,
+    **overrides: Any,
 ) -> CaveArchetypeSpec:
     """Return a ``CaveArchetypeSpec`` preloaded with the archetype defaults."""
-    params: Dict[str, float] = dict(_ARCHETYPE_DEFAULTS[archetype])
+    params: Metadata = dict(_ARCHETYPE_DEFAULTS[archetype])
     params.update({k: v for k, v in overrides.items() if v is not None})
     return CaveArchetypeSpec(archetype=archetype, **params)
 
@@ -631,14 +634,14 @@ class CaveStructure:
     spec: CaveArchetypeSpec
     entrance_world_pos: Tuple[float, float, float]
     exit_world_pos: Optional[Tuple[float, float, float]] = None
-    path_world: List[Tuple[float, float, float]] = field(default_factory=list)
+    path_world: list[Tuple[float, float, float]] = field(default_factory=list)
     path_aabb: Optional[Tuple[float, float, float, float, float, float]] = None
     interior_mask: Optional[np.ndarray] = None
     damp_mask: Optional[np.ndarray] = None
     height_delta: Optional[np.ndarray] = None
     wall_texture_seed: int = 0
-    entrance_frame: Optional[Dict] = None
-    debris_points: List[Dict] = field(default_factory=list)
+    entrance_frame: Optional[Metadata] = None
+    debris_points: list[Metadata] = field(default_factory=list)
     stalactite_lengths: Optional[np.ndarray] = None
     stalagmite_lengths: Optional[np.ndarray] = None
     material_hint: Optional[str] = None
@@ -654,7 +657,7 @@ class CaveStructure:
 # Maps entrance_pos tuple → snap metadata dict from snap_entry_to_cliff_face.
 # Populated by generate_cave_path; consumed by pass_caves to attach
 # cliff_face_entry flags and overhang geometry to CaveStructure.entrance_frame.
-_cliff_entry_meta: Dict[Tuple[float, float, float], Dict] = {}
+_cliff_entry_meta: dict[Tuple[float, float, float], Metadata] = {}
 
 
 def _cell_to_world(
@@ -709,7 +712,7 @@ def _protected_mask_for_caves(
 # Maps biome name substrings (lower-case) to a (CaveArchetype, score_bonus,
 # material_hint) tuple.  Keys are checked with ``in`` so "desert_red" matches
 # "desert".  Order matters: first match wins.
-_BIOME_ARCHETYPE_MAP: List[Tuple[str, "CaveArchetype", float, str]] = [
+_BIOME_ARCHETYPE_MAP: list[Tuple[str, "CaveArchetype", float, str]] = [
     # desert / arid / volcanic → lava tube
     ("desert",   CaveArchetype.LAVA_TUBE,      2.0, "lava_basalt"),
     ("arid",     CaveArchetype.LAVA_TUBE,      1.8, "lava_basalt"),
@@ -738,7 +741,7 @@ _BIOME_ARCHETYPE_MAP: List[Tuple[str, "CaveArchetype", float, str]] = [
 ]
 
 # Fallback material hints per archetype (used when no biome match found)
-_ARCHETYPE_DEFAULT_MATERIAL: Dict["CaveArchetype", str] = {
+_ARCHETYPE_DEFAULT_MATERIAL: dict["CaveArchetype", str] = {
     CaveArchetype.LAVA_TUBE:      "lava_basalt",
     CaveArchetype.FISSURE:        "granite_fracture",
     CaveArchetype.KARST_SINKHOLE: "limestone",
@@ -758,7 +761,7 @@ def pick_cave_archetype(
     seed: int,
     intent: Optional[Any] = None,
     *,
-    hints_out: Optional[Dict[str, str]] = None,
+    hints_out: Optional[dict[str, str]] = None,
 ) -> CaveArchetype:
     """Select the most plausible archetype for a location.
 
@@ -848,7 +851,7 @@ def pick_cave_archetype(
     # Score each archetype; highest score wins.
     # Factors: altitude_norm, slope_rad, wetness, basin, concavity,
     #          flow_accumulation, rock_hardness, depth_elaboration.
-    scores: Dict[CaveArchetype, float] = {
+    scores: dict[CaveArchetype, float] = {
         CaveArchetype.SEA_GROTTO: (
             (1.0 - altitude_norm) * 1.2
             + wetness * 1.5
@@ -963,7 +966,7 @@ def pick_cave_archetype(
     # geologically indicated archetype so it wins over terrain-signal scoring
     # unless the terrain is strongly contradictory.
     # ------------------------------------------------------------------
-    _GEOLOGY_HINT_MAP: Dict[str, CaveArchetype] = {
+    _GEOLOGY_HINT_MAP: dict[str, CaveArchetype] = {
         "dissolution": CaveArchetype.KARST_SINKHOLE,
         "erosion":     CaveArchetype.SEA_GROTTO,
         "volcanic":    CaveArchetype.LAVA_TUBE,
@@ -1009,7 +1012,7 @@ def snap_entry_to_cliff_face(
     entry_pos: Tuple[float, float, float],
     *,
     snap_radius_m: float = 15.0,
-) -> Tuple[Tuple[float, float, float], Dict]:
+) -> Tuple[Tuple[float, float, float], Metadata]:
     """Snap a cave entry point onto the nearest cliff face within ``snap_radius_m``.
 
     When a cave entry candidate is within 15 m of a cliff-candidate cell,
@@ -1042,7 +1045,7 @@ def snap_entry_to_cliff_face(
           ``entry_height_m``   : ellipse arch height (fixed 2.8 m).
           ``snap_distance_m``  : distance moved to snap (0.0 if no snap).
     """
-    meta: Dict = {
+    meta: Metadata = {
         "cliff_face_entry": False,
         "face_normal": (0.0, 1.0),
         "entry_width_m": 2.5,
@@ -1056,10 +1059,10 @@ def snap_entry_to_cliff_face(
 
     cliff_mask = np.asarray(cliff_arr, dtype=bool)
     height = np.asarray(stack.height, dtype=np.float64)
-    rows, cols = height.shape
+    rows, cols = cliff_mask.shape
     cell = max(1e-6, float(stack.cell_size))
 
-    x0, y0, z0 = entry_pos
+    x0, y0, _z0 = entry_pos
     row0, col0 = _world_to_cell(stack, x0, y0)
 
     search_cells = max(1, int(math.ceil(snap_radius_m / cell)))
@@ -1125,7 +1128,7 @@ def build_mountainside_overhang(
     entry_width_m: float,
     *,
     seed: int = 0,
-) -> Dict:
+) -> Metadata:
     """Build a rock arch / natural overhang above a cave entry on a steep slope.
 
     When the terrain slope at the entry exceeds 0.45 (≈ 24°) the entry sits
@@ -1265,7 +1268,7 @@ def generate_canyon_dual_exit(
         return None
 
     # Condition 1: path depth
-    min_x, min_y, min_z, max_x, max_y, max_z = cave.path_aabb
+    min_x, min_y, _min_z, max_x, max_y, _max_z = cave.path_aabb
     path_diagonal = math.sqrt(
         (max_x - min_x) ** 2 + (max_y - min_y) ** 2
     )
@@ -1279,13 +1282,13 @@ def generate_canyon_dual_exit(
 
     cliff_mask = np.asarray(cliff_arr, dtype=bool)
     height = np.asarray(stack.height, dtype=np.float64)
-    rows, cols = height.shape
+    rows, cols = cliff_mask.shape
     cell = max(1e-6, float(stack.cell_size))
 
     # Midpoint of cave path
     n_path = len(cave.path_world)
     mid_idx = n_path // 2
-    mx, my, mz = cave.path_world[mid_idx]
+    mx, my, _mz = cave.path_world[mid_idx]
     mid_row, mid_col = _world_to_cell(stack, mx, my)
 
     # Sample quadrant radius: 20% of path diagonal in cells
@@ -1341,7 +1344,7 @@ def build_cave_mouth_surround(
     ring_width_m: float = 0.3,
     n_segments: int = 12,
     face_normal: Tuple[float, float] = (0.0, 1.0),
-) -> Dict:
+) -> Metadata:
     """Build a 12-segment ring mesh sealing the cave-opening / terrain seam.
 
     At the boundary where a cave opening meets the surrounding terrain or
@@ -1377,12 +1380,10 @@ def build_cave_mouth_surround(
     # depth_vec: outward normal (face_normal XY, z=0)
     right_x = -ny   # 90° rotation of the XY normal
     right_y = nx
-    right_z = 0.0
-
-    inner_verts: List[Tuple[float, float, float]] = []
-    outer_verts: List[Tuple[float, float, float]] = []
-    uvs_inner: List[Tuple[float, float]] = []
-    uvs_outer: List[Tuple[float, float]] = []
+    inner_verts: list[Tuple[float, float, float]] = []
+    outer_verts: list[Tuple[float, float, float]] = []
+    uvs_inner: list[Tuple[float, float]] = []
+    uvs_outer: list[Tuple[float, float]] = []
 
     for seg_i in range(n_segments):
         theta = 2.0 * math.pi * seg_i / n_segments
@@ -1413,7 +1414,7 @@ def build_cave_mouth_surround(
     all_verts = inner_verts + outer_verts   # first n_segments = inner, next = outer
     all_uvs = uvs_inner + uvs_outer
 
-    faces: List[Tuple[int, int, int, int]] = []
+    faces: list[Tuple[int, int, int, int]] = []
     for seg_i in range(n_segments):
         i0 = seg_i                                        # inner current
         i1 = (seg_i + 1) % n_segments                    # inner next
@@ -1431,9 +1432,9 @@ def build_cave_mouth_surround(
     }
 
 
-def _build_cave_entry_mesh_specs(caves: List["CaveStructure"]) -> List[Dict]:
+def _build_cave_entry_mesh_specs(caves: list["CaveStructure"]) -> list[Metadata]:
     """Persist cave mouth surround and overhang geometry as mesh specs."""
-    mesh_specs: List[Dict] = []
+    mesh_specs: list[Metadata] = []
     for cave in caves:
         frame = cave.entrance_frame or {}
         overhang_verts = list(frame.get("overhang_verts") or [])
@@ -1484,7 +1485,7 @@ def _astar_cave_path(
     slope_weight: float = 1.5,
     wetness: Optional[np.ndarray] = None,
     rng_jitter: Optional[np.random.Generator] = None,
-) -> List[Tuple[int, int]]:
+) -> list[Tuple[int, int]]:
     """A* path on the heightmap cost field from ``start_rc`` to ``goal_rc``.
 
     Cost per step = Euclidean distance (diagonal allowed) + slope penalty.
@@ -1518,11 +1519,11 @@ def _astar_cave_path(
     import heapq
 
     # (f_score, g_score, row, col, parent_row, parent_col)
-    open_heap: List[Tuple[float, float, int, int]] = []
+    open_heap: list[Tuple[float, float, int, int]] = []
     heapq.heappush(open_heap, (0.0, 0.0, sr, sc))
 
-    g_score: Dict[Tuple[int, int], float] = {(sr, sc): 0.0}
-    came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {(sr, sc): None}
+    g_score: dict[Tuple[int, int], float] = {(sr, sc): 0.0}
+    came_from: dict[Tuple[int, int], Optional[Tuple[int, int]]] = {(sr, sc): None}
 
     max_nodes = min(4096, rows * cols)
     visited = 0
@@ -1535,7 +1536,7 @@ def _astar_cave_path(
     ]
 
     while open_heap and visited < max_nodes:
-        f, g, r, c = heapq.heappop(open_heap)
+        _, g, r, c = heapq.heappop(open_heap)
         visited += 1
 
         if (r, c) == (gr, gc):
@@ -1570,7 +1571,7 @@ def _astar_cave_path(
                 heapq.heappush(open_heap, (f_new, tentative_g, nr, nc))
 
     # Reconstruct path from came_from
-    path_cells: List[Tuple[int, int]] = []
+    path_cells: list[Tuple[int, int]] = []
     cur: Optional[Tuple[int, int]] = (gr, gc)
     while cur is not None and cur in came_from:
         path_cells.append(cur)
@@ -1598,7 +1599,7 @@ def generate_cave_path(
     archetype: CaveArchetype,
     entrance_pos: Tuple[float, float, float],
     seed: int,
-) -> List[Tuple[float, float, float]]:
+) -> list[Tuple[float, float, float]]:
     """Return a world-meter polyline for the cave interior path.
 
     Uses A* path planning on the heightmap cost field so each path follows
@@ -1683,7 +1684,6 @@ def generate_cave_path(
         dy = math.sin(heading)
 
     height = np.asarray(stack.height, dtype=np.float64)
-    rows, cols = height.shape
     cell = max(1e-6, float(stack.cell_size))
 
     # Compute goal position: straight ahead at interior_length_m
@@ -1693,7 +1693,7 @@ def generate_cave_path(
     goal_rc = _world_to_cell(stack, gx, gy)
 
     # Archetype-specific A* parameters and branch probability
-    _ARCH_PARAMS: Dict[CaveArchetype, Dict[str, float]] = {
+    _ARCH_PARAMS: dict[CaveArchetype, dict[str, float]] = {
         CaveArchetype.LAVA_TUBE:      {"slope_weight": 0.8,  "branch_prob": 0.55},
         CaveArchetype.FISSURE:        {"slope_weight": 2.5,  "branch_prob": 0.30},
         CaveArchetype.KARST_SINKHOLE: {"slope_weight": 1.2,  "branch_prob": 0.65},
@@ -1784,7 +1784,7 @@ def generate_cave_path(
         z_profile -= np.linspace(0, _drift, n_cells)
 
     # Convert spine (row, col) back to world-space with variable z profile
-    points: List[Tuple[float, float, float]] = []
+    points: list[Tuple[float, float, float]] = []
     for i, (pr, pc) in enumerate(path_cells):
         wx, wy = _cell_to_world(stack, pr, pc)
         wz = z0 + float(z_profile[i])
@@ -1801,13 +1801,13 @@ def generate_cave_path(
     # ------------------------------------------------------------------
     junction_interval_m = float(rng.uniform(15.0, 25.0))
     # Track cumulative path distance to detect junction intervals
-    branch_points: List[Tuple[float, float, float]] = []
-    chambers: List[Dict] = []
+    branch_points: list[Tuple[float, float, float]] = []
+    chambers: list[Metadata] = []
     accumulated_dist = 0.0
     next_junction_dist = junction_interval_m
 
     for i in range(1, len(points)):
-        px0, py0, pz0 = points[i - 1]
+        px0, py0, _pz0 = points[i - 1]
         px1, py1, pz1 = points[i]
         step_dist = math.sqrt((px1 - px0) ** 2 + (py1 - py0) ** 2)
         accumulated_dist += step_dist
@@ -1903,7 +1903,7 @@ def generate_cave_path(
 
 def carve_cave_volume(
     stack: TerrainMaskStack,
-    path: List[Tuple[float, float, float]],
+    path: list[Tuple[float, float, float]],
     spec: CaveArchetypeSpec,
     *,
     ellipse_x_scale: float = 1.0,
@@ -1969,10 +1969,9 @@ def carve_cave_volume(
         seed: Integer seed for the per-sample ellipse jitter RNG.
     """
     try:
-        from scipy.ndimage import distance_transform_edt as _edt
-        _HAS_SCIPY = True
+        from scipy.ndimage import distance_transform_edt as _edt_fn
     except ImportError:
-        _HAS_SCIPY = False
+        _edt_fn = None
 
     height = np.asarray(stack.height, dtype=np.float64)
     rows, cols = height.shape
@@ -2064,13 +2063,18 @@ def carve_cave_volume(
             dr_scaled = dr_rot / max(e_ry, 1e-6)
             dc_scaled = dc_rot / max(e_rx, 1e-6)
 
-            if _HAS_SCIPY:
+            if _edt_fn is not None:
                 seed_mask = np.zeros((rows, cols), dtype=bool)
                 cr = max(0, min(rows - 1, int(round(eff_row))))
                 cc2 = max(0, min(cols - 1, int(round(eff_col))))
                 seed_mask[cr, cc2] = True
-                edt_dist = _edt(~seed_mask, sampling=(1.0 / max(e_ry, 1e-6),
-                                                       1.0 / max(e_rx, 1e-6)))
+                edt_dist = np.asarray(
+                    _edt_fn(
+                        ~seed_mask,
+                        sampling=(1.0 / max(e_ry, 1e-6), 1.0 / max(e_rx, 1e-6)),
+                    ),
+                    dtype=np.float64,
+                )
                 e_dist_norm = edt_dist / max(1.0, float(eff_rc))
             else:
                 dist2 = dr_scaled ** 2 + dc_scaled ** 2
@@ -2142,7 +2146,7 @@ def carve_cave_volume(
     _MIN_CROUCH_RADIUS_M = 0.5  # absolute minimum (crouch squeeze)
     _MIN_CROUCH_CEILING_M = 1.2 # crouch height
 
-    nav_issues: List[Dict] = []
+    nav_issues: list[Metadata] = []
     for path_idx, (wx, wy, wz) in enumerate(path):
         # Effective carved radius at this node (entrance is enlarged)
         if path_idx == 0:
@@ -2157,7 +2161,7 @@ def carve_cave_volume(
         # gives the ceiling-to-floor span inside the tunnel cross-section.
         ceiling_clearance_m = node_depth_m * float(spec.taper_ratio)
 
-        issue: Optional[Dict] = None
+        issue: Optional[Metadata] = None
         if node_radius_m < _MIN_CROUCH_RADIUS_M or ceiling_clearance_m < _MIN_CROUCH_CEILING_M:
             issue = {
                 "path_idx": path_idx,
@@ -2225,7 +2229,7 @@ def build_cave_entrance_frame(
     stack: TerrainMaskStack,
     entrance_pos: Tuple[float, float, float],
     spec: CaveArchetypeSpec,
-) -> Dict:
+) -> Metadata:
     """Return entrance metadata describing the visual framing.
 
     Metadata includes:
@@ -2244,7 +2248,7 @@ def build_cave_entrance_frame(
     ):
         framing_count = 3  # left + right + lintel
 
-    framing_rocks: List[Dict] = [
+    framing_rocks: list[Metadata] = [
         {
             "role": "left_jamb",
             "world_pos": (x - half_w, y, z),
@@ -2292,10 +2296,10 @@ def build_cave_entrance_frame(
 
 def scatter_collapse_debris(
     stack: TerrainMaskStack,
-    path: List[Tuple[float, float, float]],
+    path: list[Tuple[float, float, float]],
     spec: CaveArchetypeSpec,
     seed: int,
-) -> List[Dict]:
+) -> list[Metadata]:
     """Return a deterministic list of debris metadata dicts along the path.
 
     Each item is a dict with keys:
@@ -2361,7 +2365,7 @@ def scatter_collapse_debris(
     # of path length) since that is where the heaviest collapse occurs.
     # ------------------------------------------------------------------
     n_clusters = int(rng.integers(3, 6))
-    cluster_centres: List[Tuple[float, float, float]] = []
+    cluster_centres: list[Tuple[float, float, float]] = []
     for ci in range(n_clusters):
         if ci == 0:
             # First cluster always close to entrance (0–20% of path)
@@ -2381,7 +2385,7 @@ def scatter_collapse_debris(
     # Place each debris item at a Gaussian offset from a cluster centre.
     # Debris type is determined by the item's distance from the entrance.
     # ------------------------------------------------------------------
-    results: List[Dict] = []
+    results: list[Metadata] = []
     for _ in range(count):
         # Pick a cluster centre — weighted toward earlier clusters
         weights = np.array(
@@ -2446,12 +2450,12 @@ def _generate_speleothem_pairs(
     wall_height: float,
     chamber_width: float,
     chamber_depth: float,
-    stalactite_positions: List[Tuple[float, float, float]],
+    stalactite_positions: list[Tuple[float, float, float]],
     seed: int,
     *,
     pairing_strength: float = 0.60,
     drip_line_threshold_m: Optional[float] = None,
-) -> List[Dict]:
+) -> list[Metadata]:
     """Return prop dicts for stalactite/stalagmite pairs and merged columns.
 
     Real speleothems form at plausible drip lines where the ceiling is close
@@ -2494,7 +2498,7 @@ def _generate_speleothem_pairs(
     """
     rng = np.random.default_rng(int(seed ^ 0xA1B2C3D4) & 0xFFFFFFFF)
     floor_z = 0.0
-    props: List[Dict] = []
+    props: list[Metadata] = []
 
     # Clamp pairing strength to a valid probability.
     _pair_p = max(0.0, min(1.0, float(pairing_strength)))
@@ -2586,12 +2590,12 @@ def _generate_speleothem_pairs(
 
 
 def enforce_cave_navigation_clearance(
-    props: List[Dict],
-    spline: List[Tuple[float, float, float]],
+    props: list[Metadata],
+    spline: list[Tuple[float, float, float]],
     *,
     min_vertical_clearance_m: float = 1.8,
     spline_radius_m: float = 1.0,
-) -> List[Dict]:
+) -> list[Metadata]:
     """Ensure the traversable spline keeps ``min_vertical_clearance_m`` (default
     1.8 m, matching standard player height) above the floor, free of blocking
     props.
@@ -2641,10 +2645,10 @@ def enforce_cave_navigation_clearance(
                 best_z = float(sz)
         return best_z
 
-    out: List[Dict] = []
+    out: list[Metadata] = []
     for p in props:
         wx, wy, wz = p.get("world_pos", (0.0, 0.0, 0.0))
-        tx, ty, tz = p.get("tip_pos", (wx, wy, wz))
+        _tx, _ty, tz = p.get("tip_pos", (wx, wy, wz))
         ptype = str(p.get("prop_type", ""))
         spline_z = _corridor_z(float(wx), float(wy))
 
@@ -2718,7 +2722,7 @@ def enforce_cave_navigation_clearance(
 # ---------------------------------------------------------------------------
 
 
-def validate_cave_opening_integration(stack: "TerrainMaskStack") -> List[str]:
+def validate_cave_opening_integration(stack: "TerrainMaskStack") -> list[str]:
     """Check cave openings for visual integration with the surrounding cliff.
 
     For every cave opening recorded on ``stack`` (via ``cave_mesh_specs`` or
@@ -2732,7 +2736,7 @@ def validate_cave_opening_integration(stack: "TerrainMaskStack") -> List[str]:
 
     Returns a list of human-readable issue strings (empty list = OK).
     """
-    issues: List[str] = []
+    issues: list[str] = []
 
     mesh_specs = stack.get("cave_mesh_specs")
     cliff_arr = stack.get("cliff_candidate")
@@ -2748,7 +2752,7 @@ def validate_cave_opening_integration(stack: "TerrainMaskStack") -> List[str]:
 
     # Derive opening cells: prefer cave_mesh_specs (explicit mouth data);
     # fall back to boundary cells of cave_candidate.
-    opening_cells: List[Tuple[int, int, str]] = []  # (row, col, label)
+    opening_cells: list[Tuple[int, int, str]] = []  # (row, col, label)
 
     if isinstance(mesh_specs, (list, tuple)):
         for spec in mesh_specs:
@@ -2886,7 +2890,7 @@ def validate_cave_opening_integration(stack: "TerrainMaskStack") -> List[str]:
 
 
 # Mineral type colour table: (diffuse_rgb, shader_hint)
-_MINERAL_COLOURS: Dict[str, Tuple[Tuple[float, float, float], str]] = {
+_MINERAL_COLOURS: dict[str, Tuple[Tuple[float, float, float], str]] = {
     "calcite":    ((0.90, 0.87, 0.78), "cave_calcite"),      # cream/tan
     "iron_oxide": ((0.72, 0.38, 0.18), "cave_iron_oxide"),   # orange-rust
     "quartz":     ((0.96, 0.96, 0.97), "cave_quartz"),       # near-white
@@ -2899,7 +2903,7 @@ def _generate_mineral_deposits(
     wall_height: float,
     seed: int,
     archetype: Optional[str] = None,
-) -> List[Dict]:
+) -> list[Metadata]:
     """Return prop dicts for mineral deposit streaks on cave walls.
 
     Each streak is a vertical band on the wall surface (outward-facing normal).
@@ -2958,7 +2962,7 @@ def _generate_mineral_deposits(
         mineral_weights = [0.40, 0.30, 0.30]
 
     mineral_names = list(_MINERAL_COLOURS.keys())
-    props: List[Dict] = []
+    props: list[Metadata] = []
 
     for _ in range(n_streaks):
         # Random azimuth around the elliptical chamber perimeter
@@ -3005,7 +3009,7 @@ def _generate_cave_pools(
     cave_underground_depth: float,
     seed: int,
     floor_center_z: float = 0.0,
-) -> List[Dict]:
+) -> list[Metadata]:
     """Return a prop dict for a cave pool when underground depth warrants it.
 
     A pool is generated only when ``cave_underground_depth > 0.5 m``.  The pool
@@ -3072,8 +3076,8 @@ def _generate_cave_vegetation(
     cave_underground_depth: float,
     damp_intensity: float,
     seed: int,
-    pool_props: Optional[List[Dict]] = None,
-) -> List[Dict]:
+    pool_props: Optional[list[Metadata]] = None,
+) -> list[Metadata]:
     """Return placement-hint dicts for cave floor moss patches and fungi clusters.
 
     These are NOT placed as geometry by terrain_caves.py — they are scatter
@@ -3109,7 +3113,7 @@ def _generate_cave_vegetation(
     rng = np.random.default_rng(int(seed ^ 0xD00DF00D) & 0xFFFFFFFF)
     rx = float(chamber_width) * 0.5
     ry = float(chamber_depth) * 0.5
-    props: List[Dict] = []
+    props: list[Metadata] = []
 
     has_pool = bool(pool_props)
     damp = float(damp_intensity)
@@ -3174,10 +3178,10 @@ def _generate_cave_vegetation(
 
 
 def _generate_drip_channels(
-    stalactite_positions: List[Tuple[float, float, float]],
+    stalactite_positions: list[Tuple[float, float, float]],
     wall_height: float,
     seed: int,
-) -> List[Dict]:
+) -> list[Metadata]:
     """Return geometry specs for drip-water streak meshes below each stalactite.
 
     Each stalactite gets one drip channel: a very thin triangle strip running
@@ -3212,8 +3216,7 @@ def _generate_drip_channels(
     """
     rng = np.random.default_rng(int(seed ^ 0xE1E2E3E4) & 0xFFFFFFFF)
     floor_z = 0.0
-    h = float(wall_height)
-    props: List[Dict] = []
+    props: list[Metadata] = []
 
     N_COLS = 4    # 4 vertices across the strip width
     N_ROWS = 11   # 10 quad rows → 11 vertex rows
@@ -3235,9 +3238,9 @@ def _generate_drip_channels(
         fwd_x = -right_y
         fwd_y = right_x
 
-        verts: List[Tuple[float, float, float]] = []
-        uvs_list: List[Tuple[float, float]] = []
-        faces: List[Tuple[int, ...]] = []
+        verts: list[Tuple[float, float, float]] = []
+        uvs_list: list[Tuple[float, float]] = []
+        faces: list[Tuple[int, ...]] = []
 
         for row in range(N_ROWS):
             row_t = float(row) / float(N_ROWS - 1)         # 0 at top, 1 at bottom
@@ -3247,7 +3250,6 @@ def _generate_drip_channels(
 
             for col in range(N_COLS):
                 col_t = float(col) / float(N_COLS - 1)     # 0 left, 1 right
-                half_w = strip_w * 0.5
                 offset = (col_t - 0.5) * strip_w           # -half_w … +half_w
                 vx = cx + right_x * offset + fwd_x * lean
                 vy = cy + right_y * offset + fwd_y * lean
@@ -3287,7 +3289,7 @@ def _generate_drip_channels(
 
 def generate_damp_mask(
     stack: TerrainMaskStack,
-    path: List[Tuple[float, float, float]],
+    path: list[Tuple[float, float, float]],
     spec: CaveArchetypeSpec,
 ) -> np.ndarray:
     """Populate ``stack.wet_rock`` around the cave interior and return it.
@@ -3334,12 +3336,12 @@ def generate_damp_mask(
 
 
 def validate_cave_entrance(
-    entrance: Dict,
+    entrance: Metadata,
     stack: TerrainMaskStack,
     *,
     min_framing_elements: int = 2,
     require_damp: bool = True,
-) -> List[ValidationIssue]:
+) -> list[ValidationIssue]:
     """Return validation issues for an entrance dict.
 
     Checks:
@@ -3348,7 +3350,7 @@ def validate_cave_entrance(
       - damp mask populated (if require_damp)
       - occlusion shelf has positive depth (soft)
     """
-    issues: List[ValidationIssue] = []
+    issues: list[ValidationIssue] = []
     cave_id = entrance.get("archetype", "unknown")
 
     framing = entrance.get("framing_rocks", [])
@@ -3413,7 +3415,7 @@ def _find_entrance_candidates(
     max_candidates: int = 32,
     entrance_min_slope_deg: float = 35.0,
     min_entrance_area_cells: int = 4,
-) -> List[Tuple[float, float, float]]:
+) -> list[Tuple[float, float, float]]:
     """Source and score cave entrance candidates.
 
     Candidates come from scene_read.cave_candidates when available. Each
@@ -3444,7 +3446,7 @@ def _find_entrance_candidates(
     stack = state.mask_stack
     scene_read = state.intent.scene_read
 
-    raw: List[Tuple[float, float, float]] = []
+    raw: list[Tuple[float, float, float]] = []
     if scene_read is not None and scene_read.cave_candidates:
         for pos in scene_read.cave_candidates:
             if region is not None:
@@ -3499,23 +3501,17 @@ def _find_entrance_candidates(
     # Neighbourhood half-radius for area and accessibility checks (3 cells)
     _AREA_RADIUS = 3
     # Precomputed absolute max curvature for normalisation
-    _curv_max = float(np.abs(curv_arr).max()) if curv_arr is not None else 1e-6
+    _curv_max = float(np.abs(curv_arr).max())
     _curv_max = max(_curv_max, 1e-6)
 
     if not raw:
         if cliff_arr is None or cliff_arr.shape != h.shape:
             return []
-        cliff_strength = np.zeros_like(h, dtype=np.float64)
-        if cliff_arr is not None and cliff_arr.shape == h.shape:
-            cliff_strength = np.clip(cliff_arr, 0.0, 1.0)
-        else:
-            cliff_strength = np.clip((slope_deg_arr - entrance_min_slope_deg) / 25.0, 0.0, 1.0)
+        cliff_strength = np.clip(cliff_arr, 0.0, 1.0)
         if float(cliff_strength.max()) < 0.35:
             return []
 
-        concavity_strength = np.zeros_like(h, dtype=np.float64)
-        if curv_arr is not None:
-            concavity_strength = np.clip(-curv_arr / _curv_max, 0.0, 1.0)
+        concavity_strength = np.clip(-curv_arr / _curv_max, 0.0, 1.0)
 
         support_mask = (cliff_strength >= 0.35) & steep_mask
         discovery_score = np.where(
@@ -3532,7 +3528,7 @@ def _find_entrance_candidates(
         candidate_min_score = 0.55
         spacing_cells = max(3, int(round(6.0 / max(cs, 1e-6))))
         order = np.argsort(discovery_score.ravel())[::-1]
-        chosen_cells: List[Tuple[int, int]] = []
+        chosen_cells: list[Tuple[int, int]] = []
         for flat_idx in order:
             score_val = float(discovery_score.ravel()[flat_idx])
             if score_val < candidate_min_score:
@@ -3583,9 +3579,8 @@ def _find_entrance_candidates(
                 return None
 
         # (a) Negative curvature bonus
-        if curv_arr is not None:
-            curv_val = float(curv_arr[row, col])
-            score += float(np.clip(-curv_val / _curv_max, 0.0, 1.0))
+        curv_val = float(curv_arr[row, col])
+        score += float(np.clip(-curv_val / _curv_max, 0.0, 1.0))
 
         # (b) Cliff proximity bonus
         if cliff_arr is not None:
@@ -3596,7 +3591,7 @@ def _find_entrance_candidates(
 
         return score
 
-    scored_pairs: List[Tuple[float, Tuple[float, float, float]]] = []
+    scored_pairs: list[Tuple[float, Tuple[float, float, float]]] = []
     for pos in raw:
         s = _score_or_reject(pos)
         if s is not None:
@@ -3624,7 +3619,7 @@ def pass_caves(
 
     t0 = time.perf_counter()
     stack = state.mask_stack
-    issues: List[ValidationIssue] = []
+    issues: list[ValidationIssue] = []
 
     base_seed = derive_pass_seed(
         state.intent.seed,
@@ -3674,7 +3669,7 @@ def pass_caves(
     protected = _protected_mask_for_caves(state, stack.height.shape)
 
     entrance_candidates = _find_entrance_candidates(state, region)
-    caves: List[CaveStructure] = []
+    caves: list[CaveStructure] = []
     debris_total = 0
 
     for idx, ent in enumerate(entrance_candidates):
@@ -3686,7 +3681,7 @@ def pass_caves(
         if protected[row, col]:
             continue
 
-        hints_out: Dict[str, str] = {}
+        hints_out: dict[str, str] = {}
         archetype = pick_cave_archetype(
             stack, ent, cave_seed, intent=state.intent, hints_out=hints_out
         )
@@ -3774,7 +3769,7 @@ def pass_caves(
 
         # Approximate carved volume: cell_area * sum(|delta|)
         _cell_area = float(stack.cell_size) ** 2
-        _vol_m3 = float(np.sum(np.abs(delta))) * _cell_area if delta is not None else 0.0
+        _vol_m3 = float(np.sum(np.abs(delta))) * _cell_area
 
         # Wall texture seed — deterministic, PYTHONHASHSEED-stable
         _arch_str = archetype.value if hasattr(archetype, "value") else str(archetype)
@@ -3894,7 +3889,7 @@ def pass_caves(
             rng_sub = np.random.default_rng(cave_i ^ 0xDEADBEEF)
             sel = rng_sub.choice(ys_idx.size, 60, replace=False)
             ys_idx, xs_idx = ys_idx[sel], xs_idx[sel]
-        stala_positions: List[Tuple[float, float, float]] = [
+        stala_positions: list[Tuple[float, float, float]] = [
             (
                 ox + (int(c) + 0.5) * cell_size_m,
                 oy + (int(r) + 0.5) * cell_size_m,
@@ -4004,7 +3999,7 @@ def get_cave_entrance_specs(
     *,
     max_entrances: int = 4,
     seed: int = 42,
-) -> list:
+) -> list[Metadata]:
     """Return MeshSpec dicts for cave entrance meshes at cave-candidate sites.
 
     Reads the ``cave_candidate`` channel (produced by ``pass_caves``) to
@@ -4026,7 +4021,7 @@ def get_cave_entrance_specs(
         return []
 
     indices = rng.choice(len(candidates), size=min(max_entrances, len(candidates)), replace=False)
-    results = []
+    results: list[Metadata] = []
     for idx in indices:
         r, c = int(candidates[idx][0]), int(candidates[idx][1])
         wx = stack.world_origin_x + c * stack.cell_size
@@ -4200,15 +4195,15 @@ def _cone_verts_faces(
     base_radius: float,
     segments: int = 6,
     taper: float = 1.0,
-) -> Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]:
+) -> Tuple[list[Tuple[float, float, float]], list[Tuple[int, ...]]]:
     """Return (verts, tris) for a single cone (stalactite or stalagmite).
 
     ``tip`` is the sharp end; ``base_center`` is the wide end.
     ``taper`` in (0, 1] optionally narrows the base further (stalagmite effect).
     The cone is triangulated as a fan from the tip + a base cap fan.
     """
-    verts: List[Tuple[float, float, float]] = []
-    faces: List[Tuple[int, ...]] = []
+    verts: list[Tuple[float, float, float]] = []
+    faces: list[Tuple[int, ...]] = []
 
     tip_idx = 0
     verts.append(tip)
@@ -4248,8 +4243,12 @@ def _face_normal(
     v2: Tuple[float, float, float],
 ) -> Tuple[float, float, float]:
     """Return the unit normal of triangle (v0, v1, v2) using the cross product."""
-    ax = v1[0] - v0[0]; ay = v1[1] - v0[1]; az = v1[2] - v0[2]
-    bx = v2[0] - v0[0]; by = v2[1] - v0[1]; bz = v2[2] - v0[2]
+    ax = v1[0] - v0[0]
+    ay = v1[1] - v0[1]
+    az = v1[2] - v0[2]
+    bx = v2[0] - v0[0]
+    by = v2[1] - v0[1]
+    bz = v2[2] - v0[2]
     nx = ay * bz - az * by
     ny = az * bx - ax * bz
     nz = ax * by - ay * bx
@@ -4293,10 +4292,10 @@ def _build_chamber_mesh_geometry(
     stalagmite_count: int = 3,
     uv_scale: float = 0.5,
 ) -> Tuple[
-    List[Tuple[float, float, float]],
-    List[Tuple[int, ...]],
-    List[Tuple[float, float]],
-    List[Tuple[float, float, float]],
+    list[Tuple[float, float, float]],
+    list[Tuple[int, ...]],
+    list[Tuple[float, float]],
+    list[Tuple[float, float, float]],
 ]:
     """Build chamber verts/faces/UVs/normals as pure data — no bpy, fully testable.
 
@@ -4363,9 +4362,9 @@ def _build_chamber_mesh_geometry(
         size=(nr, ns),
     )
 
-    verts: List[Tuple[float, float, float]] = []
-    uvs: List[Tuple[float, float]] = []
-    faces: List[Tuple[int, ...]] = []
+    verts: list[Tuple[float, float, float]] = []
+    uvs: list[Tuple[float, float]] = []
+    faces: list[Tuple[int, ...]] = []
 
     def _add_vert(vx: float, vy: float, vz: float) -> int:
         idx = len(verts)
@@ -4388,7 +4387,7 @@ def _build_chamber_mesh_geometry(
     apex_idx = _add_vert(cx, cy, cz + h)
 
     # nr rings from near-apex (t close to 1) down to the floor equator (t=0)
-    ring_start_indices: List[int] = []
+    ring_start_indices: list[int] = []
     for ring in range(nr):
         # t: 1 = top of vault, 0 = equator (where wall meets floor)
         t = 1.0 - float(ring + 1) / float(nr)   # ring=0 → t=(nr-1)/nr, ..., ring=nr-1 → t=0
@@ -4433,7 +4432,7 @@ def _build_chamber_mesh_geometry(
     # ------------------------------------------------------------------
     rng_floor = np.random.default_rng(int(seed ^ 0xF100F) & 0xFFFFFFFF)
     n_boulders = int(rng_floor.integers(2, 5))  # 2..4 boulder centres
-    boulder_centres: List[Tuple[float, float, float, float]] = []
+    boulder_centres: list[Tuple[float, float, float, float]] = []
     for _bi in range(n_boulders):
         bangle = float(rng_floor.uniform(0.0, 2.0 * math.pi))
         bfrac = float(rng_floor.uniform(0.15, 0.80))  # 0=centre, 1=edge
@@ -4549,7 +4548,7 @@ def _build_chamber_mesh_geometry(
     # Track stalactite tip XY positions and their remaining headroom so the
     # stalagmite loop can attempt to pair columns where combined growth reaches
     # ≥ 90% of chamber height.  Keys: (fvx_rounded, fvy_rounded) → ceiling_z
-    _stal_positions: List[Tuple[float, float, float, float, float]] = []
+    _stal_positions: list[Tuple[float, float, float, float, float]] = []
     # Each entry: (base_vx, base_vy, ceiling_z, stal_len, stal_r)
 
     n_stals = int(max(0, stalactite_count))
@@ -4557,7 +4556,7 @@ def _build_chamber_mesh_geometry(
         # Candidate ceiling vertices: upper half of vault rings.
         # Only verts in the top half of the vault rings hang stalactites;
         # lower rings are the wall/shoulder zone, not the ceiling.
-        ceiling_pool: List[int] = []
+        ceiling_pool: list[int] = []
         for ri, rs in enumerate(ring_start_indices):
             if ri < max(1, len(ring_start_indices) // 2):
                 for seg in range(ns):
@@ -4625,7 +4624,7 @@ def _build_chamber_mesh_geometry(
     # ------------------------------------------------------------------
     n_stags = int(max(0, stalagmite_count))
     if n_stags > 0:
-        floor_pool: List[int] = list(range(floor_ring_idx, floor_ring_idx + ns))
+        floor_pool: list[int] = list(range(floor_ring_idx, floor_ring_idx + ns))
         floor_pool.append(floor_center_idx)
         if floor_pool:
             chosen_floor = rng_speleothem.choice(
@@ -4717,7 +4716,7 @@ def _build_chamber_mesh_geometry(
     # ------------------------------------------------------------------
     # Per-face normals (cross product, unit length)
     # ------------------------------------------------------------------
-    normals: List[Tuple[float, float, float]] = []
+    normals: list[Tuple[float, float, float]] = []
     for tri in faces:
         i0, i1, i2 = tri[0], tri[1], tri[2]
         normals.append(_face_normal(verts[i0], verts[i1], verts[i2]))
@@ -4787,7 +4786,7 @@ def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: floa
     for poly in mesh.polygons:
         for loop_idx in poly.loop_indices:
             vi = mesh.loops[loop_idx].vertex_index
-            vx, vy, vz = verts[vi]
+            vx, _vy, vz = verts[vi]
             # u: world-X tile at coarser scale (moisture texture)
             u_wet = vx * 0.25
             # v: height-proximity ramp — 1.0 at ceiling, ~0.3 at floor
@@ -4844,7 +4843,7 @@ def _build_bezier_tunnel_geometry(
     chamber_radius: float,
     tube_segments: int = 12,
     cross_sections: int = 8,
-) -> Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]:
+) -> Tuple[list[Tuple[float, float, float]], list[Tuple[int, ...]]]:
     """Build a swept tube along a cubic Bezier from entrance to chamber.
 
     The tunnel tapers from entrance_radius (wide end) to chamber_radius
@@ -4870,8 +4869,8 @@ def _build_bezier_tunnel_geometry(
     ns = int(max(4, cross_sections))
     n_segs = int(max(2, tube_segments))
 
-    verts: List[Tuple[float, float, float]] = []
-    faces: List[Tuple[int, ...]] = []
+    verts: list[Tuple[float, float, float]] = []
+    faces: list[Tuple[int, ...]] = []
 
     for si in range(n_segs + 1):
         t = float(si) / float(n_segs)
@@ -4886,7 +4885,6 @@ def _build_bezier_tunnel_geometry(
             t_next = t
             t_prev = float(si - 1) / float(n_segs)
             c_prev = _bezier_cubic(p0, p1, p2, p3, t_prev)
-            centre_next = centre
             centre = c_prev
             centre = _bezier_cubic(p0, p1, p2, p3, t)
         c_next = _bezier_cubic(p0, p1, p2, p3, min(t_next, 1.0))
@@ -4909,7 +4907,9 @@ def _build_bezier_tunnel_geometry(
         ry = tang_z * up_x - tang_x * up_z
         rz = tang_x * up_y - tang_y * up_x
         r_len = math.sqrt(rx**2 + ry**2 + rz**2) or 1.0
-        rx /= r_len; ry /= r_len; rz /= r_len
+        rx /= r_len
+        ry /= r_len
+        rz /= r_len
 
         # Recompute up = right × tangent
         up_x = ry * tang_z - rz * tang_y
@@ -4940,7 +4940,7 @@ def _build_bezier_tunnel_geometry(
     return verts, faces
 
 
-def handle_generate_cave(params: dict) -> dict:
+def handle_generate_cave(params: Metadata) -> Metadata:
     """MCP handler: generate a cave via the terrain ``pass_caves`` engine.
 
     Pipeline:
@@ -5024,7 +5024,7 @@ def handle_generate_cave(params: dict) -> dict:
         # Retrieve the carve height delta produced by pass_caves so the caller
         # (terrain geometry pass) can add it to the heightmap.
         _cave_delta_arr = state.mask_stack.get("cave_height_delta")
-        cave_height_delta: Optional[List] = (
+        cave_height_delta: Optional[list[Any]] = (
             np.asarray(_cave_delta_arr).tolist()
             if _cave_delta_arr is not None
             else None
@@ -5057,7 +5057,7 @@ def handle_generate_cave(params: dict) -> dict:
 
         # Serialise into a mesh spec dict so the caller/composer can consume
         # it without needing bpy (test-safe, Unity-exportable).
-        chamber_mesh_spec: Dict = {
+        chamber_mesh_spec: Metadata = {
             "name": name,
             "vertices": ch_verts,
             "faces": ch_faces,
@@ -5103,7 +5103,7 @@ def handle_generate_cave(params: dict) -> dict:
         )
 
         # Attempt to materialise the tunnel mesh in Blender (best-effort).
-        tunnel_mesh_spec: Optional[Dict] = None
+        tunnel_mesh_spec: Metadata
         try:
             import bpy as _bpy
             import bmesh as _bmesh
@@ -5176,11 +5176,11 @@ def handle_generate_cave(params: dict) -> dict:
             half_h: float,
             depth: float,
             ns: int,
-        ) -> Dict:
+        ) -> Metadata:
             """Return a mesh spec dict for a planar elliptic arch ring."""
             cx, cy, cz = centre
-            av: List[Tuple[float, float, float]] = []
-            af: List[Tuple[int, ...]] = []
+            av: list[Tuple[float, float, float]] = []
+            af: list[Tuple[int, ...]] = []
             # Two ellipse rings: front face (y=cy) and back face (y=cy+depth)
             front_start = 0
             for i in range(ns):
@@ -5231,7 +5231,7 @@ def handle_generate_cave(params: dict) -> dict:
         entry_arch_spec["cliff_face"] = "south"   # -Y face
         exit_arch_spec["cliff_face"] = "north"    # +Y face
 
-        archway_specs: List[Dict] = [entry_arch_spec, exit_arch_spec]
+        archway_specs: list[Metadata] = [entry_arch_spec, exit_arch_spec]
 
         # Second exit: either forced by traversable=True, or auto-added when
         # the cave is deep enough (>30 m) to justify two distinct egress points
@@ -5271,7 +5271,7 @@ def handle_generate_cave(params: dict) -> dict:
         _rx = chamber_w * 0.5
         _ry = chamber_d * 0.5
         _rng_stals = np.random.default_rng(int(seed) & 0xFFFFFFFF)
-        _ceiling_pool_positions: List[Tuple[float, float, float]] = []
+        _ceiling_pool_positions: list[Tuple[float, float, float]] = []
         # Rings 0..(nr//2 - 1) are the "upper half" used as ceiling attachment pool
         for _ri in range(max(1, _nr // 2)):
             _t = 1.0 - float(_ri + 1) / float(_nr)
@@ -5291,7 +5291,7 @@ def handle_generate_cave(params: dict) -> dict:
                 size=_n_stals_used,
                 replace=False,
             )
-            stalactite_positions: List[Tuple[float, float, float]] = [
+            stalactite_positions: list[Tuple[float, float, float]] = [
                 _ceiling_pool_positions[int(i)] for i in _chosen_idx
             ]
         else:
@@ -5304,17 +5304,16 @@ def handle_generate_cave(params: dict) -> dict:
         ) if _depth_arr is not None else 0.0
 
         # damp_intensity: resolve from picked archetype spec defaults
-        _arch_enum = None
+        _arch_enum: Optional[CaveArchetype] = None
         if picked_archetype:
             try:
                 _arch_enum = CaveArchetype(picked_archetype)
             except ValueError:
                 pass
-        _damp_intensity = (
-            _ARCHETYPE_DEFAULTS[_arch_enum].get("damp_intensity", 0.5)
-            if _arch_enum in _ARCHETYPE_DEFAULTS
-            else 0.5
-        )
+        if _arch_enum is not None and _arch_enum in _ARCHETYPE_DEFAULTS:
+            _damp_intensity = _ARCHETYPE_DEFAULTS[_arch_enum].get("damp_intensity", 0.5)
+        else:
+            _damp_intensity = 0.5
 
         # Generate all natural prop categories
         _speleothem_props = _generate_speleothem_pairs(
@@ -5360,7 +5359,7 @@ def handle_generate_cave(params: dict) -> dict:
         #     it.  We reuse road_network's 24-direction A* planner when
         #     available to match the roads/trails pathing conventions.
         # ------------------------------------------------------------------
-        spline_points: List[Tuple[float, float, float]] = [entrance_pos]
+        spline_points: list[Tuple[float, float, float]] = [entrance_pos]
         # Intermediate chamber waypoint keeps speleothems honest about
         # clearance in the chamber interior.
         spline_points.append(chamber_center)
@@ -5377,7 +5376,9 @@ def handle_generate_cave(params: dict) -> dict:
         # importable).  This mirrors the AAA design contract that interior
         # cave paths share the same navigation topology as road trails.
         try:
-            from . import road_network as _rn  # noqa: F401 — availability probe
+            from importlib import import_module
+
+            import_module("veilbreakers_terrain.handlers.road_network")
             # We don't have a full heightmap for the traversable spline (the
             # cave is synthetic state), but the import probe validates the
             # helper exists.  Downstream callers (compose_map) can re-plan
@@ -5393,7 +5394,7 @@ def handle_generate_cave(params: dict) -> dict:
             spline_radius_m=1.0,
         )
 
-        natural_props: List[Dict] = (
+        natural_props: list[Metadata] = (
             _speleothem_props
             + _mineral_props
             + _pool_props
@@ -5408,7 +5409,7 @@ def handle_generate_cave(params: dict) -> dict:
         #     + Elden Ring legacy dungeon palettes: low albedo (0.22–0.28),
         #     high roughness (0.85–0.95), moderate normal-map depth.
         # ------------------------------------------------------------------
-        interior_material: Dict = {
+        interior_material: Metadata = {
             "name": f"{name}_Interior",
             "role": "cave_interior",
             "archetype": picked_archetype or "unknown",
@@ -5421,7 +5422,7 @@ def handle_generate_cave(params: dict) -> dict:
             "shader_hint": "cave_interior_damp",
             "damp_mix": _damp_intensity,
         }
-        exterior_material: Dict = {
+        exterior_material: Metadata = {
             "name": f"{name}_Exterior",
             "role": "cave_exterior",
             "archetype": picked_archetype or "unknown",
@@ -5446,9 +5447,7 @@ def handle_generate_cave(params: dict) -> dict:
         # meshes list: chamber first (primary geometry), then tunnel, then
         # entrance archway specs from get_cave_entrance_specs, then our
         # analytically-built archway opening meshes.
-        meshes: List[Dict] = [chamber_mesh_spec]
-        if tunnel_mesh_spec is not None:
-            meshes.append(tunnel_mesh_spec)
+        meshes: list[Metadata] = [chamber_mesh_spec, tunnel_mesh_spec]
         meshes.extend(entrance_specs)
         meshes.extend(archway_specs)
 

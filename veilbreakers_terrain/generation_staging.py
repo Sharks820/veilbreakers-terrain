@@ -48,7 +48,18 @@ class GenerationStage:
     peak_vram_gb: float
     peak_ram_gb: float
     cache_namespace: str
-    requires_visual_qa: bool = False
+    requires_data_contract_qa: bool = False
+
+    @property
+    def requires_visual_qa(self) -> bool:
+        """Deprecated alias for :attr:`requires_data_contract_qa`."""
+        import warnings
+        warnings.warn(
+            "requires_visual_qa is deprecated; use requires_data_contract_qa instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.requires_data_contract_qa
 
 
 @dataclass(frozen=True)
@@ -85,7 +96,7 @@ _REFERENCE_GUARDRAILS = (
     "require_water_surface_elevation_depth_flow_metadata",
     "require_pbr_basecolor_normal_roughness_for_generated_props",
     "checkpoint_after_each_heavy_stage",
-    "run_blender_visual_qa_before_visual_quality_claim",
+    "run_blender_data_contract_qa_before_visual_quality_claim",
 )
 
 
@@ -187,7 +198,7 @@ def build_staged_aaa_generation_plan(
             peak_vram_gb=2.0,
             peak_ram_gb=10.0,
             cache_namespace="water",
-            requires_visual_qa=True,
+            requires_data_contract_qa=True,
         ),
         GenerationStage(
             name="materials",
@@ -207,7 +218,7 @@ def build_staged_aaa_generation_plan(
             peak_vram_gb=4.0,
             peak_ram_gb=16.0,
             cache_namespace="materials",
-            requires_visual_qa=True,
+            requires_data_contract_qa=True,
         ),
         GenerationStage(
             name="scatter_and_props",
@@ -224,7 +235,7 @@ def build_staged_aaa_generation_plan(
             peak_vram_gb=3.0,
             peak_ram_gb=12.0,
             cache_namespace="scatter",
-            requires_visual_qa=True,
+            requires_data_contract_qa=True,
         ),
         GenerationStage(
             name="unity_export_and_validation",
@@ -241,7 +252,7 @@ def build_staged_aaa_generation_plan(
             peak_vram_gb=2.0,
             peak_ram_gb=8.0,
             cache_namespace="export",
-            requires_visual_qa=True,
+            requires_data_contract_qa=True,
         ),
     )
     return {

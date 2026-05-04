@@ -13,10 +13,14 @@ to be reachable at runtime must have an entry here.
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable, Dict
+from typing import Any, Callable, TypeAlias
 
 _LP_LOCK = threading.RLock()
 _HR_LOCK = threading.RLock()
+
+HandlerParams: TypeAlias = dict[str, Any]
+HandlerResult: TypeAlias = dict[str, Any]
+CommandHandler: TypeAlias = Callable[[HandlerParams], Any]
 
 
 def register_all(strict: bool = False) -> Any:
@@ -43,7 +47,7 @@ def register_all(strict: bool = False) -> Any:
     return loaded
 
 
-def _build_command_handlers() -> Dict[str, Callable]:
+def _build_command_handlers() -> dict[str, CommandHandler]:
     """Build and return the COMMAND_HANDLERS dispatch table.
 
     Imports are deferred so that loading this package never pulls in bpy
@@ -51,15 +55,15 @@ def _build_command_handlers() -> Dict[str, Callable]:
     any module that fails to import (e.g. missing optional dependency) is
     skipped with a warning rather than killing the whole table.
     """
+    import importlib as _il
     import logging
     _log = logging.getLogger(__name__)
 
-    handlers: Dict[str, Callable] = {}
+    handlers: dict[str, CommandHandler] = {}
 
     def _try_register(key: str, module_path: str, fn_name: str) -> None:
         try:
-            import importlib
-            mod = importlib.import_module(module_path)
+            mod = _il.import_module(module_path)
             fn = getattr(mod, fn_name)
             handlers[key] = fn
         except Exception as exc:  # noqa: BLE001
@@ -68,12 +72,12 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 key, module_path, fn_name, exc,
             )
 
-    def _make_signature_handler(fn: Callable) -> Callable:
+    def _make_signature_handler(fn: Callable[..., Any]) -> CommandHandler:
         import inspect
 
         sig = inspect.signature(fn)
 
-        def _handler(params: dict) -> Any:
+        def _handler(params: HandlerParams) -> Any:
             payload = params or {}
             kwargs = {k: v for k, v in payload.items() if k in sig.parameters}
             return fn(**kwargs)
@@ -222,7 +226,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
         _coast = _il_coast.import_module(f"{_pkg}.coastline")
         _gen_coastline = _coast.generate_coastline
 
-        def _handle_generate_coastline(params: dict) -> dict:
+        def _handle_generate_coastline(params: HandlerParams) -> HandlerResult:
             return _gen_coastline(
                 length=params.get("length", 200.0),
                 width=params.get("width", 50.0),
@@ -276,12 +280,11 @@ def _build_command_handlers() -> Dict[str, Callable]:
     # world_map.py — world map generation (Task #45-46)
     # ------------------------------------------------------------------
     try:
-        import importlib as _il
         _wm = _il.import_module(f"{_pkg}.world_map")
         _generate_world_map = _wm.generate_world_map
         _world_map_to_dict = _wm.world_map_to_dict
 
-        def _handle_generate_world_map(params: dict) -> dict:
+        def _handle_generate_world_map(params: HandlerParams) -> HandlerResult:
             wm = _generate_world_map(
                 num_regions=params.get("num_regions", 6),
                 map_size=params.get("map_size", 2000.0),
@@ -300,7 +303,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _li = _il.import_module(f"{_pkg}.light_integration")
 
-        def _handle_compute_light_placements(params: dict) -> list:
+        def _handle_compute_light_placements(params: HandlerParams) -> list[Any]:
             props = params.get("props") or params.get("prop_positions") or []
             sun_direction = params.get("sun_direction", (0.5, -0.5, -0.7))
             return _li.compute_light_placements(
@@ -308,13 +311,13 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 sun_direction=sun_direction,
             )
 
-        def _handle_merge_lights(params: dict) -> list:
+        def _handle_merge_lights(params: HandlerParams) -> list[Any]:
             return _li.merge_nearby_lights(params.get("lights", []))
 
-        def _handle_light_budget(params: dict) -> dict:
+        def _handle_light_budget(params: HandlerParams) -> HandlerResult:
             return _li.compute_light_budget(params.get("lights", []))
 
-        def _handle_compute_probe_placements(params: dict) -> list:
+        def _handle_compute_probe_placements(params: HandlerParams) -> list[Any]:
             import numpy as _np
             height_raw = params.get("height")
             if height_raw is None:
@@ -349,7 +352,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _av = _il.import_module(f"{_pkg}.atmospheric_volumes")
 
-        def _handle_compute_atmospheric_placements(params: dict) -> list:
+        def _handle_compute_atmospheric_placements(params: HandlerParams) -> list[Any]:
             return _av.compute_atmospheric_placements(
                 biome_name=params.get("biome_name", "dark_forest"),
                 area_bounds=tuple(params.get("area_bounds", [0, 0, 100, 100])),
@@ -363,10 +366,10 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 weather_hints=params.get("weather_hints"),
             )
 
-        def _handle_volume_mesh_spec(params: dict) -> dict:
+        def _handle_volume_mesh_spec(params: HandlerParams) -> HandlerResult:
             return _av.compute_volume_mesh_spec(params.get("volume_type", "ground_fog"))
 
-        def _handle_atmosphere_performance(params: dict) -> dict:
+        def _handle_atmosphere_performance(params: HandlerParams) -> HandlerResult:
             return _av.estimate_atmosphere_performance(params.get("placements", []))
 
         handlers["env_compute_atmospheric_placements"] = _handle_compute_atmospheric_placements
@@ -384,21 +387,21 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _mesh = _il.import_module(f"{_pkg}.mesh")
 
-        def _handle_select_by_box(params: dict) -> list:
+        def _handle_select_by_box(params: HandlerParams) -> list[Any]:
             return _mesh._select_by_box(
                 params.get("verts", []),
                 tuple(params.get("min_pt", (0.0, 0.0, 0.0))),
                 tuple(params.get("max_pt", (0.0, 0.0, 0.0))),
             )
 
-        def _handle_select_by_sphere(params: dict) -> list:
+        def _handle_select_by_sphere(params: HandlerParams) -> list[Any]:
             return _mesh._select_by_sphere(
                 params.get("verts", []),
                 tuple(params.get("center", (0.0, 0.0, 0.0))),
                 float(params.get("radius", 0.0)),
             )
 
-        def _handle_select_by_plane(params: dict) -> list:
+        def _handle_select_by_plane(params: HandlerParams) -> list[Any]:
             return _mesh._select_by_plane(
                 params.get("verts", []),
                 tuple(params.get("plane_point", (0.0, 0.0, 0.0))),
@@ -406,7 +409,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 str(params.get("side", "above")),
             )
 
-        def _handle_parse_selection_criteria(params: dict) -> dict:
+        def _handle_parse_selection_criteria(params: HandlerParams) -> HandlerResult:
             return _mesh._parse_selection_criteria(
                 params.get("criteria", {}),
                 strict=bool(params.get("strict", False)),
@@ -425,7 +428,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _ms = _il.import_module(f"{_pkg}.mesh_smoothing")
 
-        def _handle_smooth_assembled_mesh(params: dict) -> list:
+        def _handle_smooth_assembled_mesh(params: HandlerParams) -> list[Any]:
             return _ms.smooth_assembled_mesh(
                 params.get("verts", []),
                 params.get("faces", []),
@@ -444,7 +447,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _vpl = _il.import_module(f"{_pkg}.vertex_paint_live")
 
-        def _handle_compute_paint_weights(params: dict) -> list:
+        def _handle_compute_paint_weights(params: HandlerParams) -> list[Any]:
             return _vpl.compute_paint_weights(
                 params.get("verts", []),
                 tuple(params.get("brush_center", (0.0, 0.0, 0.0))),
@@ -452,7 +455,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 str(params.get("falloff_mode", "SMOOTH")),
             )
 
-        def _handle_compute_paint_weights_uv(params: dict) -> list:
+        def _handle_compute_paint_weights_uv(params: HandlerParams) -> list[Any]:
             return _vpl.compute_paint_weights_uv(
                 params.get("uvs", []),
                 tuple(params.get("brush_center_uv", (0.0, 0.0))),
@@ -460,7 +463,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 str(params.get("falloff_mode", "SMOOTH")),
             )
 
-        def _handle_blend_colors(params: dict) -> tuple:
+        def _handle_blend_colors(params: HandlerParams) -> tuple[Any, ...]:
             return _vpl.blend_colors(
                 tuple(params.get("existing", (0.0, 0.0, 0.0, 1.0))),
                 tuple(params.get("new_color", (0.0, 0.0, 0.0, 1.0))),
@@ -481,14 +484,14 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _al = _il.import_module(f"{_pkg}.autonomous_loop")
 
-        def _handle_evaluate_mesh_quality(params: dict) -> dict:
+        def _handle_evaluate_mesh_quality(params: HandlerParams) -> HandlerResult:
             return _al.evaluate_mesh_quality(
                 params.get("verts", []),
                 params.get("faces", []),
                 uvs=params.get("uvs"),
             )
 
-        def _handle_select_fix_action(params: dict):
+        def _handle_select_fix_action(params: HandlerParams):
             return _al.select_fix_action(
                 params.get("quality", {}),
                 params.get("targets", {}),
@@ -506,14 +509,14 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _weath = _il.import_module(f"{_pkg}.weathering")
 
-        def _handle_compute_weathered_vertex_colors(params: dict) -> list:
+        def _handle_compute_weathered_vertex_colors(params: HandlerParams) -> list[Any]:
             return _weath.compute_weathered_vertex_colors(
                 params.get("mesh_data", {}),
                 tuple(params.get("base_color", (0.5, 0.5, 0.5, 1.0))),
                 preset_name=str(params.get("preset_name", "medium")),
             )
 
-        def _handle_apply_structural_settling(params: dict) -> list:
+        def _handle_apply_structural_settling(params: HandlerParams) -> list[Any]:
             return _weath.apply_structural_settling(
                 params.get("verts", []),
                 strength=float(params.get("strength", 0.01)),
@@ -534,7 +537,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _ae = _il.import_module(f"{_pkg}.animation_environment")
 
-        def _handle_generate_env_keyframes(params: dict) -> list:
+        def _handle_generate_env_keyframes(params: HandlerParams) -> list[Any]:
             return _ae.generate_env_keyframes(params)
 
         handlers["animation_generate_env_keyframes"] = _handle_generate_env_keyframes
@@ -542,10 +545,10 @@ def _build_command_handlers() -> Dict[str, Callable]:
         # Wire every public generate_*_keyframes function listed in __all__.
         import inspect as _inspect
 
-        def _make_generator_handler(fn):
+        def _make_generator_handler(fn: Callable[..., Any]) -> CommandHandler:
             sig = _inspect.signature(fn)
 
-            def _h(params: dict):
+            def _h(params: HandlerParams) -> Any:
                 kwargs = {k: v for k, v in (params or {}).items() if k in sig.parameters}
                 return fn(**kwargs)
             return _h
@@ -574,9 +577,9 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _lp = _il.import_module(f"{_pkg}.terrain_live_preview")
 
-        _LP_STATE: Dict[str, Any] = {"session": None}
+        _LP_STATE: dict[str, Any] = {"session": None}
 
-        def _get_or_build_session(params: dict):
+        def _get_or_build_session(params: HandlerParams):
             """Return the live-preview session, building it lazily."""
             with _LP_LOCK:
                 sess = _LP_STATE.get("session")
@@ -591,7 +594,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                     _LP_STATE["session"] = sess
                 return sess
 
-        def _handle_terrain_preview_apply(params: dict) -> dict:
+        def _handle_terrain_preview_apply(params: HandlerParams) -> HandlerResult:
             sess = _get_or_build_session(params)
             if sess is None:
                 return {"status": "error", "error": "no_active_controller"}
@@ -600,7 +603,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
             return {"status": "ok", "hash_after": hash_after,
                     "history_length": len(sess.history)}
 
-        def _handle_terrain_preview_state(params: dict) -> dict:
+        def _handle_terrain_preview_state(params: HandlerParams) -> HandlerResult:
             sess = _get_or_build_session(params)
             if sess is None:
                 return {"status": "error", "error": "no_active_controller"}
@@ -610,12 +613,12 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 "history_length": len(sess.history),
             }
 
-        def _handle_terrain_preview_reset(params: dict) -> dict:
+        def _handle_terrain_preview_reset(params: HandlerParams) -> HandlerResult:
             with _LP_LOCK:
                 _LP_STATE["session"] = None
             return {"status": "ok", "reset": True}
 
-        def _handle_terrain_preview_diff(params: dict) -> dict:
+        def _handle_terrain_preview_diff(params: HandlerParams) -> HandlerResult:
             sess = _get_or_build_session(params)
             if sess is None:
                 return {"status": "error", "error": "no_active_controller"}
@@ -629,7 +632,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                     return {"status": "error", "error": "missing_hash_before"}
             return {"status": "ok", **sess.diff_preview(str(hash_before), str(hash_after))}
 
-        def _handle_terrain_preview_render_thumbnail(params: dict) -> dict:
+        def _handle_terrain_preview_render_thumbnail(params: HandlerParams) -> HandlerResult:
             sess = _get_or_build_session(params)
             if sess is None:
                 return {"status": "error", "error": "no_active_controller"}
@@ -659,7 +662,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _hr = _il.import_module(f"{_pkg}.terrain_hot_reload")
 
-        _HR_STATE: Dict[str, Any] = {"watcher": None}
+        _HR_STATE: dict[str, Any] = {"watcher": None}
 
         def _get_watcher():
             with _HR_LOCK:
@@ -671,16 +674,16 @@ def _build_command_handlers() -> Dict[str, Callable]:
                     _HR_STATE["watcher"] = w
                 return w
 
-        def _handle_hot_reload_start(params: dict) -> dict:
+        def _handle_hot_reload_start(params: HandlerParams) -> HandlerResult:
             w = _get_watcher()
             return {"status": "ok", "watched": list(w.watched_modules)}
 
-        def _handle_hot_reload_stop(params: dict) -> dict:
+        def _handle_hot_reload_stop(params: HandlerParams) -> HandlerResult:
             with _HR_LOCK:
                 _HR_STATE["watcher"] = None
             return {"status": "ok", "stopped": True}
 
-        def _handle_hot_reload_check(params: dict) -> dict:
+        def _handle_hot_reload_check(params: HandlerParams) -> HandlerResult:
             w = _get_watcher()
             reloaded = w.check_and_reload()
             return {"status": "ok", "reloaded": reloaded}
@@ -709,7 +712,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _vqa = _il.import_module(f"{_pkg}.terrain_visual_qa")
 
-        def _handle_visual_qa_setup_camera(params: dict) -> dict:
+        def _handle_visual_qa_setup_camera(params: HandlerParams) -> HandlerResult:
             payload = params or {}
             return _vqa.handle_visual_qa_setup_camera(
                 max_extent=float(payload.get("max_extent", 100.0)),
@@ -720,7 +723,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 sensor_width_mm=float(payload.get("sensor_width_mm", 36.0)),
             )
 
-        def _handle_visual_qa_set_shading(params: dict) -> dict:
+        def _handle_visual_qa_set_shading(params: HandlerParams) -> HandlerResult:
             payload = params or {}
             return _vqa.handle_visual_qa_set_shading(
                 shading_type=str(payload.get("shading_type", "SOLID")),
@@ -728,7 +731,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 use_world_lighting=bool(payload.get("use_world_lighting", True)),
             )
 
-        def _handle_visual_qa_capture_screenshot(params: dict) -> dict:
+        def _handle_visual_qa_capture_screenshot(params: HandlerParams) -> HandlerResult:
             payload = params or {}
             filepath = payload.get("filepath")
             if not filepath:
@@ -745,7 +748,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 thumbnail=bool(payload.get("thumbnail", False)),
             )
 
-        def _handle_visual_qa_validate_channels(params: dict) -> dict:
+        def _handle_visual_qa_validate_channels(params: HandlerParams) -> HandlerResult:
             payload = params or {}
             stack = payload.get("stack")
             required_channels = payload.get("required_channels")
@@ -754,7 +757,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 required_channels=required_channels,
             )
 
-        def _handle_visual_qa_compare_render(params: dict) -> dict:
+        def _handle_visual_qa_compare_render(params: HandlerParams) -> HandlerResult:
             payload = params or {}
             return _vqa.handle_visual_qa_compare_render(
                 render_path=str(payload.get("render_path", "")),
@@ -778,7 +781,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
         _vs = _il.import_module(f"{_pkg}.terrain_viewport_sync")
         from .terrain_semantics import BBox as _BBox
 
-        def _coerce_bbox(raw):
+        def _coerce_bbox(raw: Any) -> Any:
             if isinstance(raw, _BBox):
                 return raw
             if isinstance(raw, dict):
@@ -797,7 +800,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 )
             return None
 
-        def _serialize_vantage(vantage) -> dict:
+        def _serialize_vantage(vantage: Any) -> HandlerResult:
             return {
                 "camera_position": list(vantage.camera_position),
                 "camera_direction": list(vantage.camera_direction),
@@ -809,7 +812,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 "view_matrix_hash": str(vantage.view_matrix_hash),
             }
 
-        def _coerce_vantage(raw):
+        def _coerce_vantage(raw: Any) -> Any:
             if isinstance(raw, _vs.ViewportVantage):
                 return raw
             if not isinstance(raw, dict):
@@ -828,7 +831,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 view_matrix_hash=str(raw.get("view_matrix_hash", "")),
             )
 
-        def _handle_read_viewport_vantage(params: dict) -> dict:
+        def _handle_read_viewport_vantage(params: HandlerParams) -> HandlerResult:
             bounds = _coerce_bbox((params or {}).get("visible_bounds"))
             vantage = _vs.read_user_vantage(
                 camera_position=tuple((params or {}).get("camera_position", (0.0, -20.0, 12.0))),
@@ -839,7 +842,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
             )
             return {"status": "ok", "vantage": _serialize_vantage(vantage)}
 
-        def _handle_assert_vantage_fresh(params: dict) -> dict:
+        def _handle_assert_vantage_fresh(params: HandlerParams) -> HandlerResult:
             vantage = _coerce_vantage((params or {}).get("vantage"))
             if vantage is None:
                 return {"status": "error", "error": "missing_vantage"}
@@ -852,7 +855,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 return {"status": "error", "error": "viewport_stale", "message": str(exc)}
             return {"status": "ok", "fresh": True}
 
-        def _handle_is_in_frustum(params: dict) -> dict:
+        def _handle_is_in_frustum(params: HandlerParams) -> HandlerResult:
             vantage = _coerce_vantage((params or {}).get("vantage"))
             if vantage is None:
                 return {"status": "error", "error": "missing_vantage"}
@@ -878,7 +881,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _ah = _il.import_module(f"{_pkg}.terrain_addon_health")
 
-        def _handle_addon_health(params: dict) -> dict:
+        def _handle_addon_health(params: HandlerParams) -> HandlerResult:
             min_version = tuple((params or {}).get("min_version", _ah.TERRAIN_ADDON_MIN_VERSION))
             allow_missing = bool((params or {}).get("allow_missing", False))
             try:
@@ -898,10 +901,10 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 "min_version": list(min_version),
             }
 
-        def _handle_detect_stale_addon(params: dict) -> dict:
+        def _handle_detect_stale_addon(params: HandlerParams) -> HandlerResult:
             return {"status": "ok", "stale": bool(_ah.detect_stale_addon())}
 
-        def _handle_force_addon_reload(params: dict) -> dict:
+        def _handle_force_addon_reload(params: HandlerParams) -> HandlerResult:
             return {"status": "ok", "reloaded": bool(_ah.force_addon_reload())}
 
         handlers["terrain_check_addon_health"] = _handle_addon_health
@@ -916,7 +919,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _bs = _il.import_module(f"{_pkg}.terrain_blender_safety")
 
-        def _handle_boolean_safety_check(params: dict) -> dict:
+        def _handle_boolean_safety_check(params: HandlerParams) -> HandlerResult:
             cutter_vert_count = int((params or {}).get("cutter_vert_count", 0))
             target_vert_count = int((params or {}).get("target_vert_count", 0))
             operation = str((params or {}).get("operation", "DIFFERENCE"))
@@ -942,7 +945,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 return {"status": "error", "safe": False, "message": str(exc), **result}
             return {"status": "ok", "safe": True, **result}
 
-        def _handle_convert_yup_to_zup(params: dict) -> dict:
+        def _handle_convert_yup_to_zup(params: HandlerParams) -> HandlerResult:
             position = tuple(float(x) for x in (params or {}).get("position", (0.0, 0.0, 0.0)))
             orientation = tuple(float(x) for x in (params or {}).get("orientation", (0.0, 0.0, 0.0)))
             converted_pos, converted_ori = _bs.convert_y_up_to_z_up(
@@ -956,7 +959,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 "orientation": list(converted_ori),
             }
 
-        def _handle_clamp_screenshot_size(params: dict) -> dict:
+        def _handle_clamp_screenshot_size(params: HandlerParams) -> HandlerResult:
             requested = int((params or {}).get("requested", (params or {}).get("size", _bs.BLENDER_SCREENSHOT_MAX_SIZE)))
             return {
                 "status": "ok",
@@ -980,7 +983,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _pr = _il.import_module(f"{_pkg}.terrain_performance_report")
 
-        def _handle_performance_report(params: dict) -> dict:
+        def _handle_performance_report(params: HandlerParams) -> HandlerResult:
             stack = (params or {}).get("mask_stack")
             budgets = (params or {}).get("budgets")
             report = _pr.collect_performance_report(stack, budgets=budgets)
@@ -999,7 +1002,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _nm = _il.import_module(f"{_pkg}.terrain_navmesh_export")
 
-        def _handle_navmesh_export(params: dict) -> dict:
+        def _handle_navmesh_export(params: HandlerParams) -> HandlerResult:
             from pathlib import Path as _Path
             stack = (params or {}).get("mask_stack")
             output_path = (params or {}).get("output_path")
@@ -1026,7 +1029,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _tv = _il.import_module(f"{_pkg}.terrain_validation")
 
-        def _handle_validation(params: dict) -> dict:
+        def _handle_validation(params: HandlerParams) -> HandlerResult:
             stack = (params or {}).get("mask_stack")
             intent = (params or {}).get("intent")
             if stack is None or intent is None:
@@ -1061,7 +1064,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _qp = _il.import_module(f"{_pkg}.terrain_quality_profiles")
 
-        def _handle_load_quality_profile(params: dict) -> dict:
+        def _handle_load_quality_profile(params: HandlerParams) -> HandlerResult:
             name = (params or {}).get("name", "aaa_open_world")
             try:
                 profile = _qp.load_quality_profile(name)
@@ -1075,14 +1078,14 @@ def _build_command_handlers() -> Dict[str, Callable]:
             payload = _asdict(profile)
             # ErosionStrategy enums don't JSON-serialise — coerce to value.
             strat = payload.get("erosion_strategy")
-            if hasattr(strat, "value"):
+            if strat is not None and hasattr(strat, "value"):
                 payload["erosion_strategy"] = strat.value
             return {"status": "ok", "profile": payload}
 
-        def _handle_list_quality_profiles(params: dict) -> dict:
+        def _handle_list_quality_profiles(params: HandlerParams) -> HandlerResult:
             return {"status": "ok", "profiles": _qp.list_quality_profiles()}
 
-        def _handle_apply_quality_profile(params: dict) -> dict:
+        def _handle_apply_quality_profile(params: HandlerParams) -> HandlerResult:
             """Apply a named profile to a target intent/state.
 
             Returns the resolved profile so the caller (Blender) can wire
@@ -1158,7 +1161,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
     try:
         _bcb = _il.import_module(f"{_pkg}.blender_capability_bridge")
 
-        def _wrap(fn_name: str) -> Callable:
+        def _wrap(fn_name: str) -> CommandHandler:
             fn = getattr(_bcb, fn_name)
             return _make_signature_handler(fn)
 
@@ -1208,14 +1211,14 @@ def _build_command_handlers() -> Dict[str, Callable]:
 
 
 # Build the table at import time (deferred internally via importlib).
-COMMAND_HANDLERS: Dict[str, Callable] = _build_command_handlers()
+COMMAND_HANDLERS: dict[str, CommandHandler] = _build_command_handlers()
 
 
 # ---------------------------------------------------------------------------
 # Module-level lazy exports from world_map, light_integration, atmospheric_volumes
 # ---------------------------------------------------------------------------
 
-def __getattr__(name: str):  # noqa: N807
+def __getattr__(name: str) -> Any:  # noqa: N807
     """Lazy top-level attribute access for handler submodule symbols."""
     _WORLD_MAP_EXPORTS = frozenset({
         "generate_world_map", "place_landmarks", "generate_storytelling_scene",
@@ -1244,6 +1247,33 @@ def __getattr__(name: str):  # noqa: N807
         mod = _il2.import_module(f"{_pkg2}.atmospheric_volumes")
         return getattr(mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+from .world_map import (  # noqa: E402
+    BIOME_TYPES,
+    LANDMARK_TYPES,
+    POI_TYPES,
+    STORYTELLING_PATTERNS,
+    generate_storytelling_scene,
+    generate_world_map,
+    place_landmarks,
+    world_map_to_dict,
+)
+from .light_integration import (  # noqa: E402
+    FLICKER_PRESETS,
+    LIGHT_PROP_MAP,
+    compute_light_budget,
+    compute_light_placements,
+    compute_probe_placements,
+    merge_nearby_lights,
+)
+from .atmospheric_volumes import (  # noqa: E402
+    ATMOSPHERIC_VOLUMES,
+    BIOME_ATMOSPHERE_RULES,
+    compute_atmospheric_placements,
+    compute_volume_mesh_spec,
+    estimate_atmosphere_performance,
+)
 
 
 __all__ = [

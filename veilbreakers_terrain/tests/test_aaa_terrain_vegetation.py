@@ -19,65 +19,92 @@ import random
 import sys
 import types
 import unittest
+from collections.abc import Callable, Sequence
+from typing import Protocol, TypeAlias
 
 import numpy as np
+import numpy.typing as npt
 
 # NOTE: conftest.py provides MagicMock-based bpy/bmesh/mathutils stubs.
+
+ColorRGBA: TypeAlias = tuple[float, float, float, float]
+Vec3: TypeAlias = tuple[float, float, float]
+HeightSlopePair: TypeAlias = tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+
+
+class _StubVert(Protocol):
+    co: Vec3
+
+    def __getitem__(self, layer: object) -> ColorRGBA: ...
+
+
+class _StubFace(Protocol):
+    verts: Sequence[_StubVert]
+
+
+class _StubBMesh(Protocol):
+    _verts: list[_StubVert]
+    _faces: list[_StubFace]
 
 # ---------------------------------------------------------------------------
 # Rich bpy / bmesh stubs used by test methods (not installed into sys.modules)
 # ---------------------------------------------------------------------------
 
-def _make_bpy_stubs():
+def _rgba(values: Sequence[float]) -> ColorRGBA:
+    r, g, b, a = values
+    return (r, g, b, a)
+
+
+def _make_bpy_stubs() -> tuple[types.ModuleType, types.ModuleType]:
     """Create minimal bpy and bmesh stubs (for reference / future use)."""
 
     # --- bmesh vertex / face types ---
 
     class _FloatColorLayer:
-        def __init__(self):
-            self._data = {}
+        def __init__(self) -> None:
+            self._data: dict[int, ColorRGBA] = {}
 
-        def __getitem__(self, vert):
+        def __getitem__(self, vert: object) -> ColorRGBA:
             return self._data.get(id(vert), (0.0, 0.0, 0.0, 0.0))
 
-        def __setitem__(self, vert, val):
-            self._data[id(vert)] = tuple(val)
+        def __setitem__(self, vert: object, val: Sequence[float]) -> None:
+            self._data[id(vert)] = _rgba(val)
 
     class _LayerGroup:
-        def __init__(self):
-            self._layers = {}
+        def __init__(self) -> None:
+            self._layers: dict[str, _FloatColorLayer] = {}
 
-        def new(self, name):
+        def new(self, name: str) -> _FloatColorLayer:
             layer = _FloatColorLayer()
             self._layers[name] = layer
             return layer
 
-        def get(self, name):
+        def get(self, name: str) -> _FloatColorLayer | None:
             return self._layers.get(name)
 
     class _LayerAccess:
-        def __init__(self):
+        def __init__(self) -> None:
             self.float_color = _LayerGroup()
 
     class _Vert:
-        def __init__(self, co):
+        def __init__(self, co: Vec3) -> None:
             self.co = co
-            self._colors = {}
+            self._colors: dict[int, ColorRGBA] = {}
 
-        def __setitem__(self, layer, val):
-            self._colors[id(layer)] = tuple(val)
+        def __setitem__(self, layer: object, val: Sequence[float]) -> None:
+            self._colors[id(layer)] = _rgba(val)
 
-        def __getitem__(self, layer):
+        def __getitem__(self, layer: object) -> ColorRGBA:
             return self._colors.get(id(layer), (0.0, 0.0, 0.0, 0.0))
 
     class _Face:
-        def __init__(self, verts):
+        def __init__(self, verts: Sequence[_Vert]) -> None:
             self.verts = verts
 
     class _BMesh:
-        def __init__(self):
-            self._verts = []
-            self._faces = []
+        def __init__(self) -> None:
+            self._verts: list[_Vert] = []
+            self._faces: list[_Face] = []
             self.verts = types.SimpleNamespace(
                 layers=_LayerAccess(),
                 new=self._new_vert,
@@ -85,87 +112,117 @@ def _make_bpy_stubs():
             # keep track of vertex layer on verts namespace for convenience
             self._vert_layer = self.verts.layers
 
-        def _new_vert(self, co):
+        def _new_vert(self, co: Vec3) -> _Vert:
             v = _Vert(co)
             self._verts.append(v)
             return v
 
         @property
-        def faces(self):
+        def faces(self) -> types.SimpleNamespace:
             return types.SimpleNamespace(new=self._new_face)
 
-        def _new_face(self, verts):
+        def _new_face(self, verts: Sequence[_Vert]) -> None:
             self._faces.append(_Face(list(verts)))
 
-        def to_mesh(self, mesh):
+        def to_mesh(self, mesh: "_Mesh") -> None:
             mesh._bm = self
 
-        def free(self):
+        def free(self) -> None:
             pass
 
     class _Mesh:
-        def __init__(self, name):
+        def __init__(self, name: str) -> None:
             self.name = name
-            self.polygons = []
-            self.materials = []
-            self._bm = None
+            self.polygons: list[object] = []
+            self.materials: list[object] = []
+            self._bm: _BMesh | None = None
             self.vertex_colors = types.SimpleNamespace(
-                new=lambda name="": _FloatColorLayer()
+                new=self._new_vertex_color,
             )
 
+        def _new_vertex_color(self, name: str = "") -> _FloatColorLayer:
+            return _FloatColorLayer()
+
     class _Object:
-        def __init__(self, name, mesh):
+        def __init__(self, name: str, mesh: _Mesh) -> None:
             self.name = name
             self.data = mesh
             self.location = (0.0, 0.0, 0.0)
 
     class _Collection:
-        def __init__(self):
-            self.objects = types.SimpleNamespace(link=lambda o: None)
+        def __init__(self) -> None:
+            self.objects = types.SimpleNamespace(link=self._link)
 
-    class _DataObjects:
-        def get(self, name):
+        def _link(self, obj: _Object) -> None:
             return None
 
-    class _Data:
-        def __init__(self):
-            self.meshes = types.SimpleNamespace(
-                new=lambda name: _Mesh(name),
-                get=lambda name: None,
-            )
-            self.objects = types.SimpleNamespace(
-                new=lambda name, mesh: _Object(name, mesh),
-                get=lambda name: None,
-            )
-            self.materials = _Materials()
-            self.collections = types.SimpleNamespace(new=lambda name: _Collection())
-
     class _Materials:
-        def __init__(self):
-            self._store = {}
+        def __init__(self) -> None:
+            self._store: dict[str, types.SimpleNamespace] = {}
 
-        def get(self, name):
+        def get(self, name: str) -> types.SimpleNamespace | None:
             return self._store.get(name)
 
-        def new(self, name):
+        def new(self, name: str) -> types.SimpleNamespace:
             m = types.SimpleNamespace(
                 name=name,
                 use_nodes=False,
                 node_tree=types.SimpleNamespace(
                     nodes=types.SimpleNamespace(
-                        get=lambda n: types.SimpleNamespace(
-                            inputs={
-                                "Base Color": types.SimpleNamespace(default_value=None),
-                                "Roughness": types.SimpleNamespace(default_value=None),
-                            }
-                        )
+                        get=self._node,
                     )
                 ),
             )
             self._store[name] = m
             return m
 
-    bpy_mod = types.ModuleType("bpy")
+        def _node(self, name: str) -> types.SimpleNamespace:
+            return types.SimpleNamespace(
+                inputs={
+                    "Base Color": types.SimpleNamespace(default_value=None),
+                    "Roughness": types.SimpleNamespace(default_value=None),
+                }
+            )
+
+    class _Data:
+        def __init__(self) -> None:
+            self.meshes = types.SimpleNamespace(
+                new=self._new_mesh,
+                get=self._get_mesh,
+            )
+            self.objects = types.SimpleNamespace(
+                new=self._new_object,
+                get=self._get_object,
+            )
+            self.materials = _Materials()
+            self.collections = types.SimpleNamespace(new=self._new_collection)
+
+        def _new_mesh(self, name: str) -> _Mesh:
+            return _Mesh(name)
+
+        def _get_mesh(self, name: str) -> None:
+            return None
+
+        def _new_object(self, name: str, mesh: _Mesh) -> _Object:
+            return _Object(name, mesh)
+
+        def _get_object(self, name: str) -> None:
+            return None
+
+        def _new_collection(self, name: str) -> _Collection:
+            return _Collection()
+
+    class _BpyModule(types.ModuleType):
+        data: _Data
+        context: types.SimpleNamespace
+        types: types.SimpleNamespace
+        ops: types.SimpleNamespace
+
+    class _BMeshModule(types.ModuleType):
+        new: Callable[[], _BMesh]
+        types: types.ModuleType
+
+    bpy_mod = _BpyModule("bpy")
     bpy_mod.data = _Data()
     bpy_mod.context = types.SimpleNamespace(
         collection=_Collection()
@@ -177,8 +234,8 @@ def _make_bpy_stubs():
     )
     bpy_mod.ops = types.SimpleNamespace()
 
-    bmesh_mod = types.ModuleType("bmesh")
-    bmesh_mod.new = lambda: _BMesh()
+    bmesh_mod = _BMeshModule("bmesh")
+    bmesh_mod.new = _BMesh
     bmesh_types_mod = types.ModuleType("bmesh.types")
     bmesh_mod.types = bmesh_types_mod
 
@@ -197,7 +254,7 @@ from veilbreakers_terrain.handlers import environment_scatter as scatter_mod  # 
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _count_tri_faces(bm) -> int:
+def _count_tri_faces(bm: _StubBMesh) -> int:
     """Count triangles from a _BMesh stub (quad faces each count as 2 tris)."""
     count = 0
     for f in bm._faces:
@@ -213,9 +270,14 @@ def _count_tri_faces(bm) -> int:
 class TestLeafCardPlaneCount(unittest.TestCase):
     """Verify leaf card canopies have 6-12 intersecting planes."""
 
-    def _count_planes(self, bm, canopy_center, canopy_radius):
+    def _count_planes(
+        self,
+        bm: _StubBMesh,
+        canopy_center: Vec3,
+        canopy_radius: float,
+    ) -> int:
         """Heuristic: a 'plane' is a face whose vertices all cluster near canopy_center height."""
-        cx, cy, cz = canopy_center
+        _, _, cz = canopy_center
         planes = 0
         for f in bm._faces:
             zs = [v.co[2] for v in f.verts]
@@ -233,7 +295,7 @@ class TestLeafCardPlaneCount(unittest.TestCase):
 
     def test_leaf_card_planes_range_6_to_12(self):
         """num_planes param is clamped to [6, 12] inside create_leaf_card_tree."""
-        for requested, expected_clamped in [(3, 6), (8, 8), (15, 12)]:
+        for requested in [3, 8, 15]:
             obj = scatter_mod.create_leaf_card_tree(
                 (0.0, 0.0, 0.0), height=5.0, num_planes=requested, seed=42
             )
@@ -288,7 +350,7 @@ class TestWindVertexColorsRGBA(unittest.TestCase):
         layer = bm.verts.layers.float_color.get("wind_vc")
         self.assertIsNotNone(layer, "wind_vc layer should exist on grass card bmesh")
 
-    def _with_rich_stubs(self, fn):
+    def _with_rich_stubs(self, fn: Callable[[], None]) -> None:
         """Run fn(bpy_stub, bmesh_stub) with rich stubs patched into scatter_mod."""
         bpy_stub, bmesh_stub = _make_bpy_stubs()
         orig_bpy = sys.modules.get("bpy")
@@ -507,7 +569,7 @@ class TestRockPowerLawDistribution(unittest.TestCase):
         counts = {"small": 0, "medium": 0, "large": 0}
         N = 1000
         for _ in range(N):
-            scale, size_class = scatter_mod._rock_size_from_power_law(rng)
+            _scale, size_class = scatter_mod._rock_size_from_power_law(rng)
             counts[size_class] += 1
 
         small_pct = counts["small"] / N
@@ -550,7 +612,7 @@ class TestRockPowerLawDistribution(unittest.TestCase):
 class TestMultipassScatterOrder(unittest.TestCase):
     """Verify multi-pass scatter runs trees before grass before rocks."""
 
-    def _flat_heightmap(self, size=32):
+    def _flat_heightmap(self, size: int = 32) -> HeightSlopePair:
         hm = np.full((size, size), 0.3)
         slope = np.zeros((size, size))
         return hm, slope
@@ -688,6 +750,13 @@ class TestTerrainNoiseTypeParam(unittest.TestCase):
         # They should not be identical
         self.assertFalse(np.allclose(perlin, ridged),
                          "Perlin and ridged_multifractal should differ")
+
+
+def test_create_biome_vegetation_template_raises_for_unknown_type():
+    import pytest
+    from veilbreakers_terrain.handlers.vegetation_system import _create_biome_vegetation_template
+    with pytest.raises(ValueError, match="No mesh generator found"):
+        _create_biome_vegetation_template("__nonexistent_type__", None)
 
 
 if __name__ == "__main__":

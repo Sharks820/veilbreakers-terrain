@@ -21,15 +21,16 @@ All colors follow VeilBreakers dark fantasy palette rules:
 from __future__ import annotations
 
 import logging
+import importlib
 import math
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 import numpy as np
 
 try:
-    import bpy
-except ImportError:
-    bpy = None  # type: ignore[assignment]
+    bpy: Any | None = importlib.import_module("bpy")
+except ModuleNotFoundError:
+    bpy = None
 
 from .procedural_materials import (
     MATERIAL_LIBRARY,
@@ -1162,14 +1163,14 @@ def assign_terrain_materials_by_slope(
         combined material list built from the palette zones in order:
         [ground..., slopes..., cliffs..., water_edges...].
     """
-    vertices = mesh_data.get("vertices", [])
-    faces = mesh_data.get("faces", [])
-    normals = mesh_data.get("normals", [])
+    vertices = list(cast(Sequence[Sequence[float]], mesh_data.get("vertices", [])))
+    faces = list(cast(Sequence[Sequence[int]], mesh_data.get("faces", [])))
+    normals = list(cast(Sequence[tuple[float, float, float]], mesh_data.get("normals", [])))
     water_level = float(mesh_data.get("water_level", 0.0))
-    rock_hardness_per_vertex: list[float] | None = mesh_data.get("rock_hardness")
+    rock_hardness_per_vertex = cast(list[float] | None, mesh_data.get("rock_hardness"))
     snow_line_z: float | None = mesh_data.get("snow_line_z")
     tree_line_z: float | None = mesh_data.get("tree_line_z")
-    moisture_per_vertex: list[float] | None = mesh_data.get("moisture_per_vertex")
+    moisture_per_vertex = cast(list[float] | None, mesh_data.get("moisture_per_vertex"))
 
     palette = get_biome_palette(biome_name)
 
@@ -1198,18 +1199,18 @@ def assign_terrain_materials_by_slope(
         face_hardness = 0.5  # default mid-hardness
         face_moisture = 0.5  # default mid-moisture (no bias)
         if face and vertices:
-            z_values = [vertices[vi][2] for vi in face if vi < len(vertices)]
+            z_values = [float(vertices[vi][2]) for vi in face if vi < len(vertices)]
             face_center_z = sum(z_values) / len(z_values) if z_values else 0.0
             if rock_hardness_per_vertex is not None:
-                h_vals = [
-                    rock_hardness_per_vertex[vi]
+                h_vals: list[float] = [
+                    float(rock_hardness_per_vertex[vi])
                     for vi in face
                     if vi < len(rock_hardness_per_vertex)
                 ]
                 face_hardness = sum(h_vals) / len(h_vals) if h_vals else 0.5
             if moisture_per_vertex is not None:
-                m_vals = [
-                    moisture_per_vertex[vi]
+                m_vals: list[float] = [
+                    float(moisture_per_vertex[vi])
                     for vi in face
                     if vi < len(moisture_per_vertex)
                 ]
@@ -1367,9 +1368,9 @@ def blend_terrain_vertex_colors(
     Returns:
         List of (R, G, B, A) tuples, one per vertex. Values in [0, 1].
     """
-    vertices = mesh_data.get("vertices", [])
-    faces = mesh_data.get("faces", [])
-    normals = mesh_data.get("normals", [])
+    vertices = list(cast(Sequence[Sequence[float]], mesh_data.get("vertices", [])))
+    faces = list(cast(Sequence[Sequence[int]], mesh_data.get("faces", [])))
+    normals = list(cast(Sequence[tuple[float, float, float]], mesh_data.get("normals", [])))
     water_level = float(mesh_data.get("water_level", 0.0))
     snow_line_z: float | None = mesh_data.get("snow_line_z")
     moisture_per_vertex: list[float] | None = mesh_data.get("moisture_per_vertex")
@@ -1403,7 +1404,7 @@ def blend_terrain_vertex_colors(
         return 1.055 * (c ** (1.0 / 2.4)) - 0.055
 
     # Precompute height range for altitude percentile axis
-    z_values = [v[2] for v in vertices]
+    z_values = [float(v[2]) for v in vertices]
     z_min = min(z_values)
     z_max = max(z_values)
     z_range = z_max - z_min
@@ -1432,7 +1433,7 @@ def blend_terrain_vertex_colors(
 
     for vi in range(num_verts):
         adj = vert_faces[vi]
-        vx, vy, vz = vertices[vi]
+        vz = float(vertices[vi][2])
 
         # ---- Height axis -------------------------------------------------------
         # Altitude percentile for this vertex
@@ -1507,7 +1508,7 @@ def blend_terrain_vertex_colors(
             normal = normals[fi] if fi < len(normals) else (0.0, 0.0, 1.0)
             face = faces[fi] if fi < len(faces) else ()
             if face:
-                fz_vals = [vertices[fvi][2] for fvi in face if fvi < len(vertices)]
+                fz_vals = [float(vertices[fvi][2]) for fvi in face if fvi < len(vertices)]
                 face_z = sum(fz_vals) / len(fz_vals) if fz_vals else 0.0
             else:
                 face_z = 0.0
@@ -1694,13 +1695,11 @@ def _simple_noise_2d(x: float, y: float, seed: int = 0) -> float:
         produces uncorrelated sequences.
         """
         # Fold coordinates into a single 32-bit value via LCG constants
-        h = (xi * 1664525 + yi * 1013904223) & 0xFFFFFFFF
+        h = _wang_hash((xi * 1664525 + yi * 1013904223) & 0xFFFFFFFF)
         # Mix seed in to make noise instances independent
         h = (h ^ ((seed * 1664525 + 1013904223) & 0xFFFFFFFF)) & 0xFFFFFFFF
         # Final avalanche pass: multiply-xorshift
-        h = (h ^ (h >> 16)) & 0xFFFFFFFF
-        h = (h * 0x45D9F3B) & 0xFFFFFFFF
-        h = (h ^ (h >> 16)) & 0xFFFFFFFF
+        h = _wang_hash(h)
         # Map 24-bit mantissa to [-1, 1]
         return (h & 0xFFFFFF) / float(0x800000) - 1.0
 
@@ -1997,7 +1996,7 @@ def _create_height_blend_group(name: str = "HeightBlend") -> Any:
     group_in.location = (-700, 0)
 
     # Create input sockets (Blender 4.0+ interface API)
-    def _new_input(sock_name: str, socket_type: str = "NodeSocketFloat", **kwargs):
+    def _new_input(sock_name: str, socket_type: str = "NodeSocketFloat", **kwargs: Any) -> Any:
         if hasattr(group, "interface"):
             item = group.interface.new_socket(
                 name=sock_name, in_out='INPUT', socket_type=socket_type
@@ -2321,9 +2320,16 @@ def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
     mesh = obj.data
 
     # Extract mesh data for pure-logic functions
-    vertices = [(v.co.x, v.co.y, v.co.z) for v in mesh.vertices]
-    faces = [tuple(p.vertices) for p in mesh.polygons]
-    normals = [(p.normal.x, p.normal.y, p.normal.z) for p in mesh.polygons]
+    vertices: list[tuple[float, float, float]] = [
+        (float(v.co.x), float(v.co.y), float(v.co.z)) for v in mesh.vertices
+    ]
+    faces: list[tuple[int, ...]] = [
+        tuple(int(vertex_index) for vertex_index in p.vertices) for p in mesh.polygons
+    ]
+    normals: list[tuple[float, float, float]] = [
+        (float(p.normal.x), float(p.normal.y), float(p.normal.z))
+        for p in mesh.polygons
+    ]
 
     # Derive altitudinal zone Z values from terrain height + biome fracs
     z_vals_all = [v[2] for v in vertices]
@@ -2434,7 +2440,7 @@ def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
     for fi, face in enumerate(faces):
         if fi < len(normals):
             normal = normals[fi]
-            z_vals = [vertices[vi][2] for vi in face if vi < len(vertices)]
+            z_vals = [float(vertices[vi][2]) for vi in face if vi < len(vertices)]
             face_z = sum(z_vals) / len(z_vals) if z_vals else 0.0
             zone = _classify_face(normal, face_z, water_level)
             zone_counts[zone] += 1
@@ -2583,6 +2589,7 @@ def auto_assign_terrain_layers(
     moisture_map: Any = None,
     terrain_resolution: int = 0,
     blend_contrast: float = 0.5,
+    stack: Any = None,
 ) -> list[tuple[float, float, float, float]]:
     """Compute per-vertex RGBA splatmap weights from slope, height, and moisture.
 
@@ -2625,7 +2632,41 @@ def auto_assign_terrain_layers(
         terrain_resolution: Grid resolution for moisture mapping. 0 = auto.
         blend_contrast: Sharpness of MicroSplat height-blend transitions [0..1].
             0 = gradual crossfade, 1 = near-binary edge. Default 0.5.
+        stack: Optional pipeline stack object. If provided and
+            ``stack.splatmap_weights_layer`` is not None, per-vertex weights are
+            sampled directly from that authoritative array instead of being
+            derived from slope/height heuristics. This makes Blender preview use
+            the same splatmap data that ships to Unity. (FIX-B14-11)
     """
+    # FIX-B14-11: fast path — if the pipeline stack already contains authoritative
+    # splatmap weights (written by terrain_materials_v2), sample from that array
+    # directly so the Blender preview exactly matches the Unity export instead of
+    # re-deriving weights independently via the slope/height heuristics below.
+    if stack is not None and getattr(stack, "splatmap_weights_layer", None) is not None:
+        try:
+            layer = np.asarray(stack.splatmap_weights_layer)
+            if layer.ndim == 3 and layer.shape[2] >= 1:
+                n_rows, n_cols = layer.shape[:2]
+                cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+                origin_x = float(getattr(stack, "world_origin_x", 0.0))
+                origin_y = float(getattr(stack, "world_origin_y", 0.0))
+                result_fast: list[tuple[float, float, float, float]] = []
+                for vx, vy, _vz in vertices:
+                    col = int((vx - origin_x) / cell_size)
+                    row = int((vy - origin_y) / cell_size)
+                    col = max(0, min(col, n_cols - 1))
+                    row = max(0, min(row, n_rows - 1))
+                    cell = layer[row, col, :]
+                    n = len(cell)
+                    w0 = float(cell[0]) if n > 0 else 0.0
+                    w1 = float(cell[1]) if n > 1 else 0.0
+                    w2 = float(cell[2]) if n > 2 else 0.0
+                    w3 = float(cell[3]) if n > 3 else 0.0
+                    result_fast.append((w0, w1, w2, w3))
+                return result_fast
+        except Exception:  # noqa: BLE001
+            pass  # fall through to slope/height derivation below
+
     num_verts = len(vertices)
     if num_verts == 0:
         return []
@@ -2659,7 +2700,7 @@ def auto_assign_terrain_layers(
         nz_n = nz / length if length > 1e-9 else 1.0
         dot = max(-1.0, min(1.0, nz_n))
         vert_slopes.append(math.acos(dot))
-    z_values = [v[2] for v in vertices]
+    z_values = [float(v[2]) for v in vertices]
     z_min, z_max = min(z_values), max(z_values)
     z_range = z_max - z_min
     height_pcts = (
@@ -2669,17 +2710,27 @@ def auto_assign_terrain_layers(
 
     # Prepare moisture lookup if moisture_map is provided
     has_moisture = moisture_map is not None
+    mmap = np.zeros((1, 1), dtype=np.float64)
+    m_rows = 1
+    m_cols = 1
+    x_min_t = 0.0
+    y_min_t = 0.0
+    x_range_t = 0.0
+    y_range_t = 0.0
     if has_moisture:
-        import numpy as _np
-        mmap = _np.asarray(moisture_map, dtype=_np.float64)
-        m_rows, m_cols = mmap.shape
-        # Compute terrain bounding box for vertex -> grid mapping
-        x_vals = [v[0] for v in vertices]
-        y_vals = [v[1] for v in vertices]
-        x_min_t, x_max_t = min(x_vals), max(x_vals)
-        y_min_t, y_max_t = min(y_vals), max(y_vals)
-        x_range_t = x_max_t - x_min_t
-        y_range_t = y_max_t - y_min_t
+        moisture_arr = np.asarray(moisture_map, dtype=np.float64)
+        if moisture_arr.ndim == 2 and moisture_arr.size > 0:
+            mmap = moisture_arr
+            m_rows, m_cols = mmap.shape
+            # Compute terrain bounding box for vertex -> grid mapping
+            x_vals = [float(v[0]) for v in vertices]
+            y_vals = [float(v[1]) for v in vertices]
+            x_min_t, x_max_t = min(x_vals), max(x_vals)
+            y_min_t, y_max_t = min(y_vals), max(y_vals)
+            x_range_t = x_max_t - x_min_t
+            y_range_t = y_max_t - y_min_t
+        else:
+            has_moisture = False
 
     # MicroSplat effective half-width from blend_contrast
     contrast_clamped = max(0.0, min(1.0, blend_contrast))
@@ -3315,12 +3366,56 @@ def compute_world_splatmap_weights(
     return result
 
 
+def _sample_splatmap_weights_at_vertex(
+    stack: Any,
+    vx: float,
+    vy: float,
+    vz: float,  # noqa: ARG001 — kept for API symmetry; Z not used for 2-D lookup
+) -> tuple[float, float, float, float] | None:
+    """Sample splatmap weights from a stack at a vertex's world-XY position.
+
+    Returns a 4-tuple ``(w0, w1, w2, w3)`` representing the first four
+    splatmap layers at the grid cell that contains ``(vx, vy)``.  Layers
+    beyond the fourth are discarded; missing layers are padded with 0.0.
+
+    Returns ``None`` when the stack or its ``splatmap_weights_layer`` is not
+    available, allowing callers to fall back to ``auto_assign_terrain_layers``.
+    """
+    if stack is None:
+        return None
+    layer = getattr(stack, "splatmap_weights_layer", None)
+    if layer is None:
+        return None
+    try:
+        arr = np.asarray(layer)
+        if arr.ndim != 3 or arr.shape[2] < 1:
+            return None
+        n_rows, n_cols = arr.shape[:2]
+        cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+        origin_x = float(getattr(stack, "world_origin_x", 0.0))
+        origin_y = float(getattr(stack, "world_origin_y", 0.0))
+        col = int((vx - origin_x) / cell_size)
+        row = int((vy - origin_y) / cell_size)
+        col = max(0, min(col, n_cols - 1))
+        row = max(0, min(row, n_rows - 1))
+        cell = arr[row, col, :]
+        n = len(cell)
+        w0 = float(cell[0]) if n > 0 else 0.0
+        w1 = float(cell[1]) if n > 1 else 0.0
+        w2 = float(cell[2]) if n > 2 else 0.0
+        w3 = float(cell[3]) if n > 3 else 0.0
+        return (w0, w1, w2, w3)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def create_biome_terrain_material(
     biome_name: str,
     object_name: str | None = None,
     season: str | None = None,
     *,
     preserve_existing_splatmap: bool = True,
+    stack: Any = None,
 ) -> Any:
     """Create a multi-layer terrain material with vertex-color splatmap blending.
 
@@ -3476,39 +3571,62 @@ def create_biome_terrain_material(
                     preserve_layer = False
 
             if not preserve_layer:
-                if hasattr(mesh, "calc_normals_split"):
-                    mesh.calc_normals_split()
-                elif hasattr(mesh, "calc_normals"):
-                    mesh.calc_normals()
-                vl = [(v.co.x, v.co.y, v.co.z) for v in mesh.vertices]
-                nl = [(p.normal.x, p.normal.y, p.normal.z) for p in mesh.polygons]
-                fl = [tuple(p.vertices) for p in mesh.polygons]
-                # Do not auto-paint the "special" layer from arbitrary top/bottom
-                # height percentiles in Blender preview; that produces obviously
-                # fake terrain striping unrelated to actual terrain semantics.
-                weights = auto_assign_terrain_layers(
-                    vl,
-                    nl,
-                    fl,
-                    biome_name,
-                    special_low_pct=0.0,
-                    special_high_pct=1.0,
-                )
-                for poly in mesh.polygons:
-                    for li in poly.loop_indices:
-                        vi_idx = mesh.loops[li].vertex_index
-                        w = weights[vi_idx]
-                        vcol.data[li].color = (w[0], w[1], w[2], w[3])
+                # Prefer authoritative splatmap_weights_layer from the pipeline
+                # stack so the Blender preview matches what ships to Unity.
+                # Fall back to auto_assign_terrain_layers only when no stack
+                # weight data is available (e.g. standalone Blender usage).
+                use_stack_weights = stack is not None and getattr(
+                    stack, "splatmap_weights_layer", None
+                ) is not None
+
+                if use_stack_weights:
+                    for poly in mesh.polygons:
+                        for li in poly.loop_indices:
+                            vi_idx = mesh.loops[li].vertex_index
+                            v = mesh.vertices[vi_idx]
+                            sampled = _sample_splatmap_weights_at_vertex(
+                                stack, v.co.x, v.co.y, v.co.z
+                            )
+                            if sampled is not None:
+                                vcol.data[li].color = sampled
+                            else:
+                                vcol.data[li].color = (1.0, 0.0, 0.0, 0.0)
+                else:
+                    if hasattr(mesh, "calc_normals_split"):
+                        mesh.calc_normals_split()
+                    elif hasattr(mesh, "calc_normals"):
+                        mesh.calc_normals()
+                    vl = [(v.co.x, v.co.y, v.co.z) for v in mesh.vertices]
+                    nl = [(p.normal.x, p.normal.y, p.normal.z) for p in mesh.polygons]
+                    fl = [tuple(p.vertices) for p in mesh.polygons]
+                    # Do not auto-paint the "special" layer from arbitrary top/bottom
+                    # height percentiles in Blender preview; that produces obviously
+                    # fake terrain striping unrelated to actual terrain semantics.
+                    weights = auto_assign_terrain_layers(
+                        vl,
+                        nl,
+                        fl,
+                        biome_name,
+                        special_low_pct=0.0,
+                        special_high_pct=1.0,
+                    )
+                    for poly in mesh.polygons:
+                        for li in poly.loop_indices:
+                            vi_idx = mesh.loops[li].vertex_index
+                            w = weights[vi_idx]
+                            vcol.data[li].color = (w[0], w[1], w[2], w[3])
     if object_name:
         obj = bpy.data.objects.get(object_name)
-        if obj is not None and hasattr(obj.data, "materials"):
-            if hasattr(obj.data.materials, "clear"):
-                obj.data.materials.clear()
-                obj.data.materials.append(mat)
-            elif obj.data.materials:
-                obj.data.materials[0] = mat
+        obj_data = getattr(obj, "data", None) if obj is not None else None
+        obj_materials = getattr(obj_data, "materials", None) if obj_data is not None else None
+        if obj_materials is not None:
+            if hasattr(obj_materials, "clear"):
+                obj_materials.clear()
+                obj_materials.append(mat)
+            elif obj_materials:
+                obj_materials[0] = mat
             else:
-                obj.data.materials.append(mat)
+                obj_materials.append(mat)
 
     return mat
 
@@ -3559,11 +3677,13 @@ def handle_create_biome_terrain(params: dict[str, Any]) -> dict[str, Any]:
     }
     if season:
         rd["season"] = season
-    if object_name:
+    if object_name and bpy is not None:
         obj = bpy.data.objects.get(object_name)
         if obj is not None:
             rd["object_assigned"] = object_name
-            rd["vertex_count"] = len(obj.data.vertices)
+            obj_data = getattr(obj, "data", None)
+            obj_vertices = getattr(obj_data, "vertices", ()) if obj_data is not None else ()
+            rd["vertex_count"] = len(obj_vertices)
         else:
             rd["object_warning"] = f"Object '{object_name}' not found"
     return {"status": "success", "result": rd}

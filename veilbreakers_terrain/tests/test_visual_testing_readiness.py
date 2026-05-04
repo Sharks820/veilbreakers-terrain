@@ -7,33 +7,39 @@ import math
 from pathlib import Path
 import sys
 import types
+from collections.abc import Sequence
+
+import pytest
 
 
 _OUT_DIR = Path("output/visual_readiness")
 
 
-def _ensure_allowed_root(monkeypatch) -> Path:
+_Vec3 = tuple[float, float, float]
+
+
+def _ensure_allowed_root(monkeypatch: pytest.MonkeyPatch) -> Path:
     root = Path("output/visual_readiness").resolve()
     root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("VEILBREAKERS_VISUAL_QA_ROOT", str(root))
     return root
 
 
-def _install_functional_mathutils(monkeypatch) -> None:
+def _install_functional_mathutils(monkeypatch: pytest.MonkeyPatch) -> None:
     class _V:
-        def __init__(self, xyz):
+        def __init__(self, xyz: Sequence[float]) -> None:
             self.x = float(xyz[0])
             self.y = float(xyz[1])
             self.z = float(xyz[2])
 
-        def __sub__(self, other):
+        def __sub__(self, other: "_V") -> "_V":
             return _V((self.x - other.x, self.y - other.y, self.z - other.z))
 
         @property
-        def length(self):
+        def length(self) -> float:
             return math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
 
-        def to_track_quat(self, track, up):
+        def to_track_quat(self, track: str, up: str) -> types.SimpleNamespace:
             x, y, z = self.x, self.y, self.z
             horiz = math.sqrt(x * x + y * y)
             rx = math.atan2(horiz, -z)
@@ -42,21 +48,25 @@ def _install_functional_mathutils(monkeypatch) -> None:
             return types.SimpleNamespace(to_euler=lambda: euler)
 
     fake = types.ModuleType("mathutils")
-    fake.Vector = _V
+    setattr(fake, "Vector", _V)
     monkeypatch.setitem(sys.modules, "mathutils", fake)
 
 
-def _build_fake_bpy(render_calls, opengl_calls):
-    class _CameraStore(dict):
-        def new(self, name):
+def _build_fake_bpy(
+    render_calls: list[bool], opengl_calls: list[bool]
+) -> tuple[types.SimpleNamespace, types.SimpleNamespace]:
+    class _CameraStore(dict[str, types.SimpleNamespace]):
+        def new(self, name: str) -> types.SimpleNamespace:
             data = types.SimpleNamespace(
                 name=name, lens=0.0, sensor_width=36.0, clip_end=1000.0
             )
             self[name] = data
             return data
 
-    class _ObjectStore(dict):
-        def new(self, name, data):
+    class _ObjectStore(dict[str, types.SimpleNamespace]):
+        def new(
+            self, name: str, data: types.SimpleNamespace
+        ) -> types.SimpleNamespace:
             obj = types.SimpleNamespace(
                 name=name, data=data, location=None, rotation_euler=None
             )
@@ -66,11 +76,21 @@ def _build_fake_bpy(render_calls, opengl_calls):
     shading = types.SimpleNamespace(
         type="SOLID", use_scene_lights=False, use_world_lighting=False
     )
+
+    def _link_object(obj: types.SimpleNamespace) -> None:
+        return None
+
+    def _record_render(write_still: bool) -> None:
+        render_calls.append(write_still)
+
+    def _record_opengl(write_still: bool) -> None:
+        opengl_calls.append(write_still)
+
     fake_bpy = types.SimpleNamespace(
         data=types.SimpleNamespace(cameras=_CameraStore(), objects=_ObjectStore()),
         context=types.SimpleNamespace(
             collection=types.SimpleNamespace(
-                objects=types.SimpleNamespace(link=lambda obj: None)
+                objects=types.SimpleNamespace(link=_link_object)
             ),
             screen=types.SimpleNamespace(
                 areas=[
@@ -92,15 +112,15 @@ def _build_fake_bpy(render_calls, opengl_calls):
         ),
         ops=types.SimpleNamespace(
             render=types.SimpleNamespace(
-                render=lambda write_still: render_calls.append(write_still),
-                opengl=lambda write_still: opengl_calls.append(write_still),
+                render=_record_render,
+                opengl=_record_opengl,
             )
         ),
     )
     return fake_bpy, shading
 
 
-def test_visual_qa_math_contracts_are_deterministic():
+def test_visual_qa_math_contracts_are_deterministic() -> None:
     from veilbreakers_terrain.handlers.terrain_visual_qa import (
         auto_frame_terrain,
         compute_rotation_to_look_at,
@@ -121,7 +141,9 @@ def test_visual_qa_math_contracts_are_deterministic():
     assert math.isclose(rz, math.pi / 2, rel_tol=1e-6)
 
 
-def test_visual_qa_headless_handlers_report_not_applied(monkeypatch):
+def test_visual_qa_headless_handlers_report_not_applied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _ensure_allowed_root(monkeypatch)
     from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
@@ -158,13 +180,15 @@ def test_visual_qa_headless_handlers_report_not_applied(monkeypatch):
     assert bad["status"] == "error"
 
 
-def test_visual_qa_blender_stub_applies_camera_shading_and_screenshot(monkeypatch):
+def test_visual_qa_blender_stub_applies_camera_shading_and_screenshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     root = _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
     from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
-    render_calls: list = []
-    opengl_calls: list = []
+    render_calls: list[bool] = []
+    opengl_calls: list[bool] = []
     fake_bpy, shading = _build_fake_bpy(render_calls, opengl_calls)
 
     monkeypatch.setattr(vqa, "_HAS_BPY", True)
@@ -194,13 +218,15 @@ def test_visual_qa_blender_stub_applies_camera_shading_and_screenshot(monkeypatc
     assert render_calls == []
 
 
-def test_camera_aims_at_origin_via_quaternion(monkeypatch):
+def test_camera_aims_at_origin_via_quaternion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
     from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
-    render_calls: list = []
-    opengl_calls: list = []
+    render_calls: list[bool] = []
+    opengl_calls: list[bool] = []
     fake_bpy, _ = _build_fake_bpy(render_calls, opengl_calls)
 
     monkeypatch.setattr(vqa, "_HAS_BPY", True)
@@ -220,7 +246,7 @@ def test_camera_aims_at_origin_via_quaternion(monkeypatch):
     ry = float(rot[1])
     rz = float(rot[2])
 
-    def _rot_xyz(v, rx, ry, rz):
+    def _rot_xyz(v: _Vec3, rx: float, ry: float, rz: float) -> _Vec3:
         x, y, z = v
         y, z = y * math.cos(rx) - z * math.sin(rx), y * math.sin(rx) + z * math.cos(rx)
         x, z = x * math.cos(ry) + z * math.sin(ry), -x * math.sin(ry) + z * math.cos(ry)
@@ -240,13 +266,15 @@ def test_camera_aims_at_origin_via_quaternion(monkeypatch):
     )
 
 
-def test_render_respects_render_max_not_thumbnail_cap(monkeypatch):
+def test_render_respects_render_max_not_thumbnail_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     root = _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
     from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
-    render_calls: list = []
-    opengl_calls: list = []
+    render_calls: list[bool] = []
+    opengl_calls: list[bool] = []
     fake_bpy, _ = _build_fake_bpy(render_calls, opengl_calls)
 
     monkeypatch.setattr(vqa, "_HAS_BPY", True)
@@ -260,13 +288,15 @@ def test_render_respects_render_max_not_thumbnail_cap(monkeypatch):
     assert fake_bpy.context.scene.render.resolution_y == 1080
 
 
-def test_capture_viewport_uses_ops_render_opengl_by_default(monkeypatch):
+def test_capture_viewport_uses_ops_render_opengl_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     root = _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
     from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
-    render_calls: list = []
-    opengl_calls: list = []
+    render_calls: list[bool] = []
+    opengl_calls: list[bool] = []
     fake_bpy, _ = _build_fake_bpy(render_calls, opengl_calls)
 
     monkeypatch.setattr(vqa, "_HAS_BPY", True)
@@ -285,13 +315,15 @@ def test_capture_viewport_uses_ops_render_opengl_by_default(monkeypatch):
     assert render_calls == [True]
 
 
-def test_capture_rejects_filepath_outside_allowed_root(monkeypatch):
+def test_capture_rejects_filepath_outside_allowed_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
     from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
-    render_calls: list = []
-    opengl_calls: list = []
+    render_calls: list[bool] = []
+    opengl_calls: list[bool] = []
     fake_bpy, _ = _build_fake_bpy(render_calls, opengl_calls)
 
     monkeypatch.setattr(vqa, "_HAS_BPY", True)
@@ -304,13 +336,15 @@ def test_capture_rejects_filepath_outside_allowed_root(monkeypatch):
     assert opengl_calls == []
 
 
-def test_camera_clip_end_accommodates_km_terrain(monkeypatch):
+def test_camera_clip_end_accommodates_km_terrain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
     from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
-    render_calls: list = []
-    opengl_calls: list = []
+    render_calls: list[bool] = []
+    opengl_calls: list[bool] = []
     fake_bpy, _ = _build_fake_bpy(render_calls, opengl_calls)
 
     monkeypatch.setattr(vqa, "_HAS_BPY", True)
@@ -324,7 +358,7 @@ def test_camera_clip_end_accommodates_km_terrain(monkeypatch):
     assert result["clip_end"] >= 4000.0
 
 
-def test_visual_qa_module_import_is_stable_without_reloading_bpy():
+def test_visual_qa_module_import_is_stable_without_reloading_bpy() -> None:
     module = importlib.import_module("veilbreakers_terrain.handlers.terrain_visual_qa")
     assert hasattr(module, "handle_visual_qa_setup_camera")
     assert hasattr(module, "handle_visual_qa_set_shading")

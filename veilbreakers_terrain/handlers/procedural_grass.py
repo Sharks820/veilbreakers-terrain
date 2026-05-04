@@ -27,13 +27,16 @@ import os
 import random
 import string
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence, cast
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Import canonical biome IDs from the single source of truth.
+from .terrain_biome_registry import CANONICAL_BIOME_IDS  # noqa: F401,E402 — re-exported
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +58,7 @@ def _distance_transform_edt(mask: np.ndarray) -> np.ndarray:
     at the cell scale we use.
     """
     if _scipy_edt is not None:
-        return _scipy_edt(mask).astype(np.float32)
+        return np.asarray(cast(Any, _scipy_edt)(mask), dtype=np.float32)
 
     # Fallback: BFS-style multi-pass.
     mask = np.asarray(mask, dtype=bool)
@@ -152,7 +155,7 @@ VEILBREAKERS_GRASS_SPECIES: tuple[GrassSpecies, ...] = (
         density_per_sqm=2.5,
         slope_max_deg=15.0,
         wetness_affinity=0.9,
-        biomes=("corrupted_swamp", "blighted_mire", "coastal"),
+        biomes=("corrupted_swamp", "coastal"),
         min_spacing_m=0.5,
         unity_render_mode="gpu_instancer",
     ),
@@ -161,7 +164,7 @@ VEILBREAKERS_GRASS_SPECIES: tuple[GrassSpecies, ...] = (
         density_per_sqm=3.0,
         slope_max_deg=70.0,
         wetness_affinity=0.7,
-        biomes=("thornwood_forest", "deep_forest", "cemetery", "ruined_citadel", "mountain_pass"),
+        biomes=("thornwood_forest", "deep_forest", "cemetery", "ruined_fortress", "mountain_pass"),
         min_spacing_m=0.35,
         unity_render_mode="gpu_instancer",
     ),
@@ -179,7 +182,7 @@ VEILBREAKERS_GRASS_SPECIES: tuple[GrassSpecies, ...] = (
         density_per_sqm=2.0,
         slope_max_deg=35.0,
         wetness_affinity=0.1,
-        biomes=("ashen_wastes", "desert"),
+        biomes=("desert",),
         min_spacing_m=0.3,
         unity_render_mode="detail_prototype",
     ),
@@ -188,7 +191,7 @@ VEILBREAKERS_GRASS_SPECIES: tuple[GrassSpecies, ...] = (
         density_per_sqm=1.0,
         slope_max_deg=60.0,
         wetness_affinity=0.6,
-        biomes=("blighted_mire", "ruined_citadel", "cemetery"),
+        biomes=("corrupted_swamp", "ruined_fortress", "cemetery"),
         min_spacing_m=0.6,
         unity_render_mode="gpu_instancer",
     ),
@@ -353,9 +356,8 @@ class ProceduralGrassSystem:
             mask *= (height >= ws).astype(np.float32)
         else:
             # Binary mask path: water_surface_mask > 0 means cell IS water — exclude it.
+            # W-1: use water_surface_mask exclusively; legacy water_surface fallback removed.
             ws_mask = _stack_attr(stack, "water_surface_mask")
-            if ws_mask is None:
-                ws_mask = _stack_attr(stack, "water_surface")
             if ws_mask is not None:
                 mask *= (np.asarray(ws_mask, dtype=np.float32) <= 0.0).astype(np.float32)
 
@@ -449,16 +451,49 @@ class ProceduralGrassSystem:
         cell_size_m: float,
         min_spacing_m: float,
     ) -> np.ndarray:
-        """Bucket-sort min-spacing thinning. Vectorised. Approximate."""
+        """3x3-neighbourhood Poisson-disk thinning. Vectorised. Approximate.
+
+        For each candidate point (in arrival order) we check all 8 adjacent
+        grid cells as well as the candidate's own cell.  A point is kept only
+        if no already-accepted point in those 9 cells is within min_spacing_m.
+        This avoids the 50 % over-rejection of the old single-bucket approach.
+        """
         if positions.shape[0] == 0 or min_spacing_m <= 0:
             return positions
         bucket = max(1, int(round(min_spacing_m / cell_size_m)))
-        keys = (positions // bucket)
-        # Hash bucket coords to a single int for unique selection.
-        flat_keys = keys[:, 0].astype(np.int64) * np.int64(2_000_003) + keys[:, 1].astype(np.int64)
-        _, first_idx = np.unique(flat_keys, return_index=True)
-        first_idx.sort()
-        return positions[first_idx]
+        # Map each position to its grid cell.
+        grid_keys = (positions // bucket).astype(np.int64)
+        # We work in cell-space; min_spacing in cell units.
+        min_spacing_cells = min_spacing_m / cell_size_m
+
+        kept_indices: list[int] = []
+        # cell -> list of kept positions (in original coordinate space)
+        occupied: dict[tuple[int, int], list[np.ndarray]] = {}
+
+        for i in range(positions.shape[0]):
+            gx, gy = int(grid_keys[i, 0]), int(grid_keys[i, 1])
+            pos = positions[i]
+            conflict = False
+            # Check 3x3 neighbourhood of grid cells
+            for dx in (-1, 0, 1):
+                if conflict:
+                    break
+                for dy in (-1, 0, 1):
+                    cell = (gx + dx, gy + dy)
+                    for opos in occupied.get(cell, []):
+                        diff = pos - opos
+                        if float(np.dot(diff, diff)) ** 0.5 < min_spacing_cells:
+                            conflict = True
+                            break
+                    if conflict:
+                        break
+            if not conflict:
+                kept_indices.append(i)
+                occupied.setdefault((gx, gy), []).append(pos)
+
+        if not kept_indices:
+            return positions[:0]
+        return positions[np.array(kept_indices, dtype=np.intp)]
 
     # ------------------------------------------------------------------
     def generate_grass_placement(

@@ -148,6 +148,22 @@ def load_golden_snapshot(path: Path) -> GoldenSnapshot:
     return GoldenSnapshot.from_dict(raw)
 
 
+# P1-34: Per-channel tolerance defaults.  Heights are in metres (large
+# absolute values), slopes in radians (small), wetness in [0,1] (small).
+# Using one tolerance for all channels caused round-trip tests to either
+# pass trivially (tolerance too loose) or fail on numeric noise (too tight).
+_DEFAULT_CHANNEL_TOLERANCES: dict[str, float] = {
+    "height":   0.01,    # metres — sub-centimetre is negligible
+    "slope":    0.001,   # radians
+    "wetness":  0.001,
+    "curvature": 0.001,
+    "drainage": 0.001,
+    "erosion_amount": 0.001,
+    "deposition_amount": 0.001,
+}
+_DEFAULT_RTOL: float = 1e-5
+
+
 def compare_against_golden(
     stack: TerrainMaskStack,
     golden: GoldenSnapshot,
@@ -155,6 +171,8 @@ def compare_against_golden(
     *,
     golden_dir: Optional[Path] = None,
     strict_contract: bool = False,
+    rtol: float = _DEFAULT_RTOL,
+    channel_tolerances: Optional[dict] = None,
 ) -> List[ValidationIssue]:
     """Compare a fresh stack against a stored golden.
 
@@ -165,7 +183,15 @@ def compare_against_golden(
 
     BUG-R8-A9-024: channels present in ``current`` but absent in ``golden``
     are emitted as soft ``GOLDEN_CHANNEL_NEW`` issues.
+
+    P1-34: ``channel_tolerances`` is a dict keyed by channel name with
+    channel-appropriate absolute tolerances.  Falls back to ``tolerance``
+    (scalar) for channels not in the dict.  ``rtol`` defaults to ``1e-5``.
     """
+    # Build the effective per-channel tolerance map.
+    _ch_tol: dict[str, float] = dict(_DEFAULT_CHANNEL_TOLERANCES)
+    if channel_tolerances:
+        _ch_tol.update(channel_tolerances)
     issues: List[ValidationIssue] = []
     current_hash = stack.compute_hash()
     hash_match = current_hash == golden.content_hash
@@ -194,7 +220,9 @@ def compare_against_golden(
                         if cur_arr is None or gld_arr is None:
                             all_close = False
                             break
-                        if not np.allclose(np.asarray(cur_arr), np.asarray(gld_arr), atol=tolerance):
+                        # P1-34: use per-channel atol; fall back to scalar tolerance.
+                        _atol = _ch_tol.get(ch, tolerance)
+                        if not np.allclose(np.asarray(cur_arr), np.asarray(gld_arr), atol=_atol, rtol=rtol):
                             all_close = False
                             break
                         tolerance_close_channels.add(ch)

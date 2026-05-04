@@ -15,7 +15,7 @@ from functools import lru_cache
 import math
 import random
 import time
-from typing import Any
+from typing import Any, cast
 
 from ._terrain_noise import _make_noise_generator
 from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState
@@ -31,19 +31,6 @@ Vec3 = tuple[float, float, float]
 # ---------------------------------------------------------------------------
 # AAA geometry helpers
 # ---------------------------------------------------------------------------
-
-def _cross(a: Vec3, b: Vec3) -> Vec3:
-    """3-D cross product."""
-    return (
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    )
-
-
-def _sub(a: Vec3, b: Vec3) -> Vec3:
-    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
-
 
 def _normalize(v: Vec3) -> Vec3:
     length = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
@@ -86,7 +73,9 @@ def _lod1_faces(faces: list[tuple[int, ...]], ratio: float = 0.5) -> list[tuple[
     return [faces[min(len(faces) - 1, int(i * step))] for i in range(target)]
 
 
-def _material_metadata(*entries: tuple[str, float, str, float]) -> dict[str, dict]:
+def _material_metadata(
+    *entries: tuple[str, float, str, float]
+) -> dict[str, dict[str, float | str]]:
     """Build per-material AAA metadata dict.
     Each entry: (name, roughness_hint, layer_type, emission)
     """
@@ -291,7 +280,6 @@ def generate_canyon(
         + ["talus_debris", "overhang_cap"]
     )
     MAT_FLOOR    = 0
-    MAT_WALL     = 1
     MAT_WET      = 2
     MAT_LEDGE    = 3
     MAT_STRATA_0 = 4
@@ -636,7 +624,7 @@ def generate_canyon(
         floor_path.append(centerline[-1])
 
     side_caves: list[dict[str, Any]] = []
-    for ci in range(num_side_caves):
+    for _cave_idx in range(num_side_caves):
         cave_t = rng.uniform(0.1, 0.9)
         ci_idx = int(cave_t * (res_along - 1))
         cx, cy, cz = centerline[ci_idx]
@@ -656,7 +644,7 @@ def generate_canyon(
         })
 
     # Build per-strata material_metadata entries
-    _strata_mm = []
+    _strata_mm: list[tuple[str, float, str, float]] = []
     for bi, bd in enumerate(strata_bands_def):
         rh = 0.80 if bd["type"] == "hard" else 0.55
         lt = "sandstone" if bd["type"] == "hard" else "mudstone"
@@ -996,7 +984,6 @@ def generate_waterfall(
     pool_depth_val = rng.uniform(height * 0.1, height * 0.2)
     pool_center_y = -(effective_steps * 1.5 + effective_pool_radius * 0.6)
 
-    pool_vert_start = len(vertices)
     pool_vert_indices: list[int] = []
 
     # Build hemispherical basin rings from rim (lat=0, z=0) down to nadir
@@ -1187,19 +1174,19 @@ def generate_waterfall(
         sin_t = dx
 
     if abs(cos_t - 1.0) > 1e-9 or abs(sin_t) > 1e-9:
-        def _rot_xy(p: tuple) -> tuple:
+        def _rot_xy(p: Vec3) -> Vec3:
             x0, y0 = float(p[0]), float(p[1])
-            z0 = float(p[2]) if len(p) > 2 else 0.0
+            z0 = float(p[2])
             return (x0 * cos_t - y0 * sin_t, x0 * sin_t + y0 * cos_t, z0)
 
         vertices = [_rot_xy(v) for v in vertices]
         for step in steps:
-            step["position"] = _rot_xy(step["position"])
-        pool_info["center"] = _rot_xy(pool_info["center"])
-        splash_zone["center"] = _rot_xy(splash_zone["center"])
+            step["position"] = _rot_xy(cast(Vec3, step["position"]))
+        pool_info["center"] = _rot_xy(cast(Vec3, pool_info["center"]))
+        splash_zone["center"] = _rot_xy(cast(Vec3, splash_zone["center"]))
         if cave_info is not None:
-            cave_info["position"] = _rot_xy(cave_info["position"])
-            cave_info["entrance"] = _rot_xy(cave_info["entrance"])
+            cave_info["position"] = _rot_xy(cast(Vec3, cave_info["position"]))
+            cave_info["entrance"] = _rot_xy(cast(Vec3, cave_info["entrance"]))
 
     _wf_normals = _compute_face_normals(vertices, faces)
     return {
@@ -1674,7 +1661,7 @@ def generate_cliff_face(
     boulder_rng = random.Random(seed + 77777)
     boulders_per_10m = boulder_rng.uniform(5.0, 15.0)
     n_boulders = max(1, int(boulders_per_10m * width / 10.0))
-    cliff_boulder_placements: list[dict] = []
+    cliff_boulder_placements: list[dict[str, Any]] = []
     for _bi in range(n_boulders):
         bx = boulder_rng.uniform(-half_w * 0.95, half_w * 0.95)
         outward_dist = boulder_rng.uniform(3.0, 8.0)
@@ -1699,12 +1686,12 @@ def generate_cliff_face(
     for band in hard_strata:
         ledge_z = (band["z_bottom"] + band["z_top"]) * 0.5
         # Place a vegetation point every ~2 m along the cliff width
-        for vi in range(veg_step + 1):
-            vt = vi / max(veg_step, 1)
-            vx = -half_w + vt * width
+        for ledge_idx in range(veg_step + 1):
+            ledge_t = ledge_idx / max(veg_step, 1)
+            vx = -half_w + ledge_t * width
             # Slight Y inset so vegetation sits on the ledge face (0.1 m into face)
             vy = _hash_noise(vx * 0.2, ledge_z * 0.2, seed + 8888) * 0.15 - 0.1
-            vz = ledge_z + _hash_noise(vx * 0.3, float(vi), seed + 9999) * 0.2
+            vz = ledge_z + _hash_noise(vx * 0.3, float(ledge_idx), seed + 9999) * 0.2
             cliff_ledge_vegetation_points.append((vx, vy, vz))
 
     _cf_normals = _compute_face_normals(vertices, faces)
@@ -1864,7 +1851,7 @@ def generate_swamp_terrain(
     #    just outside the mound edge, mimicking pooling at hummock margins.
     # ------------------------------------------------------------------
     hummocks: list[dict[str, Any]] = []
-    for hi in range(hummock_count):
+    for _hummock_idx in range(hummock_count):
         hx = rng.uniform(-half_size * 0.8, half_size * 0.8)
         hy = rng.uniform(-half_size * 0.8, half_size * 0.8)
         h_radius = rng.uniform(1.5, 4.0)
@@ -1894,7 +1881,7 @@ def generate_swamp_terrain(
     # 3. Islands — larger dry platforms
     # ------------------------------------------------------------------
     islands: list[dict[str, Any]] = []
-    for ii in range(island_count):
+    for _island_idx in range(island_count):
         isx = rng.uniform(-half_size * 0.6, half_size * 0.6)
         isy = rng.uniform(-half_size * 0.6, half_size * 0.6)
         i_radius = rng.uniform(4.0, 10.0)
@@ -2019,7 +2006,7 @@ def generate_swamp_terrain(
     # ------------------------------------------------------------------
     log_species = ["dead_oak", "dead_cypress", "dead_willow"]
     log_specs: list[dict[str, Any]] = []
-    for li in range(log_count):
+    for _log_idx in range(log_count):
         lx = rng.uniform(-half_size * 0.75, half_size * 0.75)
         ly = rng.uniform(-half_size * 0.75, half_size * 0.75)
         angle = rng.uniform(0.0, 2.0 * math.pi)
@@ -2057,7 +2044,7 @@ def generate_swamp_terrain(
         fx, fy = feature["position"][0], feature["position"][1]
         num_roots = rng.randint(3, 7)
         roots: list[dict[str, Any]] = []
-        for ri in range(num_roots):
+        for _root_idx in range(num_roots):
             r_angle = rng.uniform(0.0, 2.0 * math.pi)
             r_len = rng.uniform(feature["radius"] * 0.6, feature["radius"] * 1.4)
             r_width = rng.uniform(0.05, 0.18)
@@ -3200,6 +3187,7 @@ def generate_sinkhole(
 
     for k in range(depth_res):
         for i in range(radial_res):
+            kt_face = (k + 0.5) / max(depth_res, 1)
             i_next = (i + 1) % radial_res
             v0 = wall_start + k * radial_res + i
             v1 = wall_start + k * radial_res + i_next
@@ -3207,9 +3195,9 @@ def generate_sinkhole(
             v3 = wall_start + (k + 1) * radial_res + i
             faces.append((v0, v1, v2, v3))
             # Upper quarter: dirt over rock; lower: exposed rock
-            if kt < 0.25:
+            if kt_face < 0.25:
                 mat_indices.append(0)  # dirt_wall
-            elif kt < 0.5:
+            elif kt_face < 0.5:
                 mat_indices.append(1)  # exposed_rock (transitional)
             else:
                 mat_indices.append(1)  # exposed_rock
@@ -3288,8 +3276,10 @@ def generate_sinkhole(
         d_size = rng.uniform(0.15, 0.55)
         d_yaw = rng.uniform(0.0, 2.0 * math.pi)
         d_pitch = rng.uniform(-0.4, 0.4)   # tip toward or away from hole
-        cos_dy = math.cos(d_yaw); sin_dy = math.sin(d_yaw)
-        cos_dp = math.cos(d_pitch); sin_dp = math.sin(d_pitch)
+        cos_dy = math.cos(d_yaw)
+        sin_dy = math.sin(d_yaw)
+        cos_dp = math.cos(d_pitch)
+        sin_dp = math.sin(d_pitch)
         db_start = len(vertices)
         hs = d_size / 2.0
         for ddx, ddy, ddz in [
@@ -3604,15 +3594,9 @@ def generate_floating_rocks(
         if equator_ring < len(ring_starts) - 1:
             # Re-label the equatorial band faces as crystal_vein
             # Count backward from the current mat_indices tail
-            # Equatorial band = ring_sizes_list[equator_ring] quads
-            eq_size = ring_sizes_list[equator_ring]
-            # Position in mat_indices: top_cap + sum of previous ring bands + eq band
-            top_cap_faces = ring_sizes_list[0] if ring_starts else 0
-            prev_band_faces = sum(ring_sizes_list[i] for i in range(equator_ring))
-            eq_start_mi = (len(mat_indices) - rock_end + rock_start
-                           + top_cap_faces + prev_band_faces)
             # Simpler: just tag the vein in the RockSpec; downstream shader handles it
             # (adding geometry-level crystal veins would require UV seams)
+            pass
 
         rocks.append({
             "center": (rock_x, rock_y, rock_z),
@@ -4053,7 +4037,7 @@ def generate_ice_formation(
                     mat_indices.append(3 if curvature > 0.3 else 0)  # refraction / clear_ice
 
         num_zones = rng.randint(2, 5)
-        for zi in range(num_zones):
+        for _zone_idx in range(num_zones):
             zx = rng.uniform(-half_w * 0.7, half_w * 0.7)
             zz = rng.uniform(height * 0.1, height * 0.9)
             z_radius = rng.uniform(0.5, 1.5)
@@ -4075,7 +4059,7 @@ def generate_ice_formation(
     voronoi_crack_seeds: list[dict[str, Any]] = []
     num_voronoi_cells = max(6, stalactite_count + 4)
     _vcr = random.Random(seed + 7777)
-    for vi in range(num_voronoi_cells):
+    for _voronoi_idx in range(num_voronoi_cells):
         vox = _vcr.uniform(-half_w, half_w)
         voy = _vcr.uniform(-half_d, half_d)
         voz = _vcr.uniform(0.0, height)
@@ -4248,11 +4232,11 @@ def generate_lava_flow(
     for i, (cx, cy, cz) in enumerate(cl_points):
         # Tangent along centreline (forward difference)
         if i < flow_segments:
-            nx2, ny2, nz2 = cl_points[i + 1]
+            nx2, ny2, _nz2 = cl_points[i + 1]
         else:
-            nx2, ny2, nz2 = cx, cy, cz
+            nx2, ny2, _nz2 = cx, cy, cz
             if i > 0:
-                px, py, pz = cl_points[i - 1]
+                px, py, _pz = cl_points[i - 1]
                 nx2, ny2 = cx + (cx - px), cy + (cy - py)
 
         tdx = nx2 - cx
@@ -4269,8 +4253,6 @@ def generate_lava_flow(
             offset = -rock_edge_outer + jt * 2.0 * rock_edge_outer
             dist = abs(offset)
             half_w = width / 2.0
-            side = 1.0 if offset >= 0.0 else -1.0
-
             # Height profile (inside-out):
             #   hot channel: sunken -0.2 m
             #   levee crest at channel edge: +levee_height
@@ -4356,7 +4338,7 @@ def generate_lava_flow(
     last_cx, last_cy, last_cz = cl_points[-1]
     # Tangent at end (use second-to-last if available)
     if flow_segments >= 1:
-        plx, ply, plz = cl_points[-2]
+        plx, ply, _plz = cl_points[-2]
         tdx_e = last_cx - plx
         tdy_e = last_cy - ply
     else:
@@ -4526,7 +4508,7 @@ def generate_lava_flow(
     num_voronoi_cells = max(8, flow_segments * 2)
     voronoi_cooling_cracks: list[dict[str, Any]] = []
     _vcr2 = random.Random(seed + 4444)
-    for vi in range(num_voronoi_cells):
+    for _voronoi_idx in range(num_voronoi_cells):
         t_along = _vcr2.random()
         seg_idx = int(t_along * flow_segments)
         cx_v, cy_v, cz_v = cl_points[min(seg_idx, len(cl_points) - 1)]
@@ -4621,8 +4603,8 @@ def pass_terrain_features(
     """Generate authored terrain feature mesh specs through the pass graph."""
     t0 = time.perf_counter()
     hints = dict(getattr(state.intent, "composition_hints", {}) or {})
-    raw_specs = hints.get("terrain_feature_specs")
-    if raw_specs is None:
+    raw_specs_raw = hints.get("terrain_feature_specs")
+    if raw_specs_raw is None:
         raw_specs = [
             {
                 "kind": getattr(feature, "feature_kind", ""),
@@ -4630,6 +4612,10 @@ def pass_terrain_features(
             }
             for feature in getattr(state.intent, "hero_feature_specs", ()) or ()
         ]
+    elif isinstance(raw_specs_raw, (list, tuple)):
+        raw_specs = list(cast(tuple[Any, ...] | list[Any], raw_specs_raw))
+    else:
+        raw_specs: list[Any] = []
 
     mesh_specs: list[dict[str, Any]] = []
     skipped: list[str] = []
@@ -4641,7 +4627,12 @@ def pass_terrain_features(
             feature_id = f"{kind}_{idx}"
         elif isinstance(raw, dict):
             kind = str(raw.get("kind") or raw.get("feature_kind") or raw.get("type") or "")
-            params = dict(raw.get("params") or {})
+            raw_params = raw.get("params")
+            params = (
+                {str(k): v for k, v in raw_params.items()}
+                if isinstance(raw_params, dict)
+                else {}
+            )
             feature_id = str(raw.get("id") or raw.get("feature_id") or f"{kind}_{idx}")
         else:
             continue

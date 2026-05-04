@@ -456,7 +456,7 @@ The following items were specifically audited and are correct:
 **Relation to known active bugs from master guide:**
 - W-1 (water dual semantics): out of scope for this audit
 - Scatter C-: out of scope for this audit
-- VisualQA F: P0-02 (false histogram-preserving claim), P0-04 (normal blending), P0-05 (albedo gamma) all contribute to visual QA failures at the shader level
+- DataContractQA F: P0-02 (false histogram-preserving claim), P0-04 (normal blending), P0-05 (albedo gamma) all contribute to visual QA failures at the shader level
 
 ---
 

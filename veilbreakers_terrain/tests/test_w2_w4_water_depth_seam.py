@@ -14,20 +14,41 @@ filter when their target_tile matches the appropriate neighbour).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TypedDict, cast
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
+
+from veilbreakers_terrain.handlers._water_network import WaterEdgeContract, WaterNetwork
+from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
+from veilbreakers_terrain.handlers.terrain_semantics import (
+    BBox,
+    TerrainIntentState,
+    TerrainMaskStack,
+    TerrainPipelineState,
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_stack(size: int = 32, height_val: float = 0.0):
-    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
+TileCoord = tuple[int, int]
+TileContracts = dict[TileCoord, dict[str, list[WaterEdgeContract]]]
+FloatArray = NDArray[np.float32]
+
+
+class SeamValidationResult(TypedDict):
+    total_crossings: int
+    valid: int
+    orphaned: int
+    head_mismatch: int
+    mismatched_pairs: list[tuple[int, int, str, float]]
+
+
+def _build_stack(size: int = 32, height_val: float = 0.0) -> TerrainMaskStack:
     h = np.full((size, size), height_val, dtype=np.float32)
     return TerrainMaskStack(
         tile_size=size - 1,
@@ -40,13 +61,7 @@ def _build_stack(size: int = 32, height_val: float = 0.0):
     )
 
 
-def _build_state(stack):
-    from veilbreakers_terrain.handlers.terrain_semantics import (
-        BBox,
-        TerrainIntentState,
-        TerrainPipelineState,
-    )
-
+def _build_state(stack: TerrainMaskStack) -> TerrainPipelineState:
     intent = TerrainIntentState(
         seed=0,
         region_bounds=BBox(0.0, 0.0, 100.0, 100.0),
@@ -60,10 +75,8 @@ def _make_contract(
     position: float,
     world_z: float,
     network_id: int = 0,
-    target_tile: tuple = (1, 0),
-):
-    from veilbreakers_terrain.handlers._water_network import WaterEdgeContract
-
+    target_tile: TileCoord = (1, 0),
+) -> WaterEdgeContract:
     return WaterEdgeContract(
         position=position,
         world_x=0.0,
@@ -78,22 +91,36 @@ def _make_contract(
     )
 
 
-def _build_network_with_contracts(tile_contracts: dict) -> Any:
+def _build_network_with_contracts(tile_contracts: TileContracts) -> WaterNetwork:
     """Build a minimal WaterNetwork with a pre-populated tile_contracts dict."""
-    from veilbreakers_terrain.handlers._water_network import WaterNetwork
-
-    net = WaterNetwork.__new__(WaterNetwork)
-    net.segments = {}
-    net.nodes = {}
+    net = WaterNetwork()
     net.tile_contracts = tile_contracts
-    net._seam_validation_result = None
-    net.tile_size = 16
-    net.cell_size = 1.0
-    net.world_origin_x = 0.0
-    net.world_origin_y = 0.0
-    net.tile_x = 0
-    net.tile_y = 0
     return net
+
+
+def _validate_seams(
+    net: WaterNetwork,
+    *,
+    position_tolerance: float = 0.05,
+    head_tolerance_m: float = 0.5,
+) -> SeamValidationResult:
+    return cast(
+        SeamValidationResult,
+        net.validate_seam_continuity(
+            position_tolerance=position_tolerance,
+            head_tolerance_m=head_tolerance_m,
+        ),
+    )
+
+
+def _channel_array(stack: TerrainMaskStack, channel: str) -> FloatArray:
+    value = stack.get(channel)
+    assert isinstance(value, np.ndarray)
+    return cast(FloatArray, value)
+
+
+def _assert_close(actual: float, expected: float, *, abs_tol: float = 1e-12) -> None:
+    assert math.isclose(actual, expected, rel_tol=0.0, abs_tol=abs_tol)
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +130,6 @@ def _build_network_with_contracts(tile_contracts: dict) -> Any:
 
 class TestPassWaterDepth:
     def test_skip_when_no_water_surface_elevation(self):
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         # Stack has height but no water_surface_elevation_m → skip
         stack = _build_stack(size=16, height_val=5.0)
         state = _build_state(stack)
@@ -112,16 +137,14 @@ class TestPassWaterDepth:
         assert result.status == "skipped"
         assert stack.get("water_depth_m") is None
 
-    def test_skip_when_height_returns_none(self, monkeypatch):
+    def test_skip_when_height_returns_none(self, monkeypatch: pytest.MonkeyPatch):
         """When both height_m and height return None, pass must skip gracefully."""
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         stack = _build_stack(size=16, height_val=0.0)
         stack.set("water_surface_elevation_m", np.full((16, 16), 3.0, dtype=np.float32), "test")
 
         original_get = stack.get
 
-        def _patched_get(channel):
+        def _patched_get(channel: str) -> object | None:
             if channel in ("height_m", "height"):
                 return None
             return original_get(channel)
@@ -132,8 +155,6 @@ class TestPassWaterDepth:
         assert result.status == "skipped"
 
     def test_depth_is_zero_when_water_equals_terrain(self):
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         size = 16
         h = np.full((size, size), 5.0, dtype=np.float32)
 
@@ -143,13 +164,10 @@ class TestPassWaterDepth:
 
         result = pass_water_depth(state, None)
         assert result.status == "ok"
-        depth = stack.get("water_depth_m")
-        assert depth is not None
-        assert float(depth.max()) == pytest.approx(0.0)
+        depth = _channel_array(stack, "water_depth_m")
+        _assert_close(float(depth.max()), 0.0)
 
     def test_depth_positive_when_water_above_terrain(self):
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         size = 16
         ws = np.full((size, size), 5.0, dtype=np.float32)  # water at 5 m
 
@@ -159,14 +177,12 @@ class TestPassWaterDepth:
 
         result = pass_water_depth(state, None)
         assert result.status == "ok"
-        depth = stack.get("water_depth_m")
-        assert float(depth.max()) == pytest.approx(2.0, abs=1e-5)
-        assert float(depth.min()) == pytest.approx(2.0, abs=1e-5)
+        depth = _channel_array(stack, "water_depth_m")
+        _assert_close(float(depth.max()), 2.0, abs_tol=1e-5)
+        _assert_close(float(depth.min()), 2.0, abs_tol=1e-5)
 
     def test_depth_clamps_negative_to_zero(self):
         """Cells where terrain is above water surface must have depth = 0."""
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         size = 16
         ws = np.full((size, size), 5.0, dtype=np.float32)  # water at 5 m
 
@@ -175,14 +191,13 @@ class TestPassWaterDepth:
         state = _build_state(stack)
 
         result = pass_water_depth(state, None)
-        depth = stack.get("water_depth_m")
-        assert float(depth.min()) == pytest.approx(0.0)
-        assert float(depth.max()) == pytest.approx(0.0)
+        assert result.status == "ok"
+        depth = _channel_array(stack, "water_depth_m")
+        _assert_close(float(depth.min()), 0.0)
+        _assert_close(float(depth.max()), 0.0)
 
     def test_shoreline_blend_is_one_at_half_metre_depth(self):
         """At exactly 0.5 m depth the smoothstep output must reach 1.0."""
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         size = 16
         ws = np.full((size, size), 0.5, dtype=np.float32)  # terrain at 0, ws at 0.5
 
@@ -191,13 +206,10 @@ class TestPassWaterDepth:
         state = _build_state(stack)
         pass_water_depth(state, None)
 
-        blend = stack.get("shoreline_blend")
-        assert blend is not None
-        assert float(blend.max()) == pytest.approx(1.0, abs=1e-5)
+        blend = _channel_array(stack, "shoreline_blend")
+        _assert_close(float(blend.max()), 1.0, abs_tol=1e-5)
 
     def test_shoreline_blend_zero_at_dry_cells(self):
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         size = 16
         ws = np.full((size, size), 5.0, dtype=np.float32)  # ws == terrain → zero depth
 
@@ -206,19 +218,16 @@ class TestPassWaterDepth:
         state = _build_state(stack)
         pass_water_depth(state, None)
 
-        blend = stack.get("shoreline_blend")
-        assert float(blend.max()) == pytest.approx(0.0, abs=1e-5)
+        blend = _channel_array(stack, "shoreline_blend")
+        _assert_close(float(blend.max()), 0.0, abs_tol=1e-5)
 
     def test_shoreline_blend_monotone_with_depth(self):
         """Blend should be non-decreasing from 0 to 0.5 m depth."""
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         size = 8
         # Heights increasing so depths decrease: ws fixed at 0.5, height from 0 to 0.5
         heights = np.linspace(0.0, 0.5, size * size).reshape(size, size).astype(np.float32)
         ws = np.full((size, size), 0.5, dtype=np.float32)
 
-        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = TerrainMaskStack(
             tile_size=size - 1, cell_size=1.0,
             world_origin_x=0.0, world_origin_y=0.0,
@@ -231,16 +240,14 @@ class TestPassWaterDepth:
 
         # depth = max(ws - height, 0) decreases as height increases
         # blend should also decrease → verify by sorting depths ascending + checking blend
-        depth = stack.get("water_depth_m").ravel()
-        blend = stack.get("shoreline_blend").ravel()
+        depth = _channel_array(stack, "water_depth_m").ravel()
+        blend = _channel_array(stack, "shoreline_blend").ravel()
         order = np.argsort(depth)
         sorted_blend = blend[order]
         diffs = np.diff(sorted_blend)
         assert np.all(diffs >= -1e-6), "shoreline_blend must be non-decreasing with depth"
 
     def test_metrics_reported_in_result(self):
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         size = 16
         ws = np.full((size, size), 1.0, dtype=np.float32)
 
@@ -252,7 +259,7 @@ class TestPassWaterDepth:
         assert "depth_max_m" in result.metrics
         assert "depth_mean_m" in result.metrics
         assert "wet_cell_pct" in result.metrics
-        assert result.metrics["wet_cell_pct"] == pytest.approx(100.0)
+        _assert_close(float(result.metrics["wet_cell_pct"]), 100.0)
 
     def test_height_fallback_reads_height_channel(self):
         """pass_water_depth falls back to 'height' when 'height_m' is absent.
@@ -261,8 +268,6 @@ class TestPassWaterDepth:
         so stack.get('height_m') always returns None and the fallback is exercised
         by default whenever the stack is built normally.
         """
-        from veilbreakers_terrain.handlers.terrain_pipeline import pass_water_depth
-
         size = 16
         ws = np.full((size, size), 4.0, dtype=np.float32)
 
@@ -272,8 +277,8 @@ class TestPassWaterDepth:
         state = _build_state(stack)
         result = pass_water_depth(state, None)
         assert result.status == "ok"
-        depth = stack.get("water_depth_m")
-        assert float(depth.max()) == pytest.approx(2.0, abs=1e-5)
+        depth = _channel_array(stack, "water_depth_m")
+        _assert_close(float(depth.max()), 2.0, abs_tol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +289,7 @@ class TestPassWaterDepth:
 class TestValidateSeamContinuity:
     def test_empty_returns_all_zero_counts(self):
         net = _build_network_with_contracts({})
-        result = net.validate_seam_continuity()
+        result = _validate_seams(net)
         assert result["total_crossings"] == 0
         assert result["valid"] == 0
         assert result["orphaned"] == 0
@@ -304,7 +309,7 @@ class TestValidateSeamContinuity:
             (1, 0): {"west": [c_in]},
         }
         net = _build_network_with_contracts(tile_contracts)
-        result = net.validate_seam_continuity()
+        result = _validate_seams(net)
 
         assert result["total_crossings"] == 2  # both directions validated
         assert result["valid"] == 2
@@ -321,7 +326,7 @@ class TestValidateSeamContinuity:
             # (1, 0) absent entirely
         }
         net = _build_network_with_contracts(tile_contracts)
-        result = net.validate_seam_continuity()
+        result = _validate_seams(net)
 
         assert result["orphaned"] == 1
         assert result["valid"] == 0
@@ -337,7 +342,7 @@ class TestValidateSeamContinuity:
             (1, 0): {"west": [c_in]},
         }
         net = _build_network_with_contracts(tile_contracts)
-        result = net.validate_seam_continuity(head_tolerance_m=0.5)
+        result = _validate_seams(net, head_tolerance_m=0.5)
 
         assert result["head_mismatch"] >= 1
         assert result["valid"] == 0
@@ -354,7 +359,7 @@ class TestValidateSeamContinuity:
             (1, 0): {"west": [c_in]},
         }
         net = _build_network_with_contracts(tile_contracts)
-        result = net.validate_seam_continuity(position_tolerance=0.05)
+        result = _validate_seams(net, position_tolerance=0.05)
 
         assert result["orphaned"] >= 1
         assert c_out.seam_valid is False
@@ -369,7 +374,7 @@ class TestValidateSeamContinuity:
             (1, 0): {"west": [c_in]},
         }
         net = _build_network_with_contracts(tile_contracts)
-        result = net.validate_seam_continuity()
+        result = _validate_seams(net)
 
         assert result["orphaned"] >= 1
         assert c_out.seam_valid is False
@@ -378,7 +383,7 @@ class TestValidateSeamContinuity:
         c_out = _make_contract(position=0.5, world_z=10.0, network_id=1, target_tile=(1, 0))
         tile_contracts = {(0, 0): {"east": [c_out]}}
         net = _build_network_with_contracts(tile_contracts)
-        result = net.validate_seam_continuity()
+        result = _validate_seams(net)
 
         assert len(result["mismatched_pairs"]) >= 1
         entry = result["mismatched_pairs"][0]
@@ -393,6 +398,5 @@ class TestValidateSeamContinuity:
 
     def test_water_network_seam_result_initialised_to_none(self):
         """WaterNetwork._seam_validation_result must be None before from_heightmap."""
-        from veilbreakers_terrain.handlers._water_network import WaterNetwork
         net = _build_network_with_contracts({})
         assert net._seam_validation_result is None

@@ -10,12 +10,11 @@ from __future__ import annotations
 import ast
 import csv
 import json
-import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Iterable, NotRequired, Optional, Sequence, TypedDict, cast
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +31,35 @@ LASTFAILED_PATH = REPO_ROOT / ".pytest_cache" / "v" / "cache" / "lastfailed"
 IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 IMPORT_RE_TEMPLATE = r"\b(?:from\s+[A-Za-z0-9_\.]+\s+import\s+.*\b{symbol}\b|import\s+.*\b{symbol}\b)"
 GRADE_TOKEN_RE = re.compile(r"^(A-|A|B\+|B-|B|C\+|C-|C|D\+|D-|D|F)(?:$|[|:,\s])")
+EXTRA_CSV_COLUMNS_KEY = "__EXTRA_CSV_COLUMNS__"
+
+
+class GradeCutoff(TypedDict):
+    grade: str
+    min_score: float
+
+
+class RubricAdjustments(TypedDict):
+    claim_recency: dict[str, float]
+    test_strength: dict[str, float]
+    pipeline_wiring: dict[str, float]
+    public_exposure: dict[str, float]
+    failure_evidence: dict[str, float]
+
+
+class GradeCapRule(TypedDict):
+    max_grade: str
+    if_any: NotRequired[list[str]]
+    if_all: NotRequired[list[str]]
+
+
+class StrictRubric(TypedDict):
+    non_gradable_values: list[str]
+    grade_scale: dict[str, float]
+    grade_cutoffs: list[GradeCutoff]
+    adjustments: RubricAdjustments
+    failure_penalty_cap: float
+    grade_caps: list[GradeCapRule]
 
 CLAIM_COLUMNS = [
     "R9 Phase7-14 Consensus",
@@ -199,8 +227,8 @@ class SymbolVisitor(ast.NodeVisitor):
     """Collect top-level functions/classes and class methods/properties."""
 
     def __init__(self) -> None:
-        self.records: List[SymbolRecord] = []
-        self._class_stack: List[str] = []
+        self.records: list[SymbolRecord] = []
+        self._class_stack: list[str] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
         self.records.append(SymbolRecord(node.name, "class", node.lineno, ""))
@@ -238,21 +266,21 @@ class SymbolVisitor(ast.NodeVisitor):
         return False
 
 
-def load_rubric() -> dict:
+def load_rubric() -> StrictRubric:
     if RUBRIC_PATH.exists():
-        return json.loads(RUBRIC_PATH.read_text(encoding="utf-8"))
+        return cast(StrictRubric, json.loads(RUBRIC_PATH.read_text(encoding="utf-8")))
     raise FileNotFoundError(f"Rubric JSON not found at {RUBRIC_PATH}")
 
 
 def load_rows() -> tuple[list[str], list[dict[str, str]]]:
     with CSV_PATH.open(newline="", encoding="utf-8-sig") as fh:
-        reader = csv.DictReader(fh)
+        reader = csv.DictReader(fh, restkey=EXTRA_CSV_COLUMNS_KEY)
         fieldnames = list(reader.fieldnames or [])
         rows = list(reader)
-    if None in fieldnames:
-        fieldnames.remove(None)
+    if EXTRA_CSV_COLUMNS_KEY in fieldnames:
+        fieldnames.remove(EXTRA_CSV_COLUMNS_KEY)
     for row in rows:
-        row.pop(None, None)
+        row.pop(EXTRA_CSV_COLUMNS_KEY, None)
     return fieldnames, rows
 
 
@@ -267,14 +295,14 @@ def extract_grade_token(cell: str) -> str:
     return match.group(1) if match else ""
 
 
-def score_to_grade(score: float, rubric: dict) -> str:
+def score_to_grade(score: float, rubric: StrictRubric) -> str:
     for cutoff in rubric["grade_cutoffs"]:
         if score >= float(cutoff["min_score"]):
             return str(cutoff["grade"])
     return "F"
 
 
-def grade_to_notch(grade: str, rubric: dict) -> int:
+def grade_to_notch(grade: str, rubric: StrictRubric) -> int:
     ordered = [item["grade"] for item in rubric["grade_cutoffs"]]
     return ordered.index(grade) if grade in ordered else -1
 
@@ -303,13 +331,20 @@ def build_symbol_index() -> tuple[dict[str, list[SymbolRecord]], dict[str, Path]
 
 def build_identifier_stats(
     py_paths: Sequence[Path],
-) -> tuple[dict[Path, Counter], Counter, Counter, Counter, Counter, Counter]:
-    per_file_counts: dict[Path, Counter] = {}
-    test_occurrences: Counter = Counter()
-    source_occurrences: Counter = Counter()
-    test_file_hits: Counter = Counter()
-    source_file_hits: Counter = Counter()
-    import_hits: Counter = Counter()
+) -> tuple[
+    dict[Path, Counter[str]],
+    Counter[str],
+    Counter[str],
+    Counter[str],
+    Counter[str],
+    Counter[str],
+]:
+    per_file_counts: dict[Path, Counter[str]] = {}
+    test_occurrences: Counter[str] = Counter()
+    source_occurrences: Counter[str] = Counter()
+    test_file_hits: Counter[str] = Counter()
+    source_file_hits: Counter[str] = Counter()
+    import_hits: Counter[str] = Counter()
     for path in py_paths:
         text = read_text(path)
         counts = Counter(IDENTIFIER_RE.findall(text))
@@ -375,7 +410,7 @@ def pick_symbol(symbols: Sequence[SymbolRecord], function_name: str, csv_line: O
     return min(candidates, key=lambda record: abs(record.lineno - csv_line))
 
 
-def latest_claim(row: dict[str, str], rubric: dict) -> tuple[str, str, float, str]:
+def latest_claim(row: dict[str, str], rubric: StrictRubric) -> tuple[str, str, float, str]:
     non_gradable = {value for value in rubric["non_gradable_values"] if value}
     for column in CLAIM_COLUMNS:
         raw = (row.get(column) or "").strip()
@@ -497,7 +532,14 @@ def failure_note(file_name: str, function_name: str, lastfailed: dict[str, bool]
     return ""
 
 
-def apply_caps(score: float, failure_flags: list[str], test_strength: str, pipeline_wiring: str, public_exposure: str, rubric: dict) -> tuple[float, str]:
+def apply_caps(
+    score: float,
+    failure_flags: list[str],
+    test_strength: str,
+    pipeline_wiring: str,
+    public_exposure: str,
+    rubric: StrictRubric,
+) -> tuple[float, str]:
     cap_grade = ""
     cap_score = score
     for cap_rule in rubric["grade_caps"]:
@@ -571,7 +613,7 @@ def category_for_row(file_name: str, function_name: str) -> str:
 
 
 def generic_aaa_path(category: str, bucket: str, pipeline_wiring: str, test_strength: str, failure_flags: list[str]) -> str:
-    steps: List[str] = []
+    steps: list[str] = []
     if pipeline_wiring in {"PIPE_PARTIAL", "PIPE_DEAD_OR_SHADOWED", "PIPE_OPTIONAL", "PIPE_CONTRACT_MISMATCH"}:
         steps.append("Wire this into the default/master runtime path and remove stale or contract-breaking call surfaces.")
     if test_strength in {"TEST_NONE", "TEST_WEAK"} or failure_flags:
@@ -721,7 +763,7 @@ def main() -> None:
     symbol_index, file_paths = build_symbol_index()
     test_paths = sorted(TESTS_DIR.rglob("test_*.py"))
     py_paths = sorted((REPO_ROOT / "veilbreakers_terrain").rglob("*.py"))
-    per_file_counts, test_occurrences, source_occurrences, test_file_hits, source_file_hits, import_hits = build_identifier_stats(py_paths)
+    per_file_counts, test_occurrences, _source_occurrences, test_file_hits, source_file_hits, import_hits = build_identifier_stats(py_paths)
     runtime_index = build_runtime_index(file_paths)
     lastfailed = load_lastfailed()
     duplicate_counter = Counter((row.get("File", "").strip(), row.get("Function", "").strip()) for row in rows)
@@ -757,9 +799,9 @@ def main() -> None:
         if field not in output_fieldnames:
             output_fieldnames.append(field)
 
-    strict_rows: List[dict[str, str]] = []
-    downgraded_rows: List[dict[str, str]] = []
-    non_gradable_rows: List[dict[str, str]] = []
+    strict_rows: list[dict[str, str]] = []
+    downgraded_rows: list[dict[str, str]] = []
+    non_gradable_rows: list[dict[str, str]] = []
 
     for row in rows:
         file_name = (row.get("File") or "").strip()
@@ -773,15 +815,15 @@ def main() -> None:
         path = file_paths.get(file_name)
         code_exists = path is not None
         symbol = pick_symbol(symbol_index.get(file_name, []), function_name, csv_line) if code_exists else None
-        line_delta = abs(csv_line - symbol.lineno) if symbol and csv_line is not None else ""
+        line_delta: Optional[int] = abs(csv_line - symbol.lineno) if symbol and csv_line is not None else None
         duplicate_key = duplicate_counter[(file_name, function_name)] > 1
 
-        own_count = per_file_counts.get(path, Counter()).get(function_name, 0) if path else 0
+        own_count = per_file_counts.get(path, Counter[str]()).get(function_name, 0) if path else 0
         test_hits = test_occurrences.get(function_name, 0)
         test_files = test_file_hits.get(function_name, 0)
         import_hit_count = import_hits.get(function_name, 0)
         source_files = max(source_file_hits.get(function_name, 0) - (1 if own_count else 0), 0)
-        runtime_tags = runtime_index.get(function_name, set())
+        runtime_tags = runtime_index.get(function_name, set[str]())
         failure_flags = collect_failure_flags(file_name, function_name)
         has_module_named_test = module_named_test_exists(file_name, test_paths)
         test_strength = classify_test_strength(
@@ -828,10 +870,10 @@ def main() -> None:
         if non_gradable:
             current_score = 0.0
             current_grade = claim_grade or "SCOPE_EXEMPT"
-            delta_notches = ""
+            delta_notches: Optional[int] = None
             adjustments_text = "non-gradable row"
         else:
-            adjustments = {
+            adjustments: dict[str, float] = {
                 claim_flag: float(rubric["adjustments"]["claim_recency"][claim_flag]),
                 test_strength: float(rubric["adjustments"]["test_strength"][test_strength]),
                 pipeline_wiring: float(rubric["adjustments"]["pipeline_wiring"][pipeline_wiring]),
@@ -871,7 +913,7 @@ def main() -> None:
             evidence_flags.append("CSV_STALE_ROW")
         if source_files == 0 and not runtime_tags:
             evidence_flags.append("NO_RUNTIME_REACH")
-        if code_exists and line_delta != "" and isinstance(line_delta, int) and line_delta > 25:
+        if code_exists and line_delta is not None and line_delta > 25:
             evidence_flags.append("LINE_DRIFT_GT_25")
 
         enriched = dict(row)
@@ -883,13 +925,13 @@ def main() -> None:
                 "STRICT_BASE_SCORE": f"{claim_score:.2f}" if claim_grade else "",
                 "STRICT_CURRENT_SCORE": f"{current_score:.2f}" if not non_gradable else "",
                 "STRICT_CURRENT_GRADE": current_grade,
-                "STRICT_DELTA_NOTCHES": str(delta_notches) if delta_notches != "" else "",
+                "STRICT_DELTA_NOTCHES": str(delta_notches) if delta_notches is not None else "",
                 "STRICT_CONFIDENCE": confidence,
                 "STRICT_BUCKET": bucket,
                 "STRICT_CODE_EXISTS": "yes" if symbol else "no",
                 "STRICT_SYMBOL_KIND": symbol.kind if symbol else "",
                 "STRICT_CONTAINER_CLASS": symbol.container_class if symbol else "",
-                "STRICT_LINE_DELTA": str(line_delta) if line_delta != "" else "",
+                "STRICT_LINE_DELTA": str(line_delta) if line_delta is not None else "",
                 "STRICT_DUPLICATE_KEY": "yes" if duplicate_key else "no",
                 "STRICT_TEST_HITS": str(test_hits),
                 "STRICT_TEST_FILE_HITS": str(test_files),
@@ -906,7 +948,7 @@ def main() -> None:
         strict_rows.append(enriched)
         if non_gradable:
             non_gradable_rows.append(enriched)
-        elif delta_notches > 0:
+        elif delta_notches is not None and delta_notches > 0:
             downgraded_rows.append(enriched)
 
     write_csv(OUTPUT_CSV, output_fieldnames, strict_rows)

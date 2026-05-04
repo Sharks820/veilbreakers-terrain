@@ -13,7 +13,7 @@ The animation system occupies an uncomfortable middle ground: the keyframe math 
 
 The prior J6 dead-code sweep identified 14 unused animation parameters (`duration`, `omega`, `phase_speed`). This audit confirms the root cause: those parameters were removed from function signatures during refactoring, but the real problem is not the dead params — it is that the entire output path is disconnected from every production surface.
 
-**Overall grade: F (same floor as VisualQA)**
+**Overall grade: F (same floor as DataContractQA)**
 Reason: A keyframe generator that generates beautiful data and writes it nowhere is not an animation system. It is a math library with no integration.
 
 ---

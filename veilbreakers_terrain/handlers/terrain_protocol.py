@@ -100,6 +100,18 @@ class ProtocolGate:
                 rule_number=1,
                 severity="hard",
             )
+        # FIX-B14-P1-44: lock every anchor declared on the intent so that
+        # Rule 3 (rule_3_lock_reference_empties) can detect drift on
+        # subsequent runs.  lock_anchor is idempotent — re-locking the same
+        # anchor to the same position is a no-op for drift purposes.
+        # Import inside the method to avoid a circular import at module load
+        # (terrain_protocol ← terrain_semantics ← terrain_reference_locks).
+        try:
+            from .terrain_reference_locks import lock_anchor as _lock_anchor
+            for anchor in getattr(state.intent, "anchors", None) or []:
+                _lock_anchor(anchor)
+        except Exception:  # noqa: BLE001
+            pass  # non-fatal: anchor locking is best-effort at Rule 1
 
     @staticmethod
     def rule_2_sync_to_user_viewport(

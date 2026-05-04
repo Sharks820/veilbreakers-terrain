@@ -8,9 +8,16 @@ Pure numpy -- no Blender required.
 from __future__ import annotations
 
 import math
+from typing import TypeAlias, cast
 
 import numpy as np
+import numpy.typing as npt
 import pytest
+
+
+FloatArray: TypeAlias = npt.NDArray[np.float64]
+IntArray: TypeAlias = npt.NDArray[np.int64]
+EdgeMap: TypeAlias = dict[tuple[int, int], list[int]]
 
 
 # ---------------------------------------------------------------------------
@@ -18,9 +25,9 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _heightmap_to_mesh(
-    heightmap: np.ndarray,
+    heightmap: FloatArray,
     cell_size: float = 1.0,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[FloatArray, IntArray]:
     """Convert a 2D heightmap to vertices and triangle indices.
 
     Returns (vertices, faces) where:
@@ -49,9 +56,9 @@ def _heightmap_to_mesh(
 
 
 def _compute_face_normals(
-    verts: np.ndarray,
-    faces: np.ndarray,
-) -> np.ndarray:
+    verts: FloatArray,
+    faces: IntArray,
+) -> FloatArray:
     """Compute per-face normals via cross product. Returns (M, 3) array."""
     v0 = verts[faces[:, 0]]
     v1 = verts[faces[:, 1]]
@@ -61,39 +68,42 @@ def _compute_face_normals(
     normals = np.cross(edge1, edge2)
     norms = np.linalg.norm(normals, axis=1, keepdims=True)
     norms = np.maximum(norms, 1e-12)
-    return normals / norms
+    return cast(FloatArray, normals / norms)
 
 
 def _compute_face_areas(
-    verts: np.ndarray,
-    faces: np.ndarray,
-) -> np.ndarray:
+    verts: FloatArray,
+    faces: IntArray,
+) -> FloatArray:
     """Compute per-face area. Returns (M,) array."""
     v0 = verts[faces[:, 0]]
     v1 = verts[faces[:, 1]]
     v2 = verts[faces[:, 2]]
     cross = np.cross(v1 - v0, v2 - v0)
-    return 0.5 * np.linalg.norm(cross, axis=1)
+    return cast(FloatArray, 0.5 * np.linalg.norm(cross, axis=1))
 
 
 def _build_edge_face_map(
-    faces: np.ndarray,
-) -> dict[tuple[int, int], list[int]]:
+    faces: IntArray,
+) -> EdgeMap:
     """Build mapping from sorted edge tuple to face indices."""
-    edge_map: dict[tuple[int, int], list[int]] = {}
-    for fi, (a, b, c) in enumerate(faces):
+    edge_map: EdgeMap = {}
+    for fi, face in enumerate(faces):
+        a = int(face[0])
+        b = int(face[1])
+        c = int(face[2])
         for e in [(a, b), (b, c), (c, a)]:
             key = (min(e), max(e))
             edge_map.setdefault(key, []).append(fi)
     return edge_map
 
 
-def _count_boundary_edges(edge_map: dict) -> int:
+def _count_boundary_edges(edge_map: EdgeMap) -> int:
     """Count edges shared by exactly one face (boundary/non-manifold)."""
     return sum(1 for flist in edge_map.values() if len(flist) == 1)
 
 
-def _count_non_manifold_edges(edge_map: dict) -> int:
+def _count_non_manifold_edges(edge_map: EdgeMap) -> int:
     """Count edges shared by more than 2 faces (non-manifold)."""
     return sum(1 for flist in edge_map.values() if len(flist) > 2)
 
@@ -103,24 +113,24 @@ def _count_non_manifold_edges(edge_map: dict) -> int:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def mountain_heightmap():
+def mountain_heightmap() -> FloatArray:
     """64x64 mountain terrain heightmap."""
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
-    return generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
+    return cast(FloatArray, generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains"))
 
 
 @pytest.fixture
-def plains_heightmap():
+def plains_heightmap() -> FloatArray:
     """64x64 plains terrain heightmap."""
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
-    return generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="plains")
+    return cast(FloatArray, generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="plains"))
 
 
 @pytest.fixture
-def eroded_heightmap(mountain_heightmap):
+def eroded_heightmap(mountain_heightmap: FloatArray) -> FloatArray:
     """Mountain heightmap after hydraulic erosion."""
     from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
-    return apply_hydraulic_erosion(mountain_heightmap, iterations=200, seed=42)
+    return cast(FloatArray, apply_hydraulic_erosion(mountain_heightmap, iterations=200, seed=42))
 
 
 # ===========================================================================
@@ -131,9 +141,9 @@ def eroded_heightmap(mountain_heightmap):
 class TestManifoldIntegrity:
     """Terrain meshes must be manifold (watertight, no T-junctions)."""
 
-    def test_grid_mesh_has_no_boundary_edges(self, mountain_heightmap):
+    def test_grid_mesh_has_no_boundary_edges(self, mountain_heightmap: FloatArray) -> None:
         """A complete grid mesh should have boundary edges only on the perimeter."""
-        verts, faces = _heightmap_to_mesh(mountain_heightmap)
+        _verts, faces = _heightmap_to_mesh(mountain_heightmap)
         edge_map = _build_edge_face_map(faces)
         boundary = _count_boundary_edges(edge_map)
         rows, cols = mountain_heightmap.shape
@@ -142,42 +152,42 @@ class TestManifoldIntegrity:
             f"Expected {expected_boundary} boundary edges (perimeter), got {boundary}"
         )
 
-    def test_grid_mesh_has_no_non_manifold_edges(self, mountain_heightmap):
+    def test_grid_mesh_has_no_non_manifold_edges(self, mountain_heightmap: FloatArray) -> None:
         """No edge should be shared by more than 2 faces."""
-        verts, faces = _heightmap_to_mesh(mountain_heightmap)
+        _verts, faces = _heightmap_to_mesh(mountain_heightmap)
         edge_map = _build_edge_face_map(faces)
         non_manifold = _count_non_manifold_edges(edge_map)
         assert non_manifold == 0, f"Found {non_manifold} non-manifold edges"
 
-    def test_eroded_mesh_manifold(self, eroded_heightmap):
+    def test_eroded_mesh_manifold(self, eroded_heightmap: FloatArray) -> None:
         """Erosion must not break manifold topology."""
-        verts, faces = _heightmap_to_mesh(eroded_heightmap)
+        _verts, faces = _heightmap_to_mesh(eroded_heightmap)
         edge_map = _build_edge_face_map(faces)
         non_manifold = _count_non_manifold_edges(edge_map)
         assert non_manifold == 0
 
-    def test_vertex_count_matches_grid(self, mountain_heightmap):
+    def test_vertex_count_matches_grid(self, mountain_heightmap: FloatArray) -> None:
         """Vertex count must equal rows * cols."""
-        verts, faces = _heightmap_to_mesh(mountain_heightmap)
+        verts, _faces = _heightmap_to_mesh(mountain_heightmap)
         rows, cols = mountain_heightmap.shape
         assert verts.shape[0] == rows * cols
 
-    def test_face_count_matches_grid(self, mountain_heightmap):
+    def test_face_count_matches_grid(self, mountain_heightmap: FloatArray) -> None:
         """Face count must be 2 * (rows-1) * (cols-1) for a triangulated grid."""
-        verts, faces = _heightmap_to_mesh(mountain_heightmap)
+        _verts, faces = _heightmap_to_mesh(mountain_heightmap)
         rows, cols = mountain_heightmap.shape
         expected = 2 * (rows - 1) * (cols - 1)
         assert faces.shape[0] == expected
 
-    def test_all_face_indices_valid(self, mountain_heightmap):
+    def test_all_face_indices_valid(self, mountain_heightmap: FloatArray) -> None:
         """All face vertex indices must reference valid vertices."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
         assert faces.min() >= 0
         assert faces.max() < verts.shape[0]
 
-    def test_each_interior_edge_shared_by_two_faces(self, mountain_heightmap):
+    def test_each_interior_edge_shared_by_two_faces(self, mountain_heightmap: FloatArray) -> None:
         """Every interior edge must be shared by exactly 2 triangles."""
-        verts, faces = _heightmap_to_mesh(mountain_heightmap)
+        _verts, faces = _heightmap_to_mesh(mountain_heightmap)
         edge_map = _build_edge_face_map(faces)
         interior_bad = sum(
             1 for flist in edge_map.values()
@@ -189,41 +199,41 @@ class TestManifoldIntegrity:
 class TestNormalConsistency:
     """Face normals must be consistently oriented (no flipped faces)."""
 
-    def test_all_normals_point_upward(self, mountain_heightmap):
+    def test_all_normals_point_upward(self, mountain_heightmap: FloatArray) -> None:
         """For terrain viewed from above, all face normals Z component must be > 0."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
         normals = _compute_face_normals(verts, faces)
         min_z = normals[:, 2].min()
         assert min_z > 0.0, f"Found face normal with Z={min_z:.4f} (should be >0)"
 
-    def test_eroded_normals_upward(self, eroded_heightmap):
+    def test_eroded_normals_upward(self, eroded_heightmap: FloatArray) -> None:
         """Erosion must not create flipped normals."""
         verts, faces = _heightmap_to_mesh(eroded_heightmap)
         normals = _compute_face_normals(verts, faces)
         assert normals[:, 2].min() > 0.0
 
-    def test_steep_terrain_normals_valid(self):
+    def test_steep_terrain_normals_valid(self) -> None:
         """Even steep (cliff-type) terrain should not have flipped normals."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
-        hmap = generate_heightmap(64, 64, scale=30.0, seed=99, terrain_type="cliffs")
+        hmap = cast(FloatArray, generate_heightmap(64, 64, scale=30.0, seed=99, terrain_type="cliffs"))
         verts, faces = _heightmap_to_mesh(hmap)
         normals = _compute_face_normals(verts, faces)
         assert normals[:, 2].min() > 0.0
 
-    def test_normal_magnitudes_are_unit(self, mountain_heightmap):
+    def test_normal_magnitudes_are_unit(self, mountain_heightmap: FloatArray) -> None:
         """All face normals should be unit length."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
         normals = _compute_face_normals(verts, faces)
         lengths = np.linalg.norm(normals, axis=1)
         np.testing.assert_allclose(lengths, 1.0, atol=1e-6)
 
-    def test_adjacent_normals_not_opposite(self, mountain_heightmap):
+    def test_adjacent_normals_not_opposite(self, mountain_heightmap: FloatArray) -> None:
         """Adjacent faces should not have opposite normals (dot product > 0)."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
         normals = _compute_face_normals(verts, faces)
         edge_map = _build_edge_face_map(faces)
         worst_dot = 1.0
-        for edge, flist in edge_map.items():
+        for _edge, flist in edge_map.items():
             if len(flist) == 2:
                 dot = np.dot(normals[flist[0]], normals[flist[1]])
                 worst_dot = min(worst_dot, dot)
@@ -235,14 +245,14 @@ class TestNormalConsistency:
 class TestDegenerateFaces:
     """No degenerate triangles (zero area, slivers, or collapsed edges)."""
 
-    def test_no_zero_area_faces(self, mountain_heightmap):
+    def test_no_zero_area_faces(self, mountain_heightmap: FloatArray) -> None:
         """No triangle should have zero (or near-zero) area."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
         areas = _compute_face_areas(verts, faces)
         min_area = areas.min()
         assert min_area > 1e-10, f"Found degenerate face with area={min_area}"
 
-    def test_no_sliver_triangles(self, mountain_heightmap):
+    def test_no_sliver_triangles(self, mountain_heightmap: FloatArray) -> None:
         """Minimum angle in any triangle must be > 1 degree (no slivers)."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap, cell_size=1.0)
         min_angle_deg = 90.0  # will be lowered
@@ -262,7 +272,7 @@ class TestDegenerateFaces:
                 min_angle_deg = min(min_angle_deg, angle)
         assert min_angle_deg > 1.0, f"Sliver triangle found: min angle={min_angle_deg:.2f}deg"
 
-    def test_no_collapsed_edges(self, mountain_heightmap):
+    def test_no_collapsed_edges(self, mountain_heightmap: FloatArray) -> None:
         """No edge should have zero length (duplicate vertices)."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
         for tri in faces[:500]:
@@ -271,20 +281,20 @@ class TestDegenerateFaces:
                 length = np.linalg.norm(verts[tri[i]] - verts[tri[j]])
                 assert length > 1e-10, "Collapsed edge (zero-length) detected"
 
-    def test_area_ratio_within_bounds(self, mountain_heightmap):
+    def test_area_ratio_within_bounds(self, mountain_heightmap: FloatArray) -> None:
         """Max/min face area ratio should be reasonable (< 100x for terrain)."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
         areas = _compute_face_areas(verts, faces)
         ratio = areas.max() / max(areas.min(), 1e-12)
         assert ratio < 100.0, f"Face area ratio {ratio:.1f} exceeds 100x limit"
 
-    def test_eroded_no_degenerate_faces(self, eroded_heightmap):
+    def test_eroded_no_degenerate_faces(self, eroded_heightmap: FloatArray) -> None:
         """Erosion must not introduce degenerate faces."""
         verts, faces = _heightmap_to_mesh(eroded_heightmap)
         areas = _compute_face_areas(verts, faces)
         assert areas.min() > 1e-10
 
-    def test_plains_minimal_area_variance(self, plains_heightmap):
+    def test_plains_minimal_area_variance(self, plains_heightmap: FloatArray) -> None:
         """Plains terrain should have low face area variance (nearly uniform)."""
         verts, faces = _heightmap_to_mesh(plains_heightmap)
         areas = _compute_face_areas(verts, faces)
@@ -295,7 +305,7 @@ class TestDegenerateFaces:
 class TestMeshConnectivity:
     """Terrain meshes must be fully connected (single component)."""
 
-    def test_single_connected_component(self, mountain_heightmap):
+    def test_single_connected_component(self, mountain_heightmap: FloatArray) -> None:
         """The mesh must form a single connected component."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
         n_verts = verts.shape[0]
@@ -303,13 +313,13 @@ class TestMeshConnectivity:
         # Build adjacency via union-find
         parent = list(range(n_verts))
 
-        def find(x):
+        def find(x: int) -> int:
             while parent[x] != x:
                 parent[x] = parent[parent[x]]
                 x = parent[x]
             return x
 
-        def union(a, b):
+        def union(a: int, b: int) -> None:
             ra, rb = find(a), find(b)
             if ra != rb:
                 parent[ra] = rb
@@ -321,10 +331,10 @@ class TestMeshConnectivity:
         roots = set(find(i) for i in range(n_verts))
         assert len(roots) == 1, f"Mesh has {len(roots)} connected components"
 
-    def test_no_isolated_vertices(self, mountain_heightmap):
+    def test_no_isolated_vertices(self, mountain_heightmap: FloatArray) -> None:
         """Every vertex must belong to at least one face."""
         verts, faces = _heightmap_to_mesh(mountain_heightmap)
-        used = set(faces.ravel())
+        used = {int(vertex_index) for vertex_index in faces.ravel()}
         unused = set(range(verts.shape[0])) - used
         assert len(unused) == 0, f"{len(unused)} isolated vertices found"
 
@@ -332,11 +342,15 @@ class TestMeshConnectivity:
 class TestVertexDuplicates:
     """No duplicate vertices at the same position."""
 
-    def test_no_coincident_vertices(self, mountain_heightmap):
+    def test_no_coincident_vertices(self, mountain_heightmap: FloatArray) -> None:
         """Grid mesh should have no duplicate vertex positions."""
         verts, _ = _heightmap_to_mesh(mountain_heightmap)
         rounded = np.round(verts, 6)
-        unique_count = len(set(map(tuple, rounded)))
+        unique_positions = {
+            (float(row[0]), float(row[1]), float(row[2]))
+            for row in rounded
+        }
+        unique_count = len(unique_positions)
         assert unique_count == verts.shape[0], (
             f"Found {verts.shape[0] - unique_count} duplicate vertices"
         )

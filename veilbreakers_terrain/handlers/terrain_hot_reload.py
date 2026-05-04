@@ -19,11 +19,85 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-# Modules we will attempt to reload. Missing modules are silently skipped.
+def _rebind_pass_funcs_for_module(module_name: str) -> int:
+    """Re-bind ``PassDefinition.func`` for every pass whose function came from
+    *module_name*, using the freshly-reloaded module object.
+
+    After ``importlib.reload()``, already-registered ``PassDefinition`` objects
+    still hold stale function references — the function object identity changes
+    even though the name is the same.  This helper iterates the module-level
+    ``_PASS_MODULE_REGISTRY`` (a WeakValueDictionary keyed by
+    ``(module_name, attr_name)``) and calls ``setattr(definition, "func",
+    getattr(reloaded_module, attr_name))`` for every matching entry.
+
+    Returns the number of ``PassDefinition`` objects successfully rebound.
+    Failures are logged at WARNING and skipped — a partial rebind is safer
+    than aborting the entire reload.
+    """
+    try:
+        from .terrain_pipeline import _PASS_MODULE_REGISTRY
+    except ImportError:
+        logger.debug("hot-reload: terrain_pipeline not importable — skipping func rebind")
+        return 0
+
+    reloaded_mod = sys.modules.get(module_name)
+    if reloaded_mod is None:
+        logger.debug("hot-reload: %s not in sys.modules after reload — skipping rebind", module_name)
+        return 0
+
+    rebound = 0
+    # Snapshot keys to avoid mutating the WeakValueDictionary during iteration
+    keys = list(_PASS_MODULE_REGISTRY.keys())
+    for key in keys:
+        mod_name, attr_name = key
+        if mod_name != module_name:
+            continue
+        definition = _PASS_MODULE_REGISTRY.get(key)
+        if definition is None:
+            continue  # already GC'd
+        new_func = getattr(reloaded_mod, attr_name, None)
+        if new_func is None:
+            logger.warning(
+                "hot-reload: module %r no longer exports %r — PassDefinition %r "
+                "func left stale",
+                module_name, attr_name, definition.name,
+            )
+            continue
+        try:
+            object.__setattr__(definition, "func", new_func)
+            rebound += 1
+            logger.debug(
+                "hot-reload: rebound PassDefinition %r func from %s.%s",
+                definition.name, module_name, attr_name,
+            )
+        except Exception as exc:
+            logger.warning(
+                "hot-reload: failed to rebind PassDefinition %r func: %s",
+                definition.name, exc,
+            )
+    return rebound
+
+
+# FIX-B14-P1-31: expanded from 3 modules to cover all biome-related modules.
+# Missing modules are silently skipped via _safe_reload, so additions here
+# are safe even if the module has not been created yet.
 _BIOME_RULE_MODULES = (
     "veilbreakers_terrain.handlers.terrain_ecotone_graph",
     "veilbreakers_terrain.handlers.terrain_materials_v2",
     "veilbreakers_terrain.handlers.terrain_banded",
+    # FIX-B14-P1-31: expanded to all biome *rule-dispatching* modules.
+    # IMPORTANT: never add modules that define dataclasses (e.g. terrain_water_variants,
+    # terrain_semantics) — reloading them creates new class objects, breaking
+    # isinstance() checks in already-imported code.
+    "veilbreakers_terrain.handlers.terrain_foliage_catalog",
+    "veilbreakers_terrain.handlers.terrain_biome_registry",
+    "veilbreakers_terrain.handlers._biome_grammar",
+    "veilbreakers_terrain.handlers.terrain_banded_advanced",
+    "veilbreakers_terrain.handlers.terrain_materials",
+    "veilbreakers_terrain.handlers.procedural_grass",
+    "veilbreakers_terrain.handlers.vegetation_system",
+    "veilbreakers_terrain.handlers.environment_scatter",
+    "veilbreakers_terrain.handlers._scatter_engine",
 )
 
 _MATERIAL_RULE_MODULES = (
@@ -52,6 +126,9 @@ def _safe_reload(name: str) -> Tuple[bool, Optional[Exception]]:
         try:
             importlib.import_module(name)
             logger.debug("hot-reload: imported %s", name)
+            rebound = _rebind_pass_funcs_for_module(name)
+            if rebound:
+                logger.debug("hot-reload: rebound %d PassDefinition(s) for %s", rebound, name)
             return True, None
         except Exception as exc:
             logger.warning(
@@ -62,6 +139,9 @@ def _safe_reload(name: str) -> Tuple[bool, Optional[Exception]]:
     try:
         importlib.reload(mod)
         logger.debug("hot-reload: reloaded %s", name)
+        rebound = _rebind_pass_funcs_for_module(name)
+        if rebound:
+            logger.debug("hot-reload: rebound %d PassDefinition(s) for %s", rebound, name)
         return True, None
     except Exception as exc:
         logger.warning(
@@ -226,4 +306,5 @@ __all__ = [
     "force_reload_all",
     "reload_biome_rules",
     "reload_material_rules",
+    "_rebind_pass_funcs_for_module",
 ]

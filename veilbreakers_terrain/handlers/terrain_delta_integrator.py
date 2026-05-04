@@ -38,12 +38,17 @@ _DELTA_CHANNELS: Tuple[str, ...] = (
     "cave_height_delta",
     "morphology_delta",
     "strat_erosion_delta",
-    "pool_deepening_delta",
+    # pool_deepening_delta intentionally excluded: it records where hydraulic erosion
+    # already deepened pools in hydro.height — not a pending delta to apply again.
     # Phase 52 — Bundle I delta conversion
     "coastline_delta",
     "karst_delta",
     "wind_erosion_delta",
     "glacial_delta",
+    # FIX-B14-4: biome surface micro-feature delta (explicit VB biome registry)
+    "biome_surface_feature_delta",
+    # FIX-B14-18: worn-path erosion along road corridors
+    "road_worn_path_delta",
 )
 
 

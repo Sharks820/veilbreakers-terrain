@@ -249,8 +249,8 @@ def test_road_sdf_excludes_near_road():
 def test_water_excludes_submerged_cells():
     stack = _flat_stack()
     ws = np.zeros_like(stack.height, dtype=np.float32)
-    ws[:8, :] = 1000.0  # massive water elevation in top strip
-    _set_channel(stack, "water_surface", ws)
+    ws[:8, :] = 1.0  # water mask: top strip is submerged
+    _set_channel(stack, "water_surface_mask", ws)
     species = (GrassSpecies(name="g", density_per_sqm=4.0, biomes=("*",)),)
     sys_ = ProceduralGrassSystem(rng_seed=5)
     records = sys_.generate_grass_placement(stack, species, cell_size_m=1.0)

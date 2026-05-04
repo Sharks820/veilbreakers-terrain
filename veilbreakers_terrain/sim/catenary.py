@@ -13,7 +13,6 @@ from __future__ import annotations
 import math
 import numpy as np
 from scipy.optimize import brentq
-from typing import Tuple
 
 
 def solve_catenary(

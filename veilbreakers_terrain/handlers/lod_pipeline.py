@@ -15,19 +15,54 @@ All compute functions are pure logic (no bpy). Only handle_generate_lods uses bp
 from __future__ import annotations
 
 import heapq
+import importlib
 import math
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypedDict, cast
 
 import numpy as np
+from numpy.typing import NDArray
+
+
+MeshData = dict[str, Any]
+HandlerResult = dict[str, Any]
+LabelArray = NDArray[np.int_]
+BoolArray = NDArray[np.bool_]
+LabelComponents = Callable[[BoolArray], tuple[LabelArray, int]]
+
+
+class SceneBudget(TypedDict):
+    min_tris: int
+    max_tris: int
+    label: str
 
 try:
     from scipy.spatial import ConvexHull as _ScipyConvexHull
-    from scipy.ndimage import label as _ndimage_label
-    _SCIPY_AVAILABLE = True
+    _ndimage_label: LabelComponents | None = cast(
+        LabelComponents,
+        getattr(importlib.import_module("scipy.ndimage"), "label"),
+    )
+    _scipy_available = True
 except ImportError:
     _ScipyConvexHull = None  # type: ignore[assignment,misc]
-    _ndimage_label = None    # type: ignore[assignment]
-    _SCIPY_AVAILABLE = False
+    _ndimage_label = None
+    _scipy_available = False
+
+
+__all__ = [
+    "LOD_PRESETS",
+    "SCENE_BUDGETS",
+    "SceneBudgetValidator",
+    "compute_silhouette_importance",
+    "compute_region_importance",
+    "decimate_preserving_silhouette",
+    "generate_collision_mesh",
+    "generate_lod_chain",
+    "handle_generate_lods",
+    "_BILLBOARD_LOD_VERTEX_THRESHOLD",
+    "_TREE_VEG_TYPES",
+    "_setup_billboard_lod",
+]
 
 # ---------------------------------------------------------------------------
 # Per-asset-type LOD presets
@@ -77,10 +112,6 @@ LOD_PRESETS: dict[str, dict[str, Any]] = {
         "min_tris": [200, 100, 50],
     },
 }
-
-# Type alias matching the project convention
-MeshData = dict[str, Any]
-
 
 # ---------------------------------------------------------------------------
 # Pure-logic: vector math helpers
@@ -766,7 +797,7 @@ def generate_collision_mesh(
     # ------------------------------------------------------------------
     # Scipy fast path
     # ------------------------------------------------------------------
-    if _SCIPY_AVAILABLE and _ScipyConvexHull is not None:
+    if _scipy_available and _ScipyConvexHull is not None:
         pts_np = np.array(vertices, dtype=np.float64)
         try:
             hull = _ScipyConvexHull(pts_np)
@@ -1215,7 +1246,7 @@ def _auto_detect_regions(
     # Scipy path: build a 2-D elevation grid in (X, Y), compute gradient
     # magnitude, threshold, and label connected components.
     # ------------------------------------------------------------------
-    if _SCIPY_AVAILABLE and _ndimage_label is not None:
+    if _scipy_available and _ndimage_label is not None:
         GRID = 32  # resolution of the projection grid
         grid_z = np.zeros((GRID, GRID), dtype=np.float64)
         grid_count = np.zeros((GRID, GRID), dtype=np.int32)
@@ -1243,15 +1274,15 @@ def _auto_detect_regions(
 
         # High-gradient mask → silhouette / structural edges
         high_grad_mask = grad_norm > gradient_threshold
-        # High-elevation mask → top-of-mesh regions
         elev_norm = (grid_z - float(grid_z.min())) / (float(grid_z.max() - grid_z.min()) + 1e-9)
-        high_elev_mask = elev_norm > 0.75
 
         # Label connected components
-        high_grad_labels, _ = _ndimage_label(high_grad_mask)
-        high_elev_labels, _ = _ndimage_label(high_elev_mask)
+        high_grad_labels, _n_grad = _ndimage_label(high_grad_mask)
 
-        def _vert_in_grid_labels(label_arr: np.ndarray, label_ids: set) -> set:
+        def _vert_in_grid_labels(
+            label_arr: LabelArray,
+            label_ids: set[int],
+        ) -> set[int]:
             """Return vertex indices whose grid cell is in *label_ids*."""
             result: set[int] = set()
             for i, v in enumerate(vertices):
@@ -1259,7 +1290,7 @@ def _auto_detect_regions(
                 gy = int((v[1] - min_y) / height * (GRID - 1))
                 gx = min(max(gx, 0), GRID - 1)
                 gy = min(max(gy, 0), GRID - 1)
-                if label_arr[gy, gx] in label_ids:
+                if int(label_arr[gy, gx]) in label_ids:
                     result.add(i)
             return result
 
@@ -1290,7 +1321,7 @@ def _auto_detect_regions(
 
             elif name == "silhouette":
                 # High-gradient connected components → structural edges
-                all_grad_labels = set(range(1, int(high_grad_labels.max()) + 1))
+                all_grad_labels = set(range(1, int(np.max(high_grad_labels)) + 1))
                 region_verts = _vert_in_grid_labels(high_grad_labels, all_grad_labels)
                 # Always include perimeter verts as well
                 margin_x = 0.15 * width
@@ -1465,6 +1496,16 @@ def generate_lod_chain(
 
             # Monotonicity guarantee: face count must not exceed previous level
             if len(lod_faces) > prev_face_count and lod_chain:
+                # P1-43: Emit a ValidationIssue warning instead of silently
+                # substituting the previous mesh, so callers know decimation
+                # is not converging as expected for this asset.
+                import warnings as _warnings
+                _warnings.warn(
+                    f"LOD level {level}: face count {len(lod_faces)} exceeds "
+                    f"previous level {prev_face_count}; substituting previous mesh. "
+                    f"Check decimation ratio or mesh topology.",
+                    stacklevel=2,
+                )
                 # Reuse the previous level's mesh unchanged
                 prev_verts, prev_faces, _ = lod_chain[-1]
                 lod_verts, lod_faces = list(prev_verts), list(prev_faces)
@@ -1480,7 +1521,7 @@ def generate_lod_chain(
 # ---------------------------------------------------------------------------
 
 # Budget thresholds for different spatial scopes
-SCENE_BUDGETS: dict[str, dict[str, int]] = {
+SCENE_BUDGETS: dict[str, SceneBudget] = {
     "per_room": {
         "min_tris": 50_000,
         "max_tris": 150_000,
@@ -1610,7 +1651,7 @@ class SceneBudgetValidator:
 # ---------------------------------------------------------------------------
 
 
-def handle_generate_lods(params: dict) -> dict:
+def handle_generate_lods(params: dict[str, Any]) -> HandlerResult:
     """Generate LOD chain with silhouette-preserving decimation in Blender.
 
     Params:
@@ -1621,10 +1662,10 @@ def handle_generate_lods(params: dict) -> dict:
     Returns:
         Dict with source info, LOD objects created, and collision mesh info.
     """
-    import bpy
+    bpy = cast(Any, importlib.import_module("bpy"))
 
-    object_name = params["object_name"]
-    asset_type = params.get("asset_type", "prop_medium")
+    object_name = str(params["object_name"])
+    asset_type = str(params.get("asset_type", "prop_medium"))
 
     preset = LOD_PRESETS.get(asset_type)
     if preset is None:
@@ -1655,7 +1696,7 @@ def handle_generate_lods(params: dict) -> dict:
     # Generate collision mesh
     col_verts, col_faces = generate_collision_mesh(vertices, faces)
 
-    lod_results: list[dict] = []
+    lod_results: list[dict[str, Any]] = []
 
     for lod_entry in lod_chain:
         lod_verts, lod_faces, lod_level = lod_entry[:3]
@@ -1711,7 +1752,37 @@ def handle_generate_lods(params: dict) -> dict:
     col_obj.scale = obj.scale
     col_obj.display_type = "WIRE"
 
-    return {
+    # P1-18: export LOD FBX files when export_dir is provided
+    export_dir = params.get("export_dir")
+    exported_files: list[str] = []
+    if export_dir:
+        import pathlib
+        export_path = pathlib.Path(export_dir)
+        export_path.mkdir(parents=True, exist_ok=True)
+
+        all_lod_names = [r["name"] for r in lod_results] + [col_name]
+        for lod_name_export in all_lod_names:
+            export_obj = bpy.data.objects.get(lod_name_export)
+            if export_obj is None:
+                continue
+            fbx_path = str(export_path / f"{lod_name_export}.fbx")
+            bpy.ops.object.select_all(action="DESELECT")
+            export_obj.select_set(True)
+            bpy.context.view_layer.objects.active = export_obj
+            bpy.ops.export_scene.fbx(
+                filepath=fbx_path,
+                use_selection=True,
+                global_scale=1.0,
+                apply_unit_scale=True,
+                apply_scale_options="FBX_SCALE_NONE",
+                use_mesh_modifiers=True,
+                mesh_smooth_type="FACE",
+                add_leaf_bones=False,
+                bake_anim=False,
+            )
+            exported_files.append(fbx_path)
+
+    result: dict[str, Any] = {
         "status": "success",
         "source": object_name,
         "asset_type": asset_type,
@@ -1730,6 +1801,9 @@ def handle_generate_lods(params: dict) -> dict:
             "preserve_regions": preset.get("preserve_regions", []),
         },
     }
+    if exported_files:
+        result["exported_files"] = exported_files
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1811,6 +1885,18 @@ def _make_billboard_lod_spec(
         (0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0),  # Quad B
     ]
 
+    # P1-24: Adaptive atlas resolution based on tree height.
+    # Small (<3 m): 128 px — fits in a single mip-chain tile.
+    # Medium (3–8 m): 256 px — standard foliage impostor atlas.
+    # Hero (>8 m): 512 px — captures fine silhouette detail for large trees.
+    _h = max(float(tree_height), 0.01)
+    if _h < 3.0:
+        atlas_resolution = 128
+    elif _h <= 8.0:
+        atlas_resolution = 256
+    else:
+        atlas_resolution = 512
+
     return {
         "verts": verts,
         "faces": faces,
@@ -1819,6 +1905,7 @@ def _make_billboard_lod_spec(
         "face_count": len(faces),
         "impostor_type": "cross",
         "material_ref": material_ref,
+        "atlas_resolution": atlas_resolution,
     }
 
 
@@ -1846,7 +1933,7 @@ _BILLBOARD_TOTAL_VIEWS: int = 9  # 8 azimuth + 1 top
 
 def _setup_billboard_lod(
     template_obj: Any,
-    veg_spec: "dict | None",
+    veg_spec: dict[str, Any] | None,
     veg_type: str,
     lod_near_dist: float = 30.0,
 ) -> bool:
@@ -1918,7 +2005,7 @@ def _setup_billboard_lod(
 
     # Wire billboard as final LOD level in the vegetation LOD chain and create
     # the actual Blender mesh child object so Unity LOD group switching works.
-    import bpy  # noqa: PLC0415 — bpy only available inside Blender runtime
+    bpy = cast(Any, importlib.import_module("bpy"))
 
     bb_verts_raw = [(x, y, z) for x, y, z in bb_spec["verts"]]
     bb_faces_raw = [tuple(f) for f in bb_spec["faces"]]

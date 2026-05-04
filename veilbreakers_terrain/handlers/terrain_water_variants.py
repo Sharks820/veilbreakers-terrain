@@ -25,15 +25,16 @@ import enum
 import logging
 import math
 import time
+import importlib
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from .terrain_pipeline import TerrainPassController, derive_pass_seed
-from .terrain_semantics import (
+from .terrain_pipeline import TerrainPassController, derive_pass_seed  # noqa: E402
+from .terrain_semantics import (  # noqa: E402
     BBox,
     PassDefinition,
     PassResult,
@@ -109,7 +110,7 @@ class SeasonalState(enum.Enum):
 # ---------------------------------------------------------------------------
 
 
-def _as_polyline(path) -> np.ndarray:
+def _as_polyline(path: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray:
     arr = np.asarray(path, dtype=np.float32)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 2)
@@ -167,7 +168,7 @@ def _protected_mask(
 
 def generate_braided_channels(
     stack: TerrainMaskStack,
-    river_path,
+    river_path: Sequence[Sequence[float]] | np.ndarray,
     count: int = 3,
     seed: int = 0,
 ) -> BraidedChannels:
@@ -204,9 +205,12 @@ def generate_braided_channels(
         else:
             t = (k / (count - 1)) * 2.0 - 1.0  # [-1, 1]
         base_offset = t * (total_width_m * 0.5)
-        wiggle = rng.standard_normal(main.shape[0]) * (channel_cell * 0.25)
-        offsets = (base_offset + wiggle)[:, None] * normals
-        sub = (main + offsets).astype(np.float32)
+        wiggle = np.asarray(
+            rng.standard_normal(main.shape[0]),
+            dtype=np.float32,
+        ) * np.float32(channel_cell * 0.25)
+        offsets = (np.float32(base_offset) + wiggle)[:, None] * normals
+        sub = np.asarray(main + offsets, dtype=np.float32)
         channels.append(sub)
 
     # Main channel is the one closest to the original (smallest |t|).
@@ -229,7 +233,7 @@ def generate_braided_channels(
 
 def detect_estuary(
     stack: TerrainMaskStack,
-    river_path,
+    river_path: Sequence[Sequence[float]] | np.ndarray,
     sea_level_m: float,
 ) -> Optional[Estuary]:
     """Identify a river-meets-sea zone with salinity gradient proxy.
@@ -277,7 +281,7 @@ def detect_estuary(
 
 def detect_karst_springs(
     stack: TerrainMaskStack,
-    karst_features,
+    karst_features: Sequence[Sequence[float]] | np.ndarray | None,
 ) -> List[KarstSpring]:
     """Detect karst spring resurgences from soluble-rock areas.
 
@@ -540,9 +544,12 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
     # Connected-components: scipy label (fast) or Python flood-fill
     try:
-        from scipy.ndimage import label as _label
+        ndimage = importlib.import_module("scipy.ndimage")
+        label_components = getattr(ndimage, "label")
         struct8 = np.ones((3, 3), dtype=np.int32)
-        cc_labels, n_comp = _label(candidate, structure=struct8)
+        labeled_result = label_components(candidate, structure=struct8)
+        cc_labels = np.asarray(labeled_result[0], dtype=np.int32)
+        n_comp = int(labeled_result[1])
     except ImportError:
         # Python flood-fill fallback
         cc_labels = np.zeros((rows, cols), dtype=np.int32)
@@ -573,9 +580,13 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
     # Precompute open-water proximity (within 3 cells)
     if ws_arr is not None:
-        from scipy.ndimage import binary_dilation as _dil
         try:
-            near_water = _dil(ws_arr > 0.3, iterations=3)
+            ndimage = importlib.import_module("scipy.ndimage")
+            binary_dilation = getattr(ndimage, "binary_dilation")
+            near_water = np.asarray(
+                binary_dilation(ws_arr > 0.3, iterations=3),
+                dtype=bool,
+            )
         except Exception:
             near_water = ws_arr > 0.3
     else:
@@ -598,7 +609,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
         )
 
         mean_w = float(w[cell_rs, cell_cs].mean())
-        mean_s = float(s[cell_rs, cell_cs].mean())
+        _mean_s = float(s[cell_rs, cell_cs].mean())
 
         # Classify by pH proxy
         near_open = bool(near_water[cell_rs, cell_cs].any())
@@ -608,13 +619,13 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
             mean_rh = 0.3  # assume acidic when no data
 
         if near_open and mean_w > 0.5:
-            wetland_type = "marsh"
+            _wetland_type = "marsh"
             veg_density = min(1.0, mean_w + 0.25)
         elif mean_rh > 0.55:
-            wetland_type = "fen"
+            _wetland_type = "fen"
             veg_density = min(1.0, mean_w + 0.15)
         else:
-            wetland_type = "bog"
+            _wetland_type = "bog"
             veg_density = min(1.0, mean_w + 0.10)
 
         # Radius from bounding box diagonal / 2
@@ -624,7 +635,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
         cx_w = stack.world_origin_x + (min_c + max_c + 1) * 0.5 * stack.cell_size
         cy_w = stack.world_origin_y + (min_r + max_r + 1) * 0.5 * stack.cell_size
-        cz_w = float(stack.height[cell_rs, cell_cs].mean()) if stack.height is not None else 0.0
+        cz_w = float(stack.height[cell_rs, cell_cs].mean())
 
         wetlands.append(
             Wetland(
@@ -645,13 +656,17 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
 def apply_seasonal_water_state(
     stack: TerrainMaskStack,
-    state: SeasonalState,
+    state: object,
 ) -> None:
-    """Mutate wetness / water_surface / tidal in-place per seasonal state.
+    """Mutate wetness / water_surface_mask / tidal in-place per seasonal state.
 
     **IMPORTANT:** This function edits ``stack`` in place. Callers that
     need to recover the prior state must checkpoint via
     ``TerrainPassController`` before invoking.
+
+    W-1 migration: this function no longer writes to the legacy
+    ``water_surface`` channel. All binary water presence is written to
+    ``water_surface_mask`` exclusively.
     """
     if not isinstance(state, SeasonalState):
         raise TypeError(f"state must be SeasonalState, got {type(state).__name__}")
@@ -662,10 +677,11 @@ def apply_seasonal_water_state(
         wetness = np.zeros(shape, dtype=np.float32)
     wetness = np.asarray(wetness, dtype=np.float32).copy()
 
-    water_surface = stack.get("water_surface")
-    if water_surface is None:
-        water_surface = np.zeros(shape, dtype=np.float32)
-    water_surface = np.asarray(water_surface, dtype=np.float32).copy()
+    # W-1: read from water_surface_mask (canonical) instead of water_surface (legacy).
+    water_surface_mask = stack.get("water_surface_mask")
+    if water_surface_mask is None:
+        water_surface_mask = np.zeros(shape, dtype=np.float32)
+    water_surface_mask = np.asarray(water_surface_mask, dtype=np.float32).copy()
 
     tidal = stack.get("tidal")
     if tidal is None:
@@ -674,22 +690,21 @@ def apply_seasonal_water_state(
 
     if state is SeasonalState.DRY:
         wetness *= 0.3
-        water_surface *= 0.5
+        water_surface_mask *= 0.5
     elif state is SeasonalState.NORMAL:
         pass  # no-op; canonical state
     elif state is SeasonalState.WET:
         wetness = np.clip(wetness * 1.5 + 0.2, 0.0, 1.0)
-        water_surface = np.clip(water_surface + 0.15, 0.0, 1.0)
+        water_surface_mask = np.clip(water_surface_mask + 0.15, 0.0, 1.0)
     elif state is SeasonalState.FROZEN:
         # Frozen: surface water becomes ice; tidal is locked to max.
-        water_surface = np.clip(water_surface + 0.1, 0.0, 1.0)
+        water_surface_mask = np.clip(water_surface_mask + 0.1, 0.0, 1.0)
         wetness *= 0.6
         tidal[:] = 1.0
 
     stack.set("wetness", wetness, "water_variants_seasonal")
-    stack.set("water_surface", water_surface, "water_variants_seasonal")
-    stack.set("water_surface_mask", (water_surface > 0.0).astype(np.float32),
-              "water_variants_seasonal")
+    # W-1: write only to water_surface_mask; do NOT write legacy water_surface.
+    stack.set("water_surface_mask", water_surface_mask, "water_variants_seasonal")
     stack.set("tidal", tidal, "water_variants_seasonal")
 
 
@@ -890,6 +905,74 @@ def pass_water_variants(
     )
 
 
+def pass_seasonal_water_state(
+    state: TerrainPipelineState,
+    region: Optional[BBox],  # noqa: ARG001 — region unused; mutation is tile-wide
+) -> PassResult:
+    """DAG-visible wrapper for ``apply_seasonal_water_state``.
+
+    Contract
+    --------
+    Consumes: wetness, water_surface_mask, tidal
+    Produces (overrides): wetness, water_surface_mask, tidal
+    Respects protected zones: no — seasonal state applies uniformly
+    Requires scene read: yes (seasonal_state lives on intent.scene_read)
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    issues: List[ValidationIssue] = []
+
+    # Resolve the seasonal state from composition_hints or default to NORMAL.
+    composition_hints = dict(getattr(state.intent, "composition_hints", {}) or {})
+    raw_season = composition_hints.get("seasonal_state", "normal")
+    try:
+        seasonal_state = SeasonalState(str(raw_season).lower())
+    except ValueError:
+        issues.append(ValidationIssue(
+            severity="warning",
+            message=(
+                f"pass_seasonal_water_state: unknown seasonal_state={raw_season!r}; "
+                "falling back to NORMAL (no-op)."
+            ),
+            channel="wetness",
+        ))
+        seasonal_state = SeasonalState.NORMAL
+
+    apply_seasonal_water_state(stack, seasonal_state)
+
+    return PassResult(
+        pass_name="pass_seasonal_water_state",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("wetness", "water_surface_mask", "tidal"),
+        produced_channels=("wetness", "water_surface_mask", "tidal"),
+        metrics={"seasonal_state": seasonal_state.value},
+        issues=issues,
+    )
+
+
+def register_pass_seasonal_water_state() -> None:
+    """Register pass_seasonal_water_state on the TerrainPassController."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_seasonal_water_state",
+            func=pass_seasonal_water_state,
+            requires_channels=("wetness", "water_surface_mask"),
+            produces_channels=("wetness", "water_surface_mask", "tidal"),
+            # Overrides declared so the DAG knows this pass re-writes channels
+            # that water_variants already wrote; without this declaration the
+            # PassDAG would consider downstream readers stale on second run.
+            overrides=("wetness", "water_surface_mask", "tidal"),
+            seed_namespace="seasonal_water_state",
+            requires_scene_read=True,
+            description=(
+                "Bundle O supplement — apply per-season wetness/water_surface_mask/tidal "
+                "mutations as a registered DAG pass so downstream passes see fresh values."
+            ),
+        )
+    )
+
+
 def register_water_variants_pass() -> None:
     TerrainPassController.register_pass(
         PassDefinition(
@@ -925,7 +1008,7 @@ def get_geyser_specs(
     *,
     max_geysers: int = 4,
     seed: int = 42,
-) -> list:
+) -> list[dict[str, Any]]:
     """Return MeshSpec dicts for geyser meshes at detected hot-spring sites.
 
     Calls ``detect_hot_springs`` to find sites, then ``generate_geyser``
@@ -940,14 +1023,14 @@ def get_geyser_specs(
         return []
 
     rng = np.random.default_rng(seed)
-    results = []
-    for hs in springs[:max_geysers]:
+    results: list[dict[str, Any]] = []
+    for idx, hs in enumerate(springs[:max_geysers]):
         spec = generate_geyser(
-            pool_radius=rng.uniform(2.0, 5.0),
-            pool_depth=rng.uniform(0.3, 0.8),
-            vent_height=rng.uniform(0.5, 2.0),
-            mineral_rim_width=rng.uniform(0.5, 1.5),
-            seed=int(rng.integers(0, 2**31)),
+            pool_radius=float(rng.uniform(2.0, 5.0)),
+            pool_depth=float(rng.uniform(0.3, 0.8)),
+            vent_height=float(rng.uniform(0.5, 2.0)),
+            mineral_rim_width=float(rng.uniform(0.5, 1.5)),
+            seed=(int(seed) ^ (0x47E57E11 + idx * 104729)) & 0x7FFFFFFF,
         )
         results.append({"mesh_spec": spec, "world_pos": hs.world_pos})
     return results
@@ -958,7 +1041,7 @@ def get_swamp_specs(
     *,
     max_swamps: int = 3,
     seed: int = 42,
-) -> list:
+) -> list[dict[str, Any]]:
     """Return MeshSpec dicts for swamp terrain at detected wetland sites.
 
     Calls ``detect_wetlands`` to find sites, then ``generate_swamp_terrain``
@@ -973,14 +1056,14 @@ def get_swamp_specs(
         return []
 
     rng = np.random.default_rng(seed)
-    results = []
-    for wl in wetlands[:max_swamps]:
+    results: list[dict[str, Any]] = []
+    for idx, wl in enumerate(wetlands[:max_swamps]):
         spec = generate_swamp_terrain(
             size=wl.radius_m * 2.0,
-            water_level=rng.uniform(0.2, 0.5),
+            water_level=float(rng.uniform(0.2, 0.5)),
             hummock_count=int(rng.integers(6, 18)),
             island_count=int(rng.integers(2, 6)),
-            seed=int(rng.integers(0, 2**31)),
+            seed=(int(seed) ^ (0x5A9A9A11 + idx * 130363)) & 0x7FFFFFFF,
         )
         results.append({"mesh_spec": spec, "world_pos": wl.world_pos})
     return results
@@ -1085,7 +1168,7 @@ def generate_water_bottom_mesh(
     ripple_amplitude_m: float = 0.10,
     ripple_scale: float = 8.0,
     seed: int = 0,
-) -> dict:
+) -> dict[str, Any]:
     """Generate a water-bottom mesh with sediment micro-terrain and material zones.
 
     Produces geometry for the underside of a water body — the river / lake
@@ -1140,7 +1223,7 @@ def generate_water_bottom_mesh(
     cell_size = float(cell_size_override if cell_size_override is not None else stack.cell_size)
 
     h = np.asarray(stack.height, dtype=np.float32)
-    rows, cols = h.shape
+    _rows, _cols = h.shape
     mask = np.asarray(water_body_mask, dtype=bool)
     if mask.shape != h.shape:
         raise ValueError(
@@ -1367,10 +1450,11 @@ def pass_bathymetry(
     if ws_raw is None:
         # No water surface yet — produce zero-depth maps and warn
         issues.append(ValidationIssue(
-            severity="warning",
+            code="BATHYMETRY_WATER_SURFACE_MISSING",
+            severity="soft",
             message="pass_bathymetry: water_surface channel absent; "
                     "bathymetry will be all zeros. Run pass_water_variants first.",
-            channel="water_surface",
+            affected_feature="water_surface",
         ))
         bathymetry = np.zeros(h.shape, dtype=np.float32)
         water_depth_zone = np.zeros(h.shape, dtype=np.uint8)
@@ -1397,7 +1481,13 @@ def pass_bathymetry(
     h_min = float(h.min())
     h_range = max(h_max - h_min, 1.0)
 
-    is_absolute_elevation = (ws_max > h_range * 0.1) and (ws_max - float(ws.min()) > 5.0)
+    _ws_elev = stack.get("water_surface_elevation_m")
+    if _ws_elev is not None:
+        # Authoritative per-cell elevation available — bypass unreliable heuristic.
+        ws = np.asarray(_ws_elev, dtype=np.float32)
+        is_absolute_elevation = True
+    else:
+        is_absolute_elevation = (ws_max > h_range * 0.1) and (ws_max - float(ws.min()) > 5.0)
 
     # Water mask: cells that are "wet" (water_surface > 0.5 for mask, or ws >= h for elevation)
     if is_absolute_elevation:
@@ -1414,8 +1504,6 @@ def pass_bathymetry(
             # Label connected components (4-connectivity for speed)
             # We implement a simple two-pass union-find flood fill without scipy
             label_grid = np.full(h.shape, -1, dtype=np.int32)
-            next_label = 0
-
             # First pass: row-major assignment with left/up neighbour merging
             parent = list(range(rows * cols))
 
@@ -1447,8 +1535,8 @@ def pass_bathymetry(
                     _union(idx, left)
 
             # Assign canonical labels and compute per-body spill rims.
-            body_heights: dict = {}
-            body_rims: dict = {}
+            body_heights: dict[int, list[float]] = {}
+            body_rims: dict[int, list[float]] = {}
             for idx in range(rows * cols):
                 if not wet_flat[idx]:
                     continue
@@ -1466,7 +1554,7 @@ def pass_bathymetry(
                     if 0 <= nr < rows and 0 <= nc < cols and not wet_mask[nr, nc]:
                         rim_values.append(float(h[nr, nc]))
 
-            body_surface: dict = {
+            body_surface: dict[int, float] = {
                 root: float(max(body_rims.get(root) or heights))
                 for root, heights in body_heights.items()
             }
@@ -1570,6 +1658,8 @@ __all__ = [
     "detect_hot_springs",
     "detect_wetlands",
     "apply_seasonal_water_state",
+    "pass_seasonal_water_state",
+    "register_pass_seasonal_water_state",
     "pass_water_variants",
     "register_water_variants_pass",
     "pass_bathymetry",

@@ -848,7 +848,6 @@ def test_talus_boulder_power_law_distribution():
     Korcak power law: N(>r) ∝ r^-D with D≈2.3, so small boulders
     dominate the count."""
     from veilbreakers_terrain.handlers.terrain_cliffs import (
-        CliffStructure,
         _sample_korcak_radii,
     )
 

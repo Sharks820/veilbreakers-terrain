@@ -486,3 +486,87 @@ def apply_anti_grain_smoothing(
         result = _anisotropic_kuwahara_filter(work, r)
 
     return result.astype(heightmap.dtype, copy=False)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline pass + registration (P1-10)
+# ---------------------------------------------------------------------------
+
+
+def pass_banded_advanced(state, region):  # type: ignore[no-untyped-def]
+    """Apply Kuwahara anti-grain smoothing to the current heightmap.
+
+    Reads ``state.mask_stack.height``, applies anisotropic Kuwahara filtering
+    to remove pixel-grain noise while preserving strata edges and cliff lips,
+    then writes the result back to ``height``.
+
+    This pass is intentionally lightweight — it refines whatever banded macro
+    pass ran before it (``banded_macro``) without changing the overall form.
+    A sigma of 0.8 (default) uses a 1-pixel radius kernel, which removes
+    single-texel grain without blurring strata bands.
+
+    Contract
+    --------
+    Consumes: height
+    Produces: height (overrides)
+    Requires scene read: no
+    """
+    import time
+    from .terrain_semantics import PassResult, ValidationIssue
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+
+    h = stack.height
+    if h is None:
+        return PassResult(
+            pass_name="pass_banded_advanced",
+            status="warning",
+            duration_seconds=time.perf_counter() - t0,
+            issues=[ValidationIssue(
+                code="BANDED_ADVANCED_NO_HEIGHT",
+                severity="soft",
+                message="pass_banded_advanced: height channel is None; skipping.",
+            )],
+        )
+
+    import numpy as np
+    h_arr = np.asarray(h, dtype=np.float32)
+
+    # Read sigma from composition hints; fall back to 0.8.
+    sigma = 0.8
+    if state.intent is not None:
+        hints = getattr(state.intent, "composition_hints", {}) or {}
+        sigma = float(hints.get("banded_advanced_sigma", sigma))
+
+    smoothed = apply_anti_grain_smoothing(h_arr, sigma=sigma, variant="classic")
+    stack.set("height", smoothed.astype(np.float32), "pass_banded_advanced")
+
+    return PassResult(
+        pass_name="pass_banded_advanced",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        metrics={"sigma": sigma, "height_shape": list(smoothed.shape)},
+    )
+
+
+def register_banded_advanced_pass() -> None:
+    """Register ``pass_banded_advanced`` on the :class:`TerrainPassController`.
+
+    Kept separate from ``register_bundle_g_passes`` so callers that do not
+    want Kuwahara smoothing can opt out by not calling this function.
+    """
+    from .terrain_pipeline import TerrainPassController
+    from .terrain_semantics import PassDefinition
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_banded_advanced",
+            func=pass_banded_advanced,
+            requires_channels=("height",),
+            produces_channels=("height",),
+            # OVERRIDE: refines the banded_macro height in-place.
+            overrides=("height",),
+            seed_namespace="banded_advanced",
+        )
+    )

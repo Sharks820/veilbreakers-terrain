@@ -14,6 +14,40 @@ import json
 import math
 import sys
 from pathlib import Path
+from typing import Any, TypeAlias, TypedDict, cast
+
+Color: TypeAlias = tuple[float, float, float, float]
+Vec3: TypeAlias = tuple[float, float, float]
+
+
+class BridgeVariant(TypedDict):
+    name: str
+    style: str
+    control_points: list[Vec3]
+    width: float
+    water_level: float
+    waterbed_z: float
+
+
+class MeshSpec(TypedDict):
+    vertices: list[Vec3]
+    faces: list[tuple[int, ...]]
+    metadata: dict[str, Any]
+
+
+class Bounds(TypedDict):
+    min: list[float]
+    max: list[float]
+    size: list[float]
+
+
+class AuditIssue(TypedDict, total=False):
+    code: str
+    distance: float
+    water_level: float
+    mesh_min_z: float
+    waterbed_z: float
+    variant: str
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -26,7 +60,7 @@ RENDER_RESOLUTION = (1920, 1080)
 RENDER_SAMPLES = 96
 
 
-VARIANTS = [
+VARIANTS: list[BridgeVariant] = [
     {
         "name": "wood_short_path",
         "style": "wood",
@@ -70,7 +104,7 @@ VARIANTS = [
 ]
 
 
-def _mat(name, color, roughness=0.65):
+def _mat(name: str, color: Color, roughness: float = 0.65) -> Any:
     import bpy
 
     mat = bpy.data.materials.new(name)
@@ -82,14 +116,14 @@ def _mat(name, color, roughness=0.65):
     return mat
 
 
-def _look_at(obj, target):
+def _look_at(obj: Any, target: Vec3) -> None:
     from mathutils import Vector
 
     direction = Vector(target) - Vector(obj.location)
     obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
 
 
-def _add_box(name, center, scale, material):
+def _add_box(name: str, center: Vec3, scale: Vec3, material: Any) -> Any:
     import bpy
 
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=center)
@@ -101,7 +135,7 @@ def _add_box(name, center, scale, material):
     return obj
 
 
-def _make_mesh_object(name, spec, material):
+def _make_mesh_object(name: str, spec: MeshSpec, material: Any) -> Any:
     import bpy
 
     mesh = bpy.data.meshes.new(name + "_Mesh")
@@ -115,7 +149,7 @@ def _make_mesh_object(name, spec, material):
     return obj
 
 
-def _bbox(obj):
+def _bbox(obj: Any) -> Bounds:
     xs, ys, zs = [], [], []
     for corner in obj.bound_box:
         world = obj.matrix_world @ __import__("mathutils").Vector(corner)
@@ -129,7 +163,7 @@ def _bbox(obj):
     }
 
 
-def _endpoint_distance_to_mesh(obj, point):
+def _endpoint_distance_to_mesh(obj: Any, point: Vec3) -> float:
     from mathutils import Vector
 
     p = Vector(point)
@@ -140,7 +174,7 @@ def _endpoint_distance_to_mesh(obj, point):
     return best
 
 
-def _add_camera(name, location, target):
+def _add_camera(name: str, location: Vec3, target: Vec3) -> Any:
     import bpy
 
     cam_data = bpy.data.cameras.new(name)
@@ -153,7 +187,7 @@ def _add_camera(name, location, target):
     return cam
 
 
-def _render_camera(camera, path):
+def _render_camera(camera: Any, path: Path) -> None:
     import bpy
 
     scene = bpy.context.scene
@@ -193,18 +227,18 @@ def main() -> int:
     bpy.ops.object.light_add(type="SUN", location=(0, -30, 30))
     bpy.context.object.rotation_euler = (math.radians(55), 0, math.radians(32))
 
-    reports = []
+    reports: list[dict[str, Any]] = []
     x_offset = 0.0
     for variant in VARIANTS:
         points = [(x + x_offset, y, z) for x, y, z in variant["control_points"]]
-        spec = generate_terrain_bridge_mesh(
+        spec = cast(MeshSpec, generate_terrain_bridge_mesh(
             control_points=points,
             width=variant["width"],
             style=variant["style"],
             seed=21,
             water_level=variant.get("water_level"),
             waterbed_z=variant.get("waterbed_z"),
-        )
+        ))
         profile = spec["metadata"]["bridge_profile"]
         material = bridge_mats.get(profile["material_family"], bridge_mats["stone"])
         obj = _make_mesh_object("BRIDGE_" + variant["name"], spec, material)
@@ -246,7 +280,7 @@ def main() -> int:
         endpoint_a_distance = _endpoint_distance_to_mesh(obj, points[0])
         endpoint_b_distance = _endpoint_distance_to_mesh(obj, points[-1])
         box = _bbox(obj)
-        issues = []
+        issues: list[AuditIssue] = []
         if endpoint_a_distance > max(variant["width"], 1.0):
             issues.append({"code": "start_endpoint_not_near_mesh", "distance": endpoint_a_distance})
         if endpoint_b_distance > max(variant["width"], 1.0):
@@ -255,7 +289,7 @@ def main() -> int:
             issues.append({"code": "bridge_not_above_water", "water_level": water_z})
         if profile["module_count"] < 1:
             issues.append({"code": "missing_modules"})
-        if variant.get("waterbed_z") is not None and profile.get("supports_reach_foundation"):
+        if profile.get("supports_reach_foundation"):
             foundation_z = float(variant["waterbed_z"])
             if box["min"][2] > foundation_z + 0.15:
                 issues.append({
@@ -283,18 +317,25 @@ def main() -> int:
     blend_path = OUT_DIR / "bridge_visual_audit.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
 
+    blockers: list[AuditIssue] = []
+    for report in reports:
+        for issue in report["issues"]:
+            blocker = dict(issue)
+            blocker["variant"] = report["variant"]["name"]
+            blockers.append(cast(AuditIssue, blocker))
+
     payload = {
         "blender_runtime_detected": True,
         "blend_path": str(blend_path),
         "variant_count": len(reports),
-        "blockers": [issue | {"variant": r["variant"]["name"]} for r in reports for issue in r["issues"]],
+        "blockers": blockers,
         "variants": reports,
     }
     JSON_OUT.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote {JSON_OUT}")
     print(f"wrote {blend_path}")
-    print(f"blocker_count={len(payload['blockers'])}")
-    return 1 if payload["blockers"] else 0
+    print(f"blocker_count={len(blockers)}")
+    return 1 if blockers else 0
 
 
 if __name__ == "__main__":

@@ -5,11 +5,17 @@ determinism, edge cases, biome coverage, and performance budgets.
 """
 
 import math
+from typing import TypedDict
 
 import pytest
 
 
-def _terrain_kwargs(bounds):
+class _TerrainKwargs(TypedDict):
+    heightmap: list[list[float]]
+    cell_size: float
+
+
+def _terrain_kwargs(bounds: tuple[float, float, float, float]) -> _TerrainKwargs:
     min_x, _min_y, max_x, _max_y = bounds
     cell_size = max((max_x - min_x) / 8.0, 1.0)
     heightmap = [[float(r + c) for c in range(8)] for r in range(8)]
@@ -758,7 +764,7 @@ class TestBiomeAtmosphereRules:
     def test_rules_have_required_keys(self):
         from veilbreakers_terrain.handlers.atmospheric_volumes import BIOME_ATMOSPHERE_RULES
 
-        for biome, rules in BIOME_ATMOSPHERE_RULES.items():
+        for _biome, rules in BIOME_ATMOSPHERE_RULES.items():
             for rule in rules:
                 assert "volume" in rule
                 assert "coverage" in rule

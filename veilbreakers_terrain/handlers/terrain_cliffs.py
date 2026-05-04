@@ -40,8 +40,9 @@ from __future__ import annotations
 
 import math
 import time
+import importlib
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -163,7 +164,7 @@ class CliffStructure:
     cliff_id: str
     lip_polyline: np.ndarray  # (N, 2) int32: (row, col) cells along upper edge
     face_mask: np.ndarray      # (H, W) bool: cliff face cells
-    ledges: List[np.ndarray] = field(default_factory=list)  # list of (H, W) bool
+    ledges: List[np.ndarray] = field(default_factory=lambda: [])  # list of (H, W) bool
     talus_mask: Optional[np.ndarray] = None  # (H, W) bool scree apron
     world_bounds: Optional[BBox] = None
     tier: str = "secondary"
@@ -172,13 +173,13 @@ class CliffStructure:
     min_height_m: float = 0.0
     cell_count: int = 0
     # AAA fields
-    strata_layers: List[StrataLayer] = field(default_factory=list)
+    strata_layers: List[StrataLayer] = field(default_factory=lambda: [])
     overhang_mask: Optional[np.ndarray] = None   # (H, W) bool
     contour_spline: Optional[np.ndarray] = None  # (M, 2) float64 B-spline pts
     # Cliff overhang geometry spec (2026-04-20) — set by pass_cliffs via
     # _generate_cliff_overhang; consumed by the hero mesh insertion pass to
     # extrude overhang quads and mark drip edges for wet/foam material.
-    overhang_spec: Optional[Dict] = None
+    overhang_spec: dict[str, Any] | None = None
     # Talus field geometry — populated by build_talus_field; exposes cone_profile
     # (H,W float 0..1 NaN outside apron), cone_radius_m, cone_height_m for
     # scatter-system consumers to scale debris density across the apron.
@@ -269,7 +270,9 @@ def _fit_bspline_contour(
 
     # Try scipy interpolate for production quality
     try:
-        from scipy.interpolate import splprep, splev  # lazy import
+        interp = importlib.import_module("scipy.interpolate")
+        splprep = getattr(interp, "splprep")
+        splev = getattr(interp, "splev")
 
         k = 3  # cubic
         if closed:
@@ -280,7 +283,9 @@ def _fit_bspline_contour(
             tck, _ = splprep([pts_f[:, 0], pts_f[:, 1]], s=0, k=k)
 
         u_new = np.linspace(0.0, 1.0, n_samples)
-        r_new, c_new = splev(u_new, tck)
+        r_raw, c_raw = splev(u_new, tck)
+        r_new = np.asarray(r_raw, dtype=np.float64)
+        c_new = np.asarray(c_raw, dtype=np.float64)
         return np.column_stack([r_new, c_new])
     except (ImportError, Exception):
         pass
@@ -559,15 +564,16 @@ def _label_connected_components(
 
     # --- scipy fast path ---
     try:
-        from scipy.ndimage import label as _label  # lazy import
+        ndimage = importlib.import_module("scipy.ndimage")
+        label_components = getattr(ndimage, "label")
 
         if connectivity == 8:
             structure = np.ones((3, 3), dtype=np.int32)
         else:
             structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.int32)
 
-        labeled, _n = _label(m, structure=structure)
-        return labeled.astype(np.int32)
+        labeled_result = label_components(m, structure=structure)
+        return np.asarray(labeled_result[0], dtype=np.int32)
     except ImportError:
         pass
 
@@ -795,7 +801,7 @@ def carve_cliff_system(
     """
     stack = state.mask_stack
     height = np.asarray(stack.height, dtype=np.float64)
-    rows, cols = height.shape
+    rows, _cols = height.shape
 
     if candidate_mask is None:
         candidate_mask = build_cliff_candidate_mask(stack)
@@ -1202,7 +1208,7 @@ def add_cliff_ledges(
 
     fractions = [(i + 1) / (count + 1) for i in range(count)]
     band_half = max(0.75, span / (count * 4.0))
-    rr, cc = np.where(face)
+    rr, _cc = np.where(face)
     row_min = int(rr.min())
     row_max = int(rr.max())
     for frac in fractions:
@@ -1453,7 +1459,7 @@ def place_talus_boulders_power_law(
     density_per_100_m2: float = 0.8,
     d_exponent: float = TALUS_KORCAK_EXPONENT_D,
     species: str = "talus_boulder",
-) -> List[Dict]:
+) -> list[dict[str, Any]]:
     """Scatter power-law-distributed boulders into a cliff's talus apron.
 
     Phase G (AAA): size distribution follows a Gutenberg-Richter / Korcak
@@ -1508,15 +1514,15 @@ def place_talus_boulders_power_law(
     pick_idx = rng.choice(valid_cells.shape[0], size=n_boulders, replace=False)
     chosen = valid_cells[pick_idx]
 
-    placements: List[Dict] = []
-    h = stack.height
+    placements: list[dict[str, Any]] = []
+    height_arr = np.asarray(stack.height, dtype=np.float64)
     cell_size = float(stack.cell_size)
     world_ox = float(stack.world_origin_x)
     world_oy = float(stack.world_origin_y)
     for (rr, cc), radius in zip(chosen, radii):
         x = world_ox + (cc + 0.5) * cell_size
         y = world_oy + (rr + 0.5) * cell_size
-        z = float(h[rr, cc]) if h is not None else 0.0
+        z = float(height_arr[rr, cc])
         placements.append({
             "position":   (float(x), float(y), float(z + radius)),
             "radius_m":   float(radius),
@@ -1537,7 +1543,7 @@ def _generate_cliff_overhang(
     *,
     overhang_probability: float = 0.35,
     seed: int = 0,
-) -> Dict:
+) -> dict[str, Any]:
     """Generate overhang geometry specs for a cliff profile.
 
     35% of cliff lip segments receive a small outward protrusion (0.3–1.2 m)
@@ -1585,7 +1591,7 @@ def _generate_cliff_overhang(
     rng = _rnd.Random(seed)
 
     lip = cliff_profile.lip_polyline
-    if lip is None or lip.shape[0] < 2:
+    if lip.shape[0] < 2:
         return {
             "segments": [],
             "total_segments": 0,
@@ -1615,8 +1621,8 @@ def _generate_cliff_overhang(
     else:
         out_nx, out_ny = 0.0, 1.0
 
-    segments: List[Dict] = []
-    drip_edge_verts: List[Tuple[float, float, float]] = []
+    segments: list[dict[str, Any]] = []
+    drip_edge_verts: list[tuple[float, float, float]] = []
     overhang_count = 0
     n_lip = lip.shape[0]
     total_segments = n_lip - 1
@@ -1707,22 +1713,18 @@ def _cell_center_world(
 
 
 def _build_cliff_overhang_mesh_specs(
-    cliffs: List["CliffStructure"],
+    cliffs: list["CliffStructure"],
     stack: TerrainMaskStack,
-) -> List[Dict]:
+) -> list[dict[str, Any]]:
     """Convert cliff overhang metadata into world-space quad mesh specs."""
-    mesh_specs: List[Dict] = []
-    height_arr = (
-        np.asarray(stack.height, dtype=np.float64)
-        if stack.height is not None
-        else None
-    )
+    mesh_specs: list[dict[str, Any]] = []
+    height_arr = np.asarray(stack.height, dtype=np.float64)
     for cliff in cliffs:
         # Serialize per-stratum color bands so the material pass can apply
         # geological colour without re-computing hardness from scratch.
         if getattr(cliff, "strata_layers", None):
             cumulative_z = float(getattr(cliff, "min_height_m", 0.0))
-            strata_bands = []
+            strata_bands: list[dict[str, Any]] = []
             for sl in cliff.strata_layers:
                 strata_bands.append({
                     "z_base_m": cumulative_z,
@@ -1753,7 +1755,7 @@ def _build_cliff_overhang_mesh_specs(
             except Exception:
                 continue
             depth_m = float(segment.get("depth_m", 0.0))
-            if height_arr is not None and height_arr.size:
+            if height_arr.size:
                 rr0 = max(0, min(height_arr.shape[0] - 1, int(r0)))
                 cc0 = max(0, min(height_arr.shape[1] - 1, int(c0)))
                 rr1 = max(0, min(height_arr.shape[0] - 1, int(r1)))
@@ -1872,7 +1874,7 @@ def _build_cliff_wall_mesh_spec(
     strata_layers: Optional[List["StrataLayer"]] = None,
     strata_period: float = 10.0,
     mean_hardness: float = 0.5,
-) -> dict:
+) -> dict[str, Any]:
     """Build a MeshSpec for the cliff wall directly from the lip polyline.
 
     AAA upgrade (2026-04-20)
@@ -1942,7 +1944,7 @@ def _build_cliff_wall_mesh_spec(
 
     rng = _rnd.Random(seed)
 
-    if lip_polyline is None or len(lip_polyline) < 2:
+    if len(lip_polyline) < 2:
         return {"vertices": [], "faces": [], "metadata": {}}
 
     cs = float(stack.cell_size)
@@ -2141,7 +2143,7 @@ def _build_cliff_wall_mesh_spec(
     # Collect one point per ledge boundary × lip column pair.
     # ------------------------------------------------------------------
     cliff_ledge_vegetation_points: List[Tuple[float, float, float]] = []
-    _ledge_veg_fracs_seen: set = set()
+    _ledge_veg_fracs_seen: set[tuple[float, int]] = set()
 
     # ------------------------------------------------------------------
     # Main vertex + face build loop.
@@ -2225,7 +2227,7 @@ def _build_cliff_wall_mesh_spec(
 
         # Find which strata band this face height falls in
         face_mat = 1  # default: sandstone
-        for (lf, lo, lh) in ledge_fracs:
+        for (lf, _lo, lh) in ledge_fracs:
             if abs(h_frac_face - lf) < (1.0 / max(n_rows, 1)):
                 face_mat = 0 if (lh >= 0.5 or mean_hardness >= 0.65) else 1
                 break
@@ -2252,18 +2254,18 @@ def _build_cliff_wall_mesh_spec(
     boulder_rng = _rnd.Random(seed ^ 0xB0B0)
     boulders_per_10m = boulder_rng.uniform(5.0, 15.0)
     n_boulders = max(1, int(boulders_per_10m * arc_length / 10.0))
-    cliff_boulder_placements: List[dict] = []
+    cliff_boulder_placements: list[dict[str, Any]] = []
     base_z = lip_pts_perturbed[0][2] - wall_height if lip_pts_perturbed else 0.0
     col_arc_arr = np.asarray(col_arc, dtype=np.float64)
 
-    for bi in range(n_boulders):
+    for _bi in range(n_boulders):
         # Random arc position
         arc_t = boulder_rng.random()
         b_arc = arc_t * arc_length
         # Find lip column for this arc position
         col_idx = int(np.searchsorted(col_arc_arr, b_arc, side="right") - 1)
         col_idx = max(0, min(col_idx, max(0, n_lip - 2)))
-        bx, by, bz = lip_pts_perturbed[col_idx]
+        bx, by, _bz = lip_pts_perturbed[col_idx]
         # Place boulder 3-8 m outward from cliff face base
         outward_dist = boulder_rng.uniform(3.0, 8.0)
         # Williams morphometry: r = 0.6 * H^0.4
@@ -2369,7 +2371,7 @@ def insert_hero_cliff_meshes(
         # Strata → style hint
         style = "granite"
         strata_angle_deg = 0.0
-        if strata_arr is not None and cliff.face_mask is not None:
+        if strata_arr is not None:
             sa = np.asarray(strata_arr, dtype=np.float64)
             if sa.shape == cliff.face_mask.shape:
                 face_strata = sa[cliff.face_mask]
@@ -2384,7 +2386,7 @@ def insert_hero_cliff_meshes(
         # Rock hardness → noise amplitude + overhang fraction
         noise_amplitude = 0.8
         mean_hardness = 0.5
-        if hardness_arr is not None and cliff.face_mask is not None:
+        if hardness_arr is not None:
             ha = np.asarray(hardness_arr, dtype=np.float64)
             if ha.shape == cliff.face_mask.shape:
                 face_hardness = ha[cliff.face_mask]
@@ -2432,8 +2434,8 @@ def insert_hero_cliff_meshes(
 
         blender_name: Optional[str] = None
         try:
-            import bpy as _bpy
-            import bmesh as _bmesh
+            _bpy = importlib.import_module("bpy")
+            _bmesh = importlib.import_module("bmesh")
 
             mesh_to_build = wall_mesh if wall_mesh["vertices"] else face_mesh_spec
             if mesh_to_build is not None and mesh_to_build.get("vertices"):
@@ -2509,7 +2511,8 @@ def validate_cliff_readability(
     """Return a list of ValidationIssue covering lip / face / ledge presence."""
     issues: List[ValidationIssue] = []
 
-    if cliff.face_mask is None or int(cliff.face_mask.sum()) < int(min_face_cells):
+    face_cell_count = int(cliff.face_mask.sum())
+    if face_cell_count < int(min_face_cells):
         issues.append(
             ValidationIssue(
                 code="CLIFF_FACE_TOO_SMALL",
@@ -2517,13 +2520,14 @@ def validate_cliff_readability(
                 affected_feature=cliff.cliff_id,
                 message=(
                     f"cliff face only has "
-                    f"{0 if cliff.face_mask is None else int(cliff.face_mask.sum())} cells "
+                    f"{face_cell_count} cells "
                     f"(< {min_face_cells})"
                 ),
             )
         )
 
-    if cliff.lip_polyline is None or cliff.lip_polyline.shape[0] < int(min_lip_length):
+    lip_point_count = int(cliff.lip_polyline.shape[0])
+    if lip_point_count < int(min_lip_length):
         issues.append(
             ValidationIssue(
                 code="CLIFF_LIP_MISSING",
@@ -2531,7 +2535,7 @@ def validate_cliff_readability(
                 affected_feature=cliff.cliff_id,
                 message=(
                     f"cliff lip polyline has "
-                    f"{0 if cliff.lip_polyline is None else int(cliff.lip_polyline.shape[0])} "
+                    f"{lip_point_count} "
                     f"points (< {min_lip_length})"
                 ),
             )
@@ -2547,7 +2551,7 @@ def validate_cliff_readability(
             )
         )
 
-    if cliff.talus_mask is not None and cliff.face_mask is not None:
+    if cliff.talus_mask is not None:
         overlap = int((cliff.talus_mask & cliff.face_mask).sum())
         if overlap > 0:
             issues.append(
@@ -2562,7 +2566,7 @@ def validate_cliff_readability(
     # AAA silhouette shape check (Phase G): blobby/uniform rejection.
     # Horizon Forbidden West reference — cliffs must read as jagged, layered
     # structures, not circular pancakes or flat painted walls.
-    if cliff.face_mask is not None and int(cliff.face_mask.sum()) >= 20:
+    if face_cell_count >= 20:
         try:
             from .terrain_materials_ext import validate_cliff_silhouette_shape
         except Exception:
@@ -2635,7 +2639,7 @@ def pass_cliffs(
 
     # 5. Add ledges + talus per cliff
     total_talus_boulders = 0
-    all_boulder_placements: List[Dict] = []
+    all_boulder_placements: list[dict[str, Any]] = []
     for cliff_idx, cliff in enumerate(cliffs):
         add_cliff_ledges(cliff, height=stack.height)
         cliff.talus_field = build_talus_field(cliff, stack)
@@ -2694,7 +2698,7 @@ def pass_cliffs(
             talus_arr = np.maximum(talus_arr, cliff.talus_mask.astype(np.float32))
         # Accumulate strata mask — use face_mask for cliffs that have strata layers,
         # because strata band data is computed per-cliff but not stored pixel-wise.
-        if cliff.strata_layers and cliff.face_mask is not None:
+        if cliff.strata_layers:
             strata_arr = np.maximum(strata_arr, cliff.face_mask.astype(np.float32))
 
     stack.set("cliff_mask", cliff_mask_arr, "cliff_pass")

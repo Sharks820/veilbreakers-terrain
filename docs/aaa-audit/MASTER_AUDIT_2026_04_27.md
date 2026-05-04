@@ -3806,7 +3806,7 @@ Export writes `output/wildlife_zones.json`. No `VbTerrainImporter.cs` code reads
 
 **S22-P0-56: `terrain_visual_qa.py` — Visual QA gate's 12 checks match zero confirmed P0 failure conditions**
 
-`VisualQAGate.run_checks()` executes 12 checks. Cross-referencing with all P0s (S1-S21): none of the 12 tests catch stochastic shader seams (S21-P0-7), foam alpha inversion (S20-P0-1), tree Z=0 export (S21-P0-16), Quixel splatmap no-op (S21-P0-15), or any of the 47 confirmed stack-bypass failures. The QA gate always passes 100% on tiles with confirmed P0 defects. It is a false-confidence gate that provides zero actual quality assurance.
+`DataContractQAGate.run_checks()` executes 12 checks. Cross-referencing with all P0s (S1-S21): none of the 12 tests catch stochastic shader seams (S21-P0-7), foam alpha inversion (S20-P0-1), tree Z=0 export (S21-P0-16), Quixel splatmap no-op (S21-P0-15), or any of the 47 confirmed stack-bypass failures. The QA gate always passes 100% on tiles with confirmed P0 defects. It is a false-confidence gate that provides zero actual quality assurance.
 
 **S22-P0-57: `terrain_roughness_driver.py` — AO term reads `"ambient_occlusion"` (does not exist); correct name is `"ambient_occlusion_bake"`**
 

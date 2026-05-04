@@ -1,0 +1,36 @@
+{
+  "renders": [
+    {
+      "file": "render_01_grasslands_rescale",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\visual-verification\\batch15\\render_01_grasslands_rescale.png"
+    },
+    {
+      "file": "render_02_mountain_pass",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\visual-verification\\batch15\\render_02_mountain_pass.png"
+    },
+    {
+      "file": "render_03_biome_mosaic",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\visual-verification\\batch15\\render_03_biome_mosaic.png"
+    },
+    {
+      "file": "render_04_water_caustics",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\visual-verification\\batch15\\render_04_water_caustics.png"
+    },
+    {
+      "file": "render_05_water_bathymetry",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\visual-verification\\batch15\\render_05_water_bathymetry.png"
+    },
+    {
+      "file": "render_06_splatmap_layers",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\visual-verification\\batch15\\render_06_splatmap_layers.png"
+    },
+    {
+      "file": "render_07_scatter_biome",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\visual-verification\\batch15\\render_07_scatter_biome.png"
+    }
+  ],
+  "failures": [],
+  "total_renders": 7,
+  "total_failures": 0,
+  "elapsed_s": 5.8
+}

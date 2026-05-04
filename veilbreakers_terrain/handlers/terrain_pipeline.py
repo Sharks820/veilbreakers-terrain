@@ -27,8 +27,9 @@ import logging
 import time
 import uuid
 import dataclasses
+import weakref
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .terrain_semantics import (
     BBox,
@@ -47,6 +48,20 @@ from .terrain_semantics import (
 )
 
 _log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level weak registry for hot-reload func rebinding (FIX-B14-23)
+# ---------------------------------------------------------------------------
+# Maps (module_name, attr_name) -> PassDefinition so that after
+# importlib.reload() the hot-reload code can iterate this dict and re-bind
+# PassDefinition.func without re-registering the whole pipeline.
+#
+# WeakValueDictionary is used so that PassDefinitions that are dropped from
+# the PASS_REGISTRY (e.g. test teardown clears the class-level dict) do not
+# accumulate here indefinitely.
+_PASS_MODULE_REGISTRY: "weakref.WeakValueDictionary[Tuple[str, str], PassDefinition]" = (
+    weakref.WeakValueDictionary()
+)
 
 
 class PipelineSubsystemError(RuntimeError):
@@ -155,12 +170,23 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         "pass_generate_low_freq_hmap",
         "biome_channels",
         "terrain_labels",
-        "structural_masks",
         "pass_generate_high_freq_detail",
         "pass_composite_hmap",
+        # B14-9: structural_masks now runs AFTER composite_hmap so cliff_mask,
+        # slope, and curvature are derived from the final composited height, not
+        # the low-freq-only base.  Water/splatmap weights are always computed
+        # downstream and are therefore consistent with the corrected masks.
+        "structural_masks",
+        # P1-9: banded_macro runs AFTER composite_hmap so its height output is
+        # not overwritten by the composite.  P1-10: banded_advanced refines the
+        # banded result with Kuwahara anti-grain smoothing.
+        "banded_macro",
+        "pass_banded_advanced",
         validation_pass,
     ]
     if has_scene_read:
+        # Hydrology + erosion operate on the low-freq height before compositing.
+        # Insert them at index 3 (before pass_generate_high_freq_detail).
         pass_sequence[3:3] = ["pass_hydrology", "erosion"]
         composite_idx = pass_sequence.index("pass_composite_hmap") + 1
         for post_erosion in ("structural_masks_post_erosion", "pass_hydrology_post_erosion"):
@@ -172,6 +198,9 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # C-1: glacial pass runs after morphology, before scatter/materials
             pass_sequence.insert(composite_idx, "pass_glacial")
             composite_idx += 1
+            # Batch-13 wiring: biome surface features after glacial, before feature carving
+            pass_sequence.insert(composite_idx, "biome_surface_features")
+            composite_idx += 1
     if validation_pass == "validation_full":
         insert_at = pass_sequence.index("validation_full")
         for prereq in (
@@ -179,11 +208,14 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             "pass_terrain_features",
             # C-8: sightline framing before scatter
             "framing",
-            *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
+            *(("water_variants", "pass_seasonal_water_state", "bathymetry", "pass_water_depth") if has_scene_read else ()),
             *(("waterfalls", "emit_particle_systems") if has_scene_read and include_waterfalls else ()),
             *(("integrate_deltas",) if has_scene_read else ()),
             *(("talus", "structural_masks_post_talus") if include_talus else ()),
             *(("pass_lava_simulation",) if include_lava else ()),
+            # FIX-B14-6: road network pass runs before materials and scatter so
+            # road_sdf_dist is available to materials_v2 / scatter_intelligent.
+            "pass_road_network",
             "materials_v2",
             *(("emit_overhang_meshes",) if has_scene_read else ()),
             *(("scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read and not skip_scatter else ()),
@@ -378,6 +410,8 @@ class TerrainPassController:
                         requires_channels=tuple(getattr(definition, "requires_channels", ()) or ()),
                         produces_channels=tuple(getattr(definition, "produces_channels", ()) or ()),
                         optional_channels=tuple(getattr(definition, "optional_channels", ()) or ()),
+                        # FIX-B14-P1-13: canonicalise requires_channels_optional from twin class
+                        requires_channels_optional=tuple(getattr(definition, "requires_channels_optional", ()) or ()),
                         overrides=tuple(getattr(definition, "overrides", ()) or ()),
                         requires_features=tuple(getattr(definition, "requires_features", ()) or ()),
                         idempotent=bool(getattr(definition, "idempotent", True)),
@@ -456,6 +490,21 @@ class TerrainPassController:
                 raise ValueError(msg)
             _log.warning(msg)
         cls.PASS_REGISTRY[definition.name] = definition
+
+        # Populate the module-level weak registry for hot-reload func rebinding
+        # (FIX-B14-23).  We store (module_name, attr_name) -> PassDefinition so
+        # that after importlib.reload() the hot-reload code can re-bind func
+        # without going through the full registration path.
+        func = definition.func
+        mod = getattr(func, "__module__", None)
+        qual = getattr(func, "__qualname__", None) or getattr(func, "__name__", None)
+        if mod and qual:
+            # Use just the top-level name for attribute lookup after reload
+            attr_name = qual.split(".")[0]
+            try:
+                _PASS_MODULE_REGISTRY[(mod, attr_name)] = definition
+            except TypeError:
+                pass  # unhashable key — skip silently
 
     @classmethod
     def get_pass(cls, pass_name: str) -> PassDefinition:
@@ -1716,6 +1765,10 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_biome_channel_pass()
     register_terrain_label_passes()
     register_snow_line_pass()
+    from ._biome_grammar import register_biome_surface_features_pass
+    register_biome_surface_features_pass()
+    # pass_seasonal_water_state registers AFTER Bundle O/I in terrain_master_registrar
+    # so that water_variants and coastline own water_surface_mask/tidal first.
     # macro_color is owned by Bundle K (see terrain_macro_color.pass_macro_color).
     # The orphan ``pass_compute_macro_color`` helper that used to live here was
     # never auto-registered and has been removed (deep-dive guide 2026-04-20).
@@ -1724,6 +1777,7 @@ def register_default_passes(*, strict: bool = False) -> None:
 __all__ = [
     "TerrainPassController",
     "PipelineSubsystemError",
+    "_PASS_MODULE_REGISTRY",
     "build_default_pass_sequence",
     "derive_pass_seed",
     "register_default_passes",

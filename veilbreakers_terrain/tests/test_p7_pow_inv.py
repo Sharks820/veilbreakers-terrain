@@ -1,6 +1,5 @@
 """Tests for _pow_inv formula fix (REQ-P7-004 / BUG-S10-001 / Fix 7.19)."""
 import numpy as np
-import pytest
 from veilbreakers_terrain.handlers.terrain_erosion_filter import _pow_inv
 
 

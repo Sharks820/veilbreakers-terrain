@@ -1601,8 +1601,12 @@ def _quad_normal(
     v0: Vec3, v1: Vec3, v2: Vec3,
 ) -> Tuple[float, float, float]:
     """Compute face normal for a quad given three consecutive CCW vertices."""
-    ax = v1[0] - v0[0]; ay = v1[1] - v0[1]; az = v1[2] - v0[2]
-    bx = v2[0] - v0[0]; by = v2[1] - v0[1]; bz = v2[2] - v0[2]
+    ax = v1[0] - v0[0]
+    ay = v1[1] - v0[1]
+    az = v1[2] - v0[2]
+    bx = v2[0] - v0[0]
+    by = v2[1] - v0[1]
+    bz = v2[2] - v0[2]
     nx = ay * bz - az * by
     ny = az * bx - ax * bz
     nz = ax * by - ay * bx
@@ -1782,8 +1786,10 @@ def generate_billboard_impostor(params: dict) -> MeshSpec:
             angle_a = 2.0 * math.pi * i / num_views
             angle_b = 2.0 * math.pi * (i + 1) / num_views
 
-            cos_a = math.cos(angle_a); sin_a = math.sin(angle_a)
-            cos_b = math.cos(angle_b); sin_b = math.sin(angle_b)
+            cos_a = math.cos(angle_a)
+            sin_a = math.sin(angle_a)
+            cos_b = math.cos(angle_b)
+            sin_b = math.sin(angle_b)
 
             p0 = (half_w * cos_a, half_w * sin_a, 0.0)
             p1 = (half_w * cos_b, half_w * sin_b, 0.0)
@@ -2107,9 +2113,12 @@ def prepare_gpu_instancing_export(params: dict) -> dict:
     # ------------------------------------------------------------------
     # Scene AABB for frustum culling
     # ------------------------------------------------------------------
-    min_x = min(tx_list); max_x = max(tx_list)
-    min_y = min(ty_list); max_y = max(ty_list)
-    min_z = min(tz_list); max_z = max(tz_list)
+    min_x = min(tx_list)
+    max_x = max(tx_list)
+    min_y = min(ty_list)
+    max_y = max(ty_list)
+    min_z = min(tz_list)
+    max_z = max(tz_list)
     bounds = {
         "min": [min_x, min_y, min_z],
         "max": [max_x, max_y, max_z],

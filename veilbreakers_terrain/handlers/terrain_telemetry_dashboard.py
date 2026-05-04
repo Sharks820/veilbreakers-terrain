@@ -87,9 +87,33 @@ def record_telemetry(
         content_hash=state.mask_stack.compute_hash(),
         extra=dict(extra or {}),
     )
-    with record_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record.to_dict(), sort_keys=True))
-        fh.write("\n")
+    _line = json.dumps(record.to_dict(), sort_keys=True) + "\n"
+    _line_bytes = _line.encode("utf-8")
+
+    import sys
+    if sys.platform == "win32":
+        # P1-30: Windows does not guarantee O_APPEND atomicity for concurrent
+        # tile writers; use msvcrt.locking to serialise the write.
+        try:
+            import msvcrt
+            with record_path.open("ab") as fh:
+                # Lock the file for exclusive write access.
+                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    fh.seek(0, 2)  # seek to end
+                    fh.write(_line_bytes)
+                finally:
+                    fh.seek(0, 2)
+                    try:
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001 — fall back to plain append
+            with record_path.open("a", encoding="utf-8") as fh:
+                fh.write(_line)
+    else:
+        with record_path.open("a", encoding="utf-8") as fh:
+            fh.write(_line)
     return record
 
 

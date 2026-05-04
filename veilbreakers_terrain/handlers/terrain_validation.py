@@ -18,28 +18,42 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import importlib
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 
-try:
-    from scipy.ndimage import (
-        binary_dilation as _scipy_binary_dilation,
-        label as _scipy_label,
-        maximum_filter as _scipy_maximum_filter,
-    )
-    _SCIPY_VALIDATION_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _scipy_binary_dilation = None  # type: ignore[assignment]
-    _scipy_label = None  # type: ignore[assignment]
-    _scipy_maximum_filter = None  # type: ignore[assignment]
-    _SCIPY_VALIDATION_AVAILABLE = False
+if TYPE_CHECKING:
+    from .terrain_materials_ext import MaterialChannelExt
 
-from .terrain_pipeline import TerrainPassController
-from .terrain_semantics import (
+_ArrayFilter = Callable[..., np.ndarray]
+_ArrayLabel = Callable[..., tuple[np.ndarray, int]]
+
+try:
+    _scipy_ndimage = importlib.import_module("scipy.ndimage")
+    _scipy_binary_dilation = cast(
+        _ArrayFilter,
+        getattr(_scipy_ndimage, "binary_dilation"),
+    )
+    _scipy_label = cast(_ArrayLabel, getattr(_scipy_ndimage, "label"))
+    _scipy_maximum_filter = cast(
+        _ArrayFilter,
+        getattr(_scipy_ndimage, "maximum_filter"),
+    )
+    _scipy_validation_available = True
+except ImportError:  # pragma: no cover
+    _scipy_binary_dilation = None
+    _scipy_label = None
+    _scipy_maximum_filter = None
+    _scipy_validation_available = False
+
+_SCIPY_VALIDATION_AVAILABLE: bool = _scipy_validation_available
+
+from .terrain_pipeline import TerrainPassController  # noqa: E402
+from .terrain_semantics import (  # noqa: E402
     BBox,
     PassDefinition,
     PassResult,
@@ -53,6 +67,26 @@ from .terrain_semantics import (
 # ---------------------------------------------------------------------------
 # ValidationReport
 # ---------------------------------------------------------------------------
+
+
+def _default_validation_categories() -> Dict[str, List[ValidationIssue]]:
+    return {
+        "geometry": [],
+        "water": [],
+        "materials": [],
+        "erosion": [],
+        "scatter": [],
+        "readability": [],
+        "pipeline": [],
+    }
+
+
+def _empty_issue_list() -> List[ValidationIssue]:
+    return []
+
+
+def _empty_metrics() -> Dict[str, Any]:
+    return {}
 
 
 @dataclass
@@ -83,20 +117,13 @@ class ValidationReport:
     """
 
     pass_name: str = "validation_full"
-    hard_issues: List[ValidationIssue] = field(default_factory=list)
-    soft_issues: List[ValidationIssue] = field(default_factory=list)
-    info_issues: List[ValidationIssue] = field(default_factory=list)
-    categories: Dict[str, List[ValidationIssue]] = field(default_factory=lambda: {
-        # 7-domain structured issues dict (AAA bar requirement)
-        "geometry":   [],   # height, slope, seam, strata, glacial, karst, hero features
-        "water":      [],   # waterfall, foam, mist, drainage
-        "materials":  [],   # splatmap weights, channel dtypes, layer coverage
-        "erosion":    [],   # mass conservation, sediment transport
-        "scatter":    [],   # tree/rock placement, debris density
-        "readability":[],   # cliff silhouette, cave framing, focal composition
-        "pipeline":   [],   # export readiness, validator crashes, protected zones
-    })
-    metrics: Dict[str, Any] = field(default_factory=dict)
+    hard_issues: List[ValidationIssue] = field(default_factory=_empty_issue_list)
+    soft_issues: List[ValidationIssue] = field(default_factory=_empty_issue_list)
+    info_issues: List[ValidationIssue] = field(default_factory=_empty_issue_list)
+    categories: Dict[str, List[ValidationIssue]] = field(
+        default_factory=_default_validation_categories
+    )
+    metrics: Dict[str, Any] = field(default_factory=_empty_metrics)
     overall_status: str = "ok"
 
     @property
@@ -204,6 +231,26 @@ def _safe_asarray(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
     if arr is None:
         return None
     return np.asarray(arr)
+
+
+def _neighbor_height_array(neighbor_stack: Any) -> np.ndarray:
+    return np.asarray(getattr(neighbor_stack, "height"), dtype=np.float64)
+
+
+def _neighbor_top_edge(neighbor_stack: Any) -> np.ndarray:
+    return _neighbor_height_array(neighbor_stack)[-1, :]
+
+
+def _neighbor_bottom_edge(neighbor_stack: Any) -> np.ndarray:
+    return _neighbor_height_array(neighbor_stack)[0, :]
+
+
+def _neighbor_left_edge(neighbor_stack: Any) -> np.ndarray:
+    return _neighbor_height_array(neighbor_stack)[:, -1]
+
+
+def _neighbor_right_edge(neighbor_stack: Any) -> np.ndarray:
+    return _neighbor_height_array(neighbor_stack)[:, 0]
 
 
 def _numpy_block_max(arr: np.ndarray, radius: int) -> np.ndarray:
@@ -541,11 +588,11 @@ def validate_tile_seam_continuity(
             "right": "right",
         }
 
-        direction_neighbor_edge: Dict[str, Callable[..., np.ndarray]] = {
-            "top":    lambda nh: np.asarray(nh.height)[-1, :],   # neighbor's bottom row
-            "bottom": lambda nh: np.asarray(nh.height)[0, :],    # neighbor's top row
-            "left":   lambda nh: np.asarray(nh.height)[:, -1],   # neighbor's right col
-            "right":  lambda nh: np.asarray(nh.height)[:, 0],    # neighbor's left col
+        direction_neighbor_edge: Dict[str, Callable[[Any], np.ndarray]] = {
+            "top": _neighbor_top_edge,        # neighbor's bottom row
+            "bottom": _neighbor_bottom_edge,  # neighbor's top row
+            "left": _neighbor_left_edge,      # neighbor's right col
+            "right": _neighbor_right_edge,    # neighbor's left col
         }
 
         for direction, neighbor_stack in neighbor_stacks.items():
@@ -752,7 +799,7 @@ def validate_material_coverage(
 def _material_channel_exts_for_validation(
     stack: TerrainMaskStack,
     intent: TerrainIntentState,
-):
+) -> List["MaterialChannelExt"]:
     """Rebuild the current material-layer metadata for validator-only checks.
 
     The live materials pass owns the canonical layer ordering, but validation
@@ -772,15 +819,20 @@ def _material_channel_exts_for_validation(
     if weights is None or weights.ndim != 3 or weights.shape[2] <= 0:
         return []
 
-    hints = intent.composition_hints or {}
+    hints: Dict[str, Any] = dict(intent.composition_hints or {})
     layer_count = int(weights.shape[2])
-    ext_channels = list(
+    ext_channels: List[MaterialChannelExt] = list(
         _build_material_channel_exts(default_dark_fantasy_rules(), hints)
     )
     if layer_count <= len(ext_channels):
         return ext_channels[:layer_count]
 
-    density_overrides = hints.get("material_texel_density_m") or {}
+    density_raw_map = hints.get("material_texel_density_m")
+    density_overrides: Dict[str, Any] = (
+        dict(cast(Dict[str, Any], density_raw_map))
+        if isinstance(density_raw_map, dict)
+        else {}
+    )
     hero_ids = {str(cid) for cid in (hints.get("hero_material_ids") or ())}
     for idx in range(len(ext_channels), layer_count):
         channel_id = f"layer_{idx}"
@@ -1006,7 +1058,10 @@ def check_cliff_silhouette_readability(
         rows, cols = h.shape
         if rows >= 3 and cols >= 3:
             if _SCIPY_VALIDATION_AVAILABLE and _scipy_maximum_filter is not None:
-                local_max = _scipy_maximum_filter(h, size=3, mode="reflect")
+                local_max = np.asarray(
+                    _scipy_maximum_filter(h, size=3, mode="reflect"),
+                    dtype=np.float64,
+                )
             else:
                 # Pure-numpy vectorized 3×3 max via padded slicing (9 array ops, no Python loops)
                 h_pad = np.pad(h, 1, mode="reflect")
@@ -1058,7 +1113,8 @@ def check_cliff_silhouette_readability(
     # ------------------------------------------------------------------
     if _SCIPY_VALIDATION_AVAILABLE and _scipy_label is not None:
         struct_8 = np.ones((3, 3), dtype=np.int32)
-        labels, _n = _scipy_label(mask, structure=struct_8)
+        raw_labels, _n = _scipy_label(mask, structure=struct_8)
+        labels = np.asarray(raw_labels, dtype=np.int64).reshape(mask.shape)
     else:
         # Pure-numpy minimum-label propagation:
         # 1. Assign each True cell its flat index + 1 as a unique seed label.
@@ -1074,7 +1130,9 @@ def check_cliff_silhouette_readability(
         # np.pad edge mode prevents toroidal tile-seam contamination — np.roll
         # would wrap labels across the seam and could falsely merge two
         # disjoint components that happen to touch opposite borders.
-        rows_lab, cols_lab = labels.shape
+        labels = cast(np.ndarray, np.asarray(labels, dtype=np.int64).reshape(mask.shape))
+        rows_lab = int(mask.shape[0])
+        cols_lab = int(mask.shape[1])
         changed = True
         while changed:
             new_labels = labels.copy()
@@ -1155,8 +1213,14 @@ def check_waterfall_chain_completeness(
 
     if pool_delta is not None and pool_delta.shape == lip_arr.shape:
         if _SCIPY_VALIDATION_AVAILABLE and _scipy_maximum_filter is not None:
-            pool_expanded = _scipy_maximum_filter(
-                (pool_delta > 0).astype(np.float32), size=filter_size, mode="constant", cval=0
+            pool_expanded = np.asarray(
+                _scipy_maximum_filter(
+                    (pool_delta > 0).astype(np.float32),
+                    size=filter_size,
+                    mode="constant",
+                    cval=0,
+                ),
+                dtype=np.float32,
             )
         else:
             # Pure-numpy: use cumulative-sum sliding window max approximation
@@ -1168,8 +1232,14 @@ def check_waterfall_chain_completeness(
 
     if flow_acc is not None and flow_acc.shape == lip_arr.shape:
         if _SCIPY_VALIDATION_AVAILABLE and _scipy_maximum_filter is not None:
-            fa_expanded = _scipy_maximum_filter(
-                flow_acc.astype(np.float32), size=filter_size, mode="constant", cval=0
+            fa_expanded = np.asarray(
+                _scipy_maximum_filter(
+                    flow_acc.astype(np.float32),
+                    size=filter_size,
+                    mode="constant",
+                    cval=0,
+                ),
+                dtype=np.float32,
             )
         else:
             fa_expanded = _numpy_block_max(flow_acc.astype(np.float32), drain_distance)
@@ -1275,7 +1345,10 @@ def check_cave_framing_presence(
     if delta is not None and delta.shape == cave_mask.shape:
         delta_presence = delta != 0
         if _SCIPY_VALIDATION_AVAILABLE and _scipy_binary_dilation is not None:
-            delta_near = _scipy_binary_dilation(delta_presence, structure=dilation_struct)
+            delta_near = np.asarray(
+                _scipy_binary_dilation(delta_presence, structure=dilation_struct),
+                dtype=bool,
+            )
         else:
             # _numpy_block_max counts non-zero neighbours; > 0 gives binary dilation
             delta_near = _numpy_block_max(delta_presence.astype(np.float32), radius_cells) > 0
@@ -1284,7 +1357,10 @@ def check_cave_framing_presence(
     if framing is not None and framing.shape == cave_mask.shape:
         framing_presence = framing > 0
         if _SCIPY_VALIDATION_AVAILABLE and _scipy_binary_dilation is not None:
-            framing_near = _scipy_binary_dilation(framing_presence, structure=dilation_struct)
+            framing_near = np.asarray(
+                _scipy_binary_dilation(framing_presence, structure=dilation_struct),
+                dtype=bool,
+            )
         else:
             framing_near = _numpy_block_max(framing_presence.astype(np.float32), radius_cells) > 0
 
@@ -1775,9 +1851,6 @@ def check_focal_composition(
     1% of cells are steep (>30°).
     """
     issues: List[ValidationIssue] = []
-    if stack.height is None:
-        return issues
-
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cs = float(stack.cell_size) if stack.cell_size else 1.0
@@ -1854,10 +1927,10 @@ class ReadabilityAuditReport:
 
     Collects per-check issue lists and computes an overall pass/fail status.
     """
-    cliff_issues: List[ValidationIssue] = field(default_factory=list)
-    waterfall_issues: List[ValidationIssue] = field(default_factory=list)
-    cave_issues: List[ValidationIssue] = field(default_factory=list)
-    focal_issues: List[ValidationIssue] = field(default_factory=list)
+    cliff_issues: List[ValidationIssue] = field(default_factory=_empty_issue_list)
+    waterfall_issues: List[ValidationIssue] = field(default_factory=_empty_issue_list)
+    cave_issues: List[ValidationIssue] = field(default_factory=_empty_issue_list)
+    focal_issues: List[ValidationIssue] = field(default_factory=_empty_issue_list)
     overall_status: str = "ok"  # "ok" | "warning" | "failed"
 
     @property
@@ -1962,9 +2035,10 @@ def run_validation_suite(
     report = ValidationReport()
     chosen = validators if validators is not None else list(DEFAULT_VALIDATORS)
     for name, fn in chosen:
+        issues: List[ValidationIssue]
         try:
             if name == "validate_protected_zones_untouched":
-                issues = fn(stack, intent, baseline_stack)  # type: ignore[misc]
+                issues = cast(List[ValidationIssue], fn(stack, intent, baseline_stack))  # type: ignore[misc]
             else:
                 issues = fn(stack, intent)
         except Exception as exc:

@@ -160,3 +160,88 @@ def test_water_runtime_contract_blocks_shape_mismatch_and_negative_depth():
 
     assert "water_channel_shape_mismatch" in codes
     assert "water_channel_negative" in codes
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-2: seasonal mutation downstream channels are fresh
+# ---------------------------------------------------------------------------
+
+
+def _build_terrain_stack(size: int = 8):
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+
+    h = np.zeros((size, size), dtype=np.float64)
+    return TerrainMaskStack(
+        tile_size=size - 1,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=h,
+    )
+
+
+def test_seasonal_mutation_downstream_channels_are_fresh():
+    """FIX-B14-2: wetness after WET seasonal pass equals clip(original*1.5+0.2, 0, 1)."""
+    from veilbreakers_terrain.handlers.terrain_water_variants import (
+        SeasonalState,
+        apply_seasonal_water_state,
+    )
+
+    stack = _build_terrain_stack()
+    shape = stack.height.shape
+
+    # Pre-populate wetness with a known value so we can verify the WET mutation.
+    initial_wetness = np.full(shape, 0.4, dtype=np.float32)
+    stack.set("wetness", initial_wetness, "test_setup")
+    stack.set("water_surface_mask", np.zeros(shape, dtype=np.float32), "test_setup")
+
+    apply_seasonal_water_state(stack, SeasonalState.WET)
+
+    result_wetness = np.asarray(stack.get("wetness"), dtype=np.float32)
+    expected = np.clip(0.4 * 1.5 + 0.2, 0.0, 1.0)
+    assert np.allclose(result_wetness, expected, atol=1e-5), (
+        f"WET wetness should be {expected:.4f}, got {result_wetness.mean():.4f}"
+    )
+    # Confirm water_surface_mask was also updated.
+    assert stack.get("water_surface_mask") is not None
+    assert stack.populated_by_pass.get("wetness") == "water_variants_seasonal"
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-3: seasonal pass does NOT write legacy water_surface channel
+# ---------------------------------------------------------------------------
+
+
+def test_seasonal_water_state_does_not_write_legacy_water_surface():
+    """FIX-B14-3: apply_seasonal_water_state must not populate water_surface."""
+    from veilbreakers_terrain.handlers.terrain_water_variants import (
+        SeasonalState,
+        apply_seasonal_water_state,
+    )
+
+    stack = _build_terrain_stack()
+    shape = stack.height.shape
+
+    stack.set("wetness", np.full(shape, 0.5, dtype=np.float32), "test_setup")
+    stack.set("water_surface_mask", np.zeros(shape, dtype=np.float32), "test_setup")
+
+    # Record which pass last wrote water_surface before the seasonal call.
+    pre_writer = stack.populated_by_pass.get("water_surface")
+
+    apply_seasonal_water_state(stack, SeasonalState.WET)
+
+    post_writer = stack.populated_by_pass.get("water_surface")
+
+    # water_surface populated_by_pass must NOT have changed to water_variants_seasonal.
+    assert post_writer != "water_variants_seasonal", (
+        "apply_seasonal_water_state must not write to the legacy water_surface channel"
+    )
+    # Either unchanged from pre-call or absent.
+    assert post_writer == pre_writer, (
+        f"water_surface populated_by_pass changed from {pre_writer!r} to {post_writer!r}"
+    )
+    # Canonical channel must be populated.
+    assert stack.get("water_surface_mask") is not None
+    assert stack.populated_by_pass.get("water_surface_mask") == "water_variants_seasonal"

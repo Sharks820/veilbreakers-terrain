@@ -456,7 +456,7 @@ terrain_telemetry_dashboard.py:21   TelemetryEntry
 terrain_stochastic_shader.py:426    StochasticShaderConfig
 terrain_vegetation_depth.py:53/86/96/103  Vegetation depth specs
 terrain_stratigraphy.py:52/104      StratigraphyEntry / StratigraphyLayer ✱
-terrain_visual_qa.py:68/78          VisualQAEntry / Report
+terrain_visual_qa.py:68/78          DataContractQAEntry / Report
 terrain_viewport_sync.py:25         ViewportVantage
 terrain_water_variants.py:51-91     6 water variant carriers
 terrain_waterfalls_volumetric.py:42/71/190/327  WaterfallVolumetricProfile ✱ + 3 carriers

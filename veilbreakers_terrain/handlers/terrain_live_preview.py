@@ -9,7 +9,6 @@ Pure Python + numpy. No bpy.
 
 from __future__ import annotations
 
-import copy
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -24,17 +23,74 @@ from .terrain_semantics import BBox, PassResult, TerrainPipelineState
 from .terrain_visual_diff import compute_visual_diff
 
 
-def _clone_stack_for_diff(stack: Any) -> Any:
-    """Shallow-copy the mask stack with deep-copied ndarrays for diffing."""
-    clone = copy.copy(stack)
-    for name in stack._ARRAY_CHANNELS:
-        val = getattr(stack, name, None)
-        if val is not None:
-            object.__setattr__(clone, name, val.copy())
-    # populated_by_pass is a dict
-    object.__setattr__(clone, "populated_by_pass", dict(stack.populated_by_pass))
-    object.__setattr__(clone, "dirty_channels", set(stack.dirty_channels))
-    return clone
+def _channel_hash(arr: Any) -> int:
+    """Compute a lightweight integer hash for a numpy ndarray.
+
+    Uses xxhash.xxh64 when available (fast, low collision rate). Falls back to
+    a cheap sum-XOR-shape fingerprint when xxhash is not installed.  The result
+    is used only for change detection, not cryptographic integrity.
+    """
+    try:
+        import xxhash  # type: ignore[import]
+        return xxhash.xxh64(np.ascontiguousarray(arr).tobytes()).intdigest()
+    except ImportError:
+        pass
+    # Fallback: int(sum) XOR shape[0] — fast, good enough for dirty detection
+    return int(np.sum(arr)) ^ arr.shape[0]
+
+
+class StackSnapshot:
+    """Copy-on-write snapshot of a TerrainMaskStack.
+
+    Stores only a dict of ``{channel_name: hash_int}`` plus a *reference* (not
+    a copy) to the original stack.  Memory cost is O(num_channels × 8 bytes)
+    rather than O(num_channels × array_size).
+
+    Use :meth:`changed_channels` to find which channels have been modified
+    since the snapshot was taken.
+    """
+
+    def __init__(self, stack: Any) -> None:
+        self._stack_ref = stack
+        # Build hash dict — only hash channels that are currently populated
+        self._hashes: Dict[str, int] = {}
+        for name in stack._ARRAY_CHANNELS:
+            val = getattr(stack, name, None)
+            if val is not None and isinstance(val, np.ndarray):
+                self._hashes[name] = _channel_hash(val)
+
+    def changed_channels(self, current_stack: Any) -> List[str]:
+        """Return list of channel names whose content differs from the snapshot.
+
+        A channel is considered changed if:
+        - it was absent at snapshot time and is now present, OR
+        - it was present at snapshot time and is now absent, OR
+        - its hash differs between snapshot time and now.
+        """
+        changed: List[str] = []
+        all_names = set(self._hashes.keys())
+        for name in current_stack._ARRAY_CHANNELS:
+            val = getattr(current_stack, name, None)
+            is_now_array = val is not None and isinstance(val, np.ndarray)
+            was_in_snapshot = name in self._hashes
+            if is_now_array and was_in_snapshot:
+                if _channel_hash(val) != self._hashes[name]:
+                    changed.append(name)
+            elif is_now_array and not was_in_snapshot:
+                # Newly populated channel
+                changed.append(name)
+            elif not is_now_array and was_in_snapshot:
+                # Channel cleared since snapshot
+                changed.append(name)
+            all_names.discard(name)
+        # Any snapshot channels not in current stack at all
+        changed.extend(all_names)
+        return changed
+
+    @property
+    def hash_dict(self) -> Dict[str, int]:
+        """Read-only view of the snapshot hash dict (for size measurement in tests)."""
+        return self._hashes
 
 
 @dataclass
@@ -94,9 +150,16 @@ class LivePreviewSession:
 
         hash_before = self.current_hash()
 
-        if dirty_channels and region is not None:
+        if dirty_channels:
+            _dirty_region = region
+            if _dirty_region is None:
+                # P1-32: full-tile edit — mark dirty over the full tile bounds
+                # so downstream consumers see the change even when no sub-region
+                # was specified.
+                _dirty_region = self.state.intent.region_bounds
             for ch in dirty_channels:
-                self.tracker.mark_dirty(ch, region)
+                if _dirty_region is not None:
+                    self.tracker.mark_dirty(ch, _dirty_region)
                 # Cache entries touching this channel should be dropped.
                 self.cache.invalidate_prefix(ch)
 
@@ -143,12 +206,28 @@ class LivePreviewSession:
         }
 
     def diff_stacks(self, stack_before: Any) -> Dict[str, Any]:
-        """Convenience: diff a held-aside snapshot against current state."""
+        """Convenience: diff a held-aside snapshot against current state.
+
+        Accepts either a ``StackSnapshot`` (hash-based, returned by
+        ``snapshot_stack()``) or a full ``TerrainMaskStack`` copy.
+        """
+        if isinstance(stack_before, StackSnapshot):
+            changed = stack_before.changed_channels(self.state.mask_stack)
+            return {"changed_channels": changed, "total_changed_cells": len(changed)}
         return compute_visual_diff(stack_before, self.state.mask_stack)
 
-    def snapshot_stack(self) -> Any:
-        """Return a deep-copied snapshot of the current mask stack for later diffing."""
-        return _clone_stack_for_diff(self.state.mask_stack)
+    def snapshot_stack(self) -> StackSnapshot:
+        """Return a copy-on-write snapshot of the current mask stack for later diffing.
+
+        Instead of deep-copying every array (which would allocate ~5 GB for a
+        4096×4096 stack with 20 channels), stores only a dict of
+        ``{channel_name: hash_int}`` plus a lightweight reference to the stack.
+        Memory cost: O(num_channels × 8 bytes) instead of O(num_channels × array_size).
+
+        Use ``snapshot.changed_channels(current_stack)`` to find which channels
+        have been modified since the snapshot was taken.
+        """
+        return StackSnapshot(self.state.mask_stack)
 
     def render_thumbnail_png(self, path: str, view: str = "top") -> str:
         """Render a thumbnail preview of the current terrain state.
@@ -353,5 +432,6 @@ def edit_hero_feature(
 
 __all__ = [
     "LivePreviewSession",
+    "StackSnapshot",
     "edit_hero_feature",
 ]

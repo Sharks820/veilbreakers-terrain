@@ -16,10 +16,15 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_pipeline import PassDefinition
 
 # Repo root (one level above veilbreakers_terrain/). Let ``import
 # veilbreakers_terrain`` resolve to the in-repo source tree whether this repo
@@ -36,38 +41,51 @@ def _make_stub(name: str) -> types.ModuleType:
     class _AttrProxy(MagicMock):
         """MagicMock that also works as a class base (for dataclass/enum)."""
 
-        def __mro_entries__(self, bases):
+        def __mro_entries__(self, bases: tuple[type[Any], ...]) -> tuple[type[object]]:
             return (object,)
 
-    mod.__dict__["__getattr__"] = lambda attr: _AttrProxy(name=f"{name}.{attr}")
+    def _module_getattr(attr: str) -> Any:
+        return _AttrProxy(name=f"{name}.{attr}")
+
+    def _none_property(**_kw: object) -> None:
+        return None
+
+    mod.__dict__["__getattr__"] = _module_getattr
 
     if name == "bpy":
-        mod.types = _AttrProxy(name="bpy.types")
-        mod.data = _AttrProxy(name="bpy.data")
-        mod.context = _AttrProxy(name="bpy.context")
-        mod.ops = _AttrProxy(name="bpy.ops")
-        mod.props = _AttrProxy(name="bpy.props")
-        mod.utils = _AttrProxy(name="bpy.utils")
-        mod.app = _AttrProxy(name="bpy.app")
+        props = _AttrProxy(name="bpy.props")
+        mod.__dict__.update({
+            "types": _AttrProxy(name="bpy.types"),
+            "data": _AttrProxy(name="bpy.data"),
+            "context": _AttrProxy(name="bpy.context"),
+            "ops": _AttrProxy(name="bpy.ops"),
+            "props": props,
+            "utils": _AttrProxy(name="bpy.utils"),
+            "app": _AttrProxy(name="bpy.app"),
+        })
         for prop_fn in (
             "StringProperty", "IntProperty", "FloatProperty",
             "BoolProperty", "EnumProperty", "CollectionProperty",
             "PointerProperty", "FloatVectorProperty",
             "IntVectorProperty", "BoolVectorProperty",
         ):
-            setattr(mod.props, prop_fn, lambda **kw: None)
-            setattr(mod, prop_fn, lambda **kw: None)
+            setattr(props, prop_fn, _none_property)
+            setattr(mod, prop_fn, _none_property)
     elif name == "bmesh":
-        mod.types = _AttrProxy(name="bmesh.types")
-        mod.ops = _AttrProxy(name="bmesh.ops")
-        mod.new = MagicMock
+        mod.__dict__.update({
+            "types": _AttrProxy(name="bmesh.types"),
+            "ops": _AttrProxy(name="bmesh.ops"),
+            "new": MagicMock,
+        })
     elif name == "mathutils":
-        mod.Vector = MagicMock
-        mod.Matrix = MagicMock
-        mod.Euler = MagicMock
-        mod.Quaternion = MagicMock
-        mod.Color = MagicMock
-        mod.noise = _AttrProxy(name="mathutils.noise")
+        mod.__dict__.update({
+            "Vector": MagicMock,
+            "Matrix": MagicMock,
+            "Euler": MagicMock,
+            "Quaternion": MagicMock,
+            "Color": MagicMock,
+            "noise": _AttrProxy(name="mathutils.noise"),
+        })
 
     return mod
 
@@ -98,7 +116,7 @@ for _mod_name in _BLENDER_MODS:
 
 
 @pytest.fixture(autouse=True)
-def strict_provenance():
+def strict_provenance() -> Generator[None, None, None]:
     """Enable stack-bypass detection for all tests.
 
     Sets TerrainMaskStack._STRICT_PROVENANCE=True so that direct channel
@@ -112,8 +130,8 @@ def strict_provenance():
     TerrainMaskStack._STRICT_PROVENANCE = False
 
 
-@pytest.fixture(autouse=True)
-def _reset_pass_registry():
+@pytest.fixture(autouse=True, name="_reset_pass_registry")
+def reset_pass_registry() -> Generator[None, None, None]:
     """Save, clear, and restore TerrainPassController registry around every test.
 
     Clears before each test so registrations from one test don't leak into the
@@ -121,7 +139,7 @@ def _reset_pass_registry():
     tests relying on a pre-populated registry from module-level registration
     still see their passes in subsequent tests.
     """
-    original: dict = {}
+    original: dict[str, PassDefinition] = {}
     try:
         from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
         original = dict(TerrainPassController.PASS_REGISTRY)

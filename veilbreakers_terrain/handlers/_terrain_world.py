@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -38,6 +38,7 @@ from .terrain_advanced import compute_flow_map
 from .terrain_semantics import (
     BBox,
     PassResult,
+    TerrainIntentState,
     TerrainPipelineState,
     ValidationIssue,
 )
@@ -65,9 +66,9 @@ def _sample_single_height(
     **kwargs: Any,
 ) -> float:
     """Evaluate a single deterministic terrain sample without building a full window."""
-    sample = generate_heightmap(
-        1,
-        1,
+    sample = generate_world_heightmap(
+        width=1,
+        height=1,
         scale=scale,
         world_origin_x=world_x,
         world_origin_y=world_y,
@@ -100,6 +101,17 @@ def sample_world_height(
     point query returns the same value as the same point queried inside a
     larger window.
     """
+    if width == 1 and height == 1:
+        return _sample_single_height(
+            world_x,
+            world_y,
+            scale=scale,
+            cell_size=cell_size,
+            seed=seed,
+            terrain_type=terrain_type,
+            normalize=normalize,
+            **kwargs,
+        )
     hmap = generate_world_heightmap(
         width=width,
         height=height,
@@ -506,9 +518,13 @@ def world_region_dimensions(
 # ---------------------------------------------------------------------------
 
 
-def _terrain_type_from_intent(intent) -> str:
+def _terrain_type_from_intent(intent: TerrainIntentState | None) -> str:
     """Resolve terrain_type string from intent.noise_profile."""
-    noise_profile = (intent.noise_profile if intent else None) or "dark_fantasy_default"
+    noise_profile = (
+        str(intent.noise_profile)
+        if intent is not None and intent.noise_profile
+        else "dark_fantasy_default"
+    )
     profile = str(noise_profile).strip().lower()
     terrain_type_map = {
         "dark_fantasy_default": "mountains",
@@ -583,6 +599,7 @@ def pass_generate_low_freq_hmap(
     world_origin_x = float(stack.world_origin_x)
     world_origin_y = float(stack.world_origin_y)
     terrain_type = _terrain_type_from_intent(intent)
+    hints: dict[str, Any] = dict(intent.composition_hints or {})
 
     existing_low = stack.get("hmap_low_freq")
     reused_existing = existing_low is not None
@@ -600,7 +617,6 @@ def pass_generate_low_freq_hmap(
             terrain_type=terrain_type,
             octaves=low_freq_octaves,
         ).astype(np.float32)
-        hints = dict(getattr(intent, "composition_hints", {}) or {}) if intent else {}
         dem_cfg = hints.get("dem_source")
         if dem_cfg:
             from .terrain_dem_import import DEMSource, import_dem_tile
@@ -608,10 +624,11 @@ def pass_generate_low_freq_hmap(
             if isinstance(dem_cfg, DEMSource):
                 dem_source = dem_cfg
             elif isinstance(dem_cfg, dict):
+                dem_map = cast(dict[str, Any], dem_cfg)
                 dem_source = DEMSource(
-                    source_type=str(dem_cfg.get("source_type", "synthetic")),
-                    url_or_path=str(dem_cfg.get("url_or_path", "")),
-                    resolution_m=float(dem_cfg.get("resolution_m", cell_size)),
+                    source_type=str(dem_map.get("source_type", "synthetic")),
+                    url_or_path=str(dem_map.get("url_or_path", "")),
+                    resolution_m=float(dem_map.get("resolution_m", cell_size)),
                 )
             else:
                 dem_source = DEMSource(
@@ -646,7 +663,7 @@ def pass_generate_low_freq_hmap(
             "elapsed_s": elapsed,
             "generated": not reused_existing,
             "reused_existing": reused_existing,
-            "dem_blended": bool((dict(getattr(intent, "composition_hints", {}) or {}) if intent else {}).get("dem_source")),
+            "dem_blended": bool(hints.get("dem_source")),
         },
     )
 
@@ -692,10 +709,8 @@ def pass_generate_high_freq_detail(
         normalize=False,
     ).astype(np.float32)
 
-    # Center high-freq around 0 using this tile's mean, not min/max
-    # normalization. Per-tile normalization changes amplitude at borders and
-    # is explicitly seam-breaking for world-coordinate noise.
-    hmap_high = hmap_high - float(np.mean(hmap_high))
+    # OpenSimplex/Perlin have zero mean by construction — per-tile mean
+    # subtraction varies slightly across tiles and breaks seams.
 
     stack.set("hmap_high_freq", hmap_high, "pass_generate_high_freq_detail")
     _apply_post_height_seams(stack, "hmap_high_freq")
@@ -852,12 +867,12 @@ def pass_macro_world(
                else (intent.seed if intent else 0))
 
     # Determine whether we need to generate height from scratch.
-    needs_generate = stack.height is None or stack.height.size == 0
+    needs_generate = stack.height.size == 0
 
     # Also regenerate if the existing height is a flat/zero placeholder
     # (max - min < epsilon), which indicates state construction filled it
     # with zeros rather than real terrain data.
-    if not needs_generate and stack.height is not None:
+    if not needs_generate:
         h_range = float(stack.height.max()) - float(stack.height.min())
         if h_range < 1e-6:
             needs_generate = True
@@ -874,10 +889,10 @@ def pass_macro_world(
                 try:
                     loaded = np.load(str(src))
                     if isinstance(loaded, np.ndarray):
-                        hmap = loaded.astype(np.float32)
+                        hmap = np.asarray(loaded, dtype=np.float32)
                     else:
                         # .npz archive — expect key "height"
-                        hmap = loaded["height"].astype(np.float32)
+                        hmap = np.asarray(loaded["height"], dtype=np.float32)
                     stack.set("height", hmap, "macro_world")
                 except Exception as exc:
                     issues.append(ValidationIssue(
@@ -929,9 +944,10 @@ def pass_macro_world(
                 "coastal": 60.0,
             }.get(terrain_type, 150.0)
             h_range_raw = float(hmap.max()) - float(hmap.min())
-            if h_range_raw < 1.0 and h_range_raw > 1e-9:
-                hmap = hmap * (_HEIGHT_SCALE / h_range_raw)
-            elif h_range_raw <= 1e-9:
+            if h_range_raw > 1e-9:
+                # Affine remap: [min, max] → [0, _HEIGHT_SCALE]
+                hmap = ((hmap - float(hmap.min())) / h_range_raw * _HEIGHT_SCALE).astype(np.float32)
+            else:
                 # Degenerate flat output — generate minimal relief via seed-based offset
                 rng_fb = np.random.default_rng(seed ^ 0xDEAD)
                 hmap = rng_fb.uniform(0.0, _HEIGHT_SCALE, hmap.shape).astype(np.float32)
@@ -951,7 +967,7 @@ def pass_macro_world(
                 ),
             ))
 
-    if stack.height is None or stack.height.size == 0:
+    if stack.height.size == 0:
         issues.append(
             ValidationIssue(
                 code="MACRO_NO_HEIGHT",
@@ -975,11 +991,49 @@ def pass_macro_world(
         stack.set("hmap_low_freq", stack.height, "macro_world")
 
     # -------------------------------------------------------------------------
+    # FIX-B14-9: Height rescale — applied FIRST, before any channel derivation.
+    #
+    # If ``target_height_range_m`` is provided in composition_hints, rescale
+    # the heightmap so its full range matches the requested value.  This MUST
+    # run before the continental bias and before any downstream channel
+    # derivation (cliff_mask, water_surface_elevation_m, splatmap weights) so
+    # that all those channels are derived from already-rescaled heights.
+    #
+    # Without this ordering guarantee a caller that sets a target vertical
+    # range would get cliff thresholds, water elevations, and splatmap weights
+    # computed against the unscaled (raw noise) heights, then have the height
+    # silently rescaled under them — invalidating every height-dependent mask.
+    # -------------------------------------------------------------------------
+    hints = (intent.composition_hints if intent is not None else {}) or {}
+    _target_range_m = hints.get("target_height_range_m")
+    if _target_range_m is not None:
+        _target_range_m = float(_target_range_m)
+        if _target_range_m > 0.0:
+            _raw = np.asarray(stack.height, dtype=np.float64)
+            _raw_min = float(_raw.min())
+            _raw_max = float(_raw.max())
+            _raw_range = _raw_max - _raw_min
+            if _raw_range > 1e-9:
+                # Rescale: preserve minimum, scale range to target.
+                _rescaled = (_raw - _raw_min) / _raw_range * _target_range_m + _raw_min
+                _rescaled = _rescaled.astype(np.float32)
+                stack.set("height", _rescaled, "macro_world")
+                stack.set("hmap_low_freq", _rescaled, "macro_world")
+                issues.append(ValidationIssue(
+                    code="MACRO_HEIGHT_RESCALED",
+                    severity="info",
+                    message=(
+                        f"Height rescaled: raw_range={_raw_range:.2f}m → "
+                        f"target_range={_target_range_m:.2f}m."
+                    ),
+                ))
+
+    # -------------------------------------------------------------------------
     # Continental plate elevation bias (tectonic-scale macro feature)
     # -------------------------------------------------------------------------
     # Read authoring hints from composition_hints.  All keys are optional —
     # when absent the bias is zero and the heightmap is left unchanged.
-    hints = (intent.composition_hints if intent is not None else {}) or {}
+    # hints already bound in the FIX-B14-9 rescale block above.
     continent_cx_norm = float(hints.get("continent_center_x", 0.5))
     continent_cy_norm = float(hints.get("continent_center_y", 0.5))
     continent_radius_norm = float(hints.get("continent_radius", 0.5))
@@ -1067,6 +1121,23 @@ def pass_structural_masks(
     )
     hero_exclusion = _protected_mask(state, stack.height.shape, "structural_masks")
     stack.set("hero_exclusion", hero_exclusion.astype(np.float32), "structural_masks")
+    slope = stack.slope
+    ridge = stack.ridge
+    basin = stack.basin
+    if slope is None or ridge is None or basin is None:
+        return PassResult(
+            pass_name="structural_masks",
+            status="failed",
+            duration_seconds=time.perf_counter() - t0,
+            consumed_channels=("height",),
+            issues=[
+                ValidationIssue(
+                    code="STRUCTURAL_MASKS_MISSING_OUTPUT",
+                    severity="hard",
+                    message="compute_base_masks did not populate slope, ridge, and basin channels",
+                )
+            ],
+        )
 
     return PassResult(
         pass_name="structural_masks",
@@ -1084,10 +1155,10 @@ def pass_structural_masks(
             "hero_exclusion",
         ),
         metrics={
-            "max_slope_deg": float(np.degrees(stack.slope.max())),
-            "mean_slope_deg": float(np.degrees(stack.slope.mean())),
-            "ridge_fraction": float(stack.ridge.mean()),
-            "basin_count": int(np.unique(stack.basin).size - (1 if 0 in stack.basin else 0)),
+            "max_slope_deg": float(np.degrees(slope.max())),
+            "mean_slope_deg": float(np.degrees(slope.mean())),
+            "ridge_fraction": float(ridge.mean()),
+            "basin_count": int(np.unique(basin).size - (1 if 0 in basin else 0)),
         },
     )
 
@@ -1123,7 +1194,7 @@ def pass_erosion(
             stack.tile_y,
             region,
         )
-    profile = intent.erosion_profile or "temperate"
+    profile = str(intent.erosion_profile or "temperate")
     quality_name = getattr(intent, "quality_profile", None) or "aaa_open_world"
     try:
         from .terrain_quality_profiles import load_quality_profile
@@ -1134,11 +1205,11 @@ def pass_erosion(
 
         quality = load_quality_profile("aaa_open_world")
 
-    # AAA hydraulic erosion: 1024² production tiles keep the established 50k
-    # droplet budget (Olsen 2004 / Gaea reference). Smaller scoped/test tiles
-    # scale by cell count so per-cell droplet density remains sane instead of
-    # running 50k particles over a 32² fixture and timing out the suite.
-    quality_hydraulic = max(1, int(quality.hydraulic_erosion_iterations) * 25)
+    # Actual iteration count — no implicit multiplier. See FIX-B14-10.
+    # Profile values (mobile=250, standard=2500, high_fidelity=12500,
+    # aaa_open_world=50000) are the real droplet counts; tile_scale below
+    # keeps per-cell density sane on sub-1024² fixtures.
+    quality_hydraulic = max(1, int(quality.hydraulic_erosion_iterations))
     quality_thermal = max(0, int(quality.thermal_erosion_iterations))
     cell_count = max(1, int(stack.height.size))
     reference_cell_count = 1024 * 1024
@@ -1149,15 +1220,21 @@ def pass_erosion(
         1,
         min(quality_hydraulic, max(scaled_hydraulic, hydraulic_floor)),
     )
-    climate_params = {
+    climate_params: dict[str, float] = {
         "temperate": dict(iteration_scale=1.0, talus_offset=7.0),
         "arid":      dict(iteration_scale=0.8, talus_offset=12.0),
         "alpine":    dict(iteration_scale=1.2, talus_offset=2.0),
     }.get(profile, dict(iteration_scale=1.0, talus_offset=7.0))
-    profile_params = {
-        "iterations": max(1, int(round(hydraulic_iterations * climate_params["iteration_scale"]))),
-        "thermal_iterations": quality_thermal,
-        "talus_angle": float(quality.talus_angle_degrees) + float(climate_params["talus_offset"]),
+    erosion_iterations = max(
+        1,
+        int(round(hydraulic_iterations * climate_params["iteration_scale"])),
+    )
+    thermal_iterations = int(quality_thermal)
+    talus_angle = float(quality.talus_angle_degrees) + float(climate_params["talus_offset"])
+    profile_params: dict[str, int | float | str] = {
+        "iterations": erosion_iterations,
+        "thermal_iterations": thermal_iterations,
+        "talus_angle": talus_angle,
         "quality_profile": quality.name,
         "hydraulic_iteration_ceiling": quality_hydraulic,
         "hydraulic_reference_cell_count": reference_cell_count,
@@ -1261,7 +1338,7 @@ def pass_erosion(
 
     hydro = apply_hydraulic_erosion_masks(
         h_after_analytical,
-        iterations=profile_params["iterations"],
+        iterations=erosion_iterations,
         seed=seed,
         hero_exclusion=hero_arg,
         erodibility_map=hydraulic_erodibility,
@@ -1269,8 +1346,8 @@ def pass_erosion(
     # --- Thermal erosion (smooths sharp analytical features) ---
     thermal = apply_thermal_erosion_masks(
         hydro.height,
-        iterations=profile_params["thermal_iterations"],
-        talus_angle=profile_params["talus_angle"],
+        iterations=thermal_iterations,
+        talus_angle=talus_angle,
         cell_size=stack.cell_size,
     )
 

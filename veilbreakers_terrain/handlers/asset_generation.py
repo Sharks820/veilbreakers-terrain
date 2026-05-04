@@ -30,6 +30,7 @@ Design notes
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -761,7 +762,7 @@ class AssetGenerationPipeline:
         a deterministic file stem if none was provided.
         """
         full_prompt = apply_preset(prompt, style_preset)
-        stem = output_name or f"{asset_category}_{abs(hash(full_prompt)) % 10**8:08d}"
+        stem = output_name or f"{asset_category}_{hashlib.sha256(full_prompt.encode()).hexdigest()[:8]}"
         request = AssetRequest(
             prompt=full_prompt,
             asset_category=asset_category,

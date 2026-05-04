@@ -15,8 +15,6 @@ contract surface, not a pass registrar.
 
 from __future__ import annotations
 
-import copy
-from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence
 
@@ -24,6 +22,7 @@ from . import (
     terrain_budget_enforcer,
     terrain_determinism_ci,
     terrain_golden_snapshots,
+    terrain_iteration_metrics,
     terrain_performance_report,
     terrain_readability_bands,
     terrain_review_ingest,
@@ -54,7 +53,7 @@ BUNDLE_N_RUNTIME_CONTRACT = {
         "enforce_budget",
         "compute_budget_report",
         "collect_performance_report",
-        "run_visual_qa_checks",
+        "run_data_contract_qa_checks",
         "compute_readability_bands",
         "apply_review_blockers",
     ),
@@ -106,30 +105,6 @@ def _determinism_runs(options: Mapping[str, Any]) -> int:
 def bundle_n_runtime_requests_determinism(intent: Any) -> bool:
     """Return True when the current intent requests determinism replay."""
     return _determinism_runs(_runtime_options(intent)) >= 2
-
-
-@contextmanager
-def _skip_runtime_hooks(state: TerrainPipelineState):
-    """Temporarily disable Bundle N post-pipeline hooks on replay state."""
-    hints = state.intent.composition_hints
-    runtime = hints.get("bundle_n_runtime")
-    created_runtime = not isinstance(runtime, dict)
-    if created_runtime:
-        runtime = {}
-        hints["bundle_n_runtime"] = runtime
-
-    sentinel = object()
-    previous = runtime.get("skip_post_pipeline_hooks", sentinel)
-    runtime["skip_post_pipeline_hooks"] = True
-    try:
-        yield
-    finally:
-        if previous is sentinel:
-            runtime.pop("skip_post_pipeline_hooks", None)
-        else:
-            runtime["skip_post_pipeline_hooks"] = previous
-        if created_runtime and not runtime:
-            hints.pop("bundle_n_runtime", None)
 
 
 def _attach_issues(result: PassResult, issues: Sequence[ValidationIssue]) -> None:
@@ -247,7 +222,7 @@ def register_bundle_n_passes() -> Dict[str, Any]:
     _ = terrain_review_ingest.ingest_review_json
     _ = terrain_review_ingest.pass_apply_review_blockers
     _ = terrain_telemetry_dashboard.record_telemetry
-    _ = terrain_visual_qa.run_checks
+    _ = terrain_visual_qa.run_data_contract_checks
     return get_bundle_n_runtime_contract()
 
 
@@ -279,12 +254,19 @@ def run_bundle_n_post_pipeline_hooks(
     if options.get("skip_post_pipeline_hooks"):
         return {"skipped": True, "reason": "skip_post_pipeline_hooks"}
     quality_profile = str(getattr(controller.state.intent, "quality_profile", "") or "")
-    visual_qa_blocking = bool(
+    data_contract_qa_blocking = bool(
         options.get(
-            "visual_qa_blocking",
-            quality_profile in {"aaa_open_world", "production", "cinematic"},
+            # Accept both the new canonical key and the old key for compat.
+            "data_contract_qa_blocking",
+            options.get(
+                "visual_qa_blocking",
+                quality_profile in {"aaa_open_world", "production", "cinematic"},
+            ),
         )
     )
+    # Backward-compat alias — existing callers that read visual_qa_blocking
+    # from the options dict will still work.
+    visual_qa_blocking = data_contract_qa_blocking
 
     state = controller.state
     stack = state.mask_stack
@@ -330,17 +312,20 @@ def run_bundle_n_post_pipeline_hooks(
         summary["performance_report_error"] = repr(exc)
 
     try:
-        visual_report = terrain_visual_qa.run_checks(stack)
+        visual_report = terrain_visual_qa.run_data_contract_checks(stack)
+        summary["data_contract_qa_report"] = visual_report
+        summary["data_contract_qa_failed_names"] = list(visual_report.get("failed_names", []))
+        # Backward-compat aliases so existing consumers reading the old keys still work.
         summary["visual_qa_report"] = visual_report
-        summary["visual_qa_failed_names"] = list(visual_report.get("failed_names", []))
-        if visual_qa_blocking and not visual_report.get("ok", False):
+        summary["visual_qa_failed_names"] = summary["data_contract_qa_failed_names"]
+        if data_contract_qa_blocking and not visual_report.get("ok", False):
             _attach_issues(
                 last,
                 [
                     ValidationIssue(
-                        code=f"BUNDLE_N_VISUAL_QA_{str(check.get('name', 'unknown')).upper()}",
+                        code=f"BUNDLE_N_DATA_CONTRACT_QA_{str(check.get('name', 'unknown')).upper()}",
                         severity="hard",
-                        message=str(check.get("reason", "visual QA check failed")),
+                        message=str(check.get("reason", "data contract QA check failed")),
                         remediation=(
                             "Fix the named terrain channel contract before "
                             "shipping this tile."
@@ -351,7 +336,8 @@ def run_bundle_n_post_pipeline_hooks(
                 ],
             )
     except Exception as exc:  # noqa: BLE001
-        summary["visual_qa_error"] = repr(exc)
+        summary["data_contract_qa_error"] = repr(exc)
+        summary["visual_qa_error"] = summary["data_contract_qa_error"]  # compat
 
     bands = terrain_readability_bands.compute_readability_bands(stack)
     readability_score = terrain_readability_bands.aggregate_readability_score(bands)
@@ -430,57 +416,61 @@ def run_bundle_n_post_pipeline_hooks(
 
     determinism_runs = _determinism_runs(options)
     if determinism_runs >= 2:
-        if pre_pipeline_state is None:
-            summary["determinism_skipped_reason"] = "missing_pre_pipeline_state"
-        else:
-            try:
-                from .terrain_pipeline import TerrainPassController
-
-                replay_state = copy.deepcopy(pre_pipeline_state)
-                with _skip_runtime_hooks(replay_state):
-                    replay_controller = TerrainPassController(
-                        replay_state,
-                        checkpoint_dir=controller.checkpoint_dir,
-                    )
-                    report = terrain_determinism_ci.run_determinism_check(
-                        replay_controller,
-                        seed=int(replay_state.intent.seed),
-                        runs=determinism_runs,
-                        pass_sequence=tuple(executed_passes),
-                    )
-                summary["deterministic"] = bool(report.get("deterministic", False))
-                summary["determinism_run_count"] = int(report.get("run_count", 0))
-                summary["determinism_suspect_passes"] = list(
-                    report.get("suspect_passes", [])
+        try:
+            seed = int(state.intent.seed)
+            report = terrain_determinism_ci.run_determinism_check_subprocess(
+                seed=seed,
+                runs=determinism_runs,
+            )
+            summary["deterministic"] = bool(report.get("deterministic", False))
+            summary["determinism_run_count"] = int(report.get("run_count", 0))
+            summary["determinism_requires_subprocess"] = True
+            if not report.get("deterministic", False):
+                _attach_issues(
+                    last,
+                    [
+                        ValidationIssue(
+                            code="BUNDLE_N_DETERMINISM_FAILED",
+                            severity="hard",
+                            message=(
+                                "Bundle N subprocess determinism check diverged — "
+                                "tile outputs differ across isolated interpreter runs"
+                            ),
+                            remediation=(
+                                "Audit all passes for nondeterministic state: "
+                                "unseeded RNG, wall-clock inputs, module-level globals."
+                            ),
+                        )
+                    ],
                 )
-                if not report.get("deterministic", False):
-                    suspects = [
-                        pass_name
-                        for _, pass_name in report.get("suspect_passes", [])
-                    ]
-                    _attach_issues(
-                        last,
-                        [
-                            ValidationIssue(
-                                code="BUNDLE_N_DETERMINISM_FAILED",
-                                severity="hard",
-                                message=(
-                                    "Bundle N determinism replay diverged"
-                                    + (
-                                        f"; suspect passes={suspects[:3]}"
-                                        if suspects
-                                        else ""
-                                    )
-                                ),
-                                remediation=(
-                                    "Audit the suspect passes for nondeterministic "
-                                    "state, wall-clock inputs, or unseeded RNG use."
-                                ),
-                            )
-                        ],
-                    )
-            except Exception as exc:  # noqa: BLE001
-                summary["determinism_error"] = repr(exc)
+        except Exception as exc:  # noqa: BLE001
+            summary["determinism_error"] = repr(exc)
+
+    # FIX-B14-P1-40: wire IterationMetrics into post-pipeline hooks so each
+    # production run emits a summary_report.json alongside telemetry.
+    # Populate metrics from the results sequence (pass name + duration) and
+    # write to output_dir / "summary_report.json" when output_dir is configured.
+    try:
+        metrics = terrain_iteration_metrics.IterationMetrics()
+        for result in results:
+            channels_written = list(getattr(result, "channels_written", None) or [])
+            metrics.record(
+                result.pass_name,
+                float(getattr(result, "duration_seconds", 0.0) or 0.0),
+                cached=bool(getattr(result, "from_cache", False)),
+                channels_written=channels_written or None,
+            )
+        summary["iteration_metrics"] = metrics.summary_report()
+        output_dir_raw = options.get("output_dir") or (
+            str(Path(telemetry_path).parent) if telemetry_path else None
+        )
+        if output_dir_raw:
+            report_path = Path(output_dir_raw) / "summary_report.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(metrics.to_json(), encoding="utf-8")
+            summary["iteration_metrics_path"] = str(report_path)
+    except Exception as exc:  # noqa: BLE001
+        summary["iteration_metrics_error"] = repr(exc)
 
     _merge_bundle_n_metrics(last, summary)
     return summary

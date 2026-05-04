@@ -7,9 +7,18 @@ the geology validator. Pure numpy — no Blender dependency.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import StratigraphyLayer
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +31,7 @@ def _build_stack(
     heights: str = "ramp",
     tile_x: int = 0,
     tile_y: int = 0,
-):
+) -> TerrainMaskStack:
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     H = W = tile_size
@@ -54,7 +63,12 @@ def _build_stack(
     )
 
 
-def _build_state(stack, *, seed: int = 42, hints=None):
+def _build_state(
+    stack: TerrainMaskStack,
+    *,
+    seed: int = 42,
+    hints: Mapping[str, object] | None = None,
+) -> TerrainPipelineState:
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -70,6 +84,11 @@ def _build_state(stack, *, seed: int = 42, hints=None):
         composition_hints=dict(hints or {}),
     )
     return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+
+def _layer_id(layer: StratigraphyLayer | None) -> str:
+    assert layer is not None
+    return layer.layer_id
 
 
 # ---------------------------------------------------------------------------
@@ -100,11 +119,11 @@ def test_stratigraphy_stack_layer_for_elevation():
             StratigraphyLayer("c", 0.5, 10.0),
         ],
     )
-    assert s.layer_for_elevation(-5.0).layer_id == "a"
-    assert s.layer_for_elevation(5.0).layer_id == "a"
-    assert s.layer_for_elevation(15.0).layer_id == "b"
-    assert s.layer_for_elevation(25.0).layer_id == "c"
-    assert s.layer_for_elevation(1000.0).layer_id == "c"
+    assert _layer_id(s.layer_for_elevation(-5.0)) == "a"
+    assert _layer_id(s.layer_for_elevation(5.0)) == "a"
+    assert _layer_id(s.layer_for_elevation(15.0)) == "b"
+    assert _layer_id(s.layer_for_elevation(25.0)) == "c"
+    assert _layer_id(s.layer_for_elevation(1000.0)) == "c"
     assert s.total_thickness() == 30.0
 
 
@@ -208,7 +227,11 @@ def test_pass_stratigraphy_rng_is_repeatable_and_tile_scoped():
     pass_stratigraphy(_build_state(stack_c, seed=123, hints=hints), None)
 
     np.testing.assert_allclose(stack_a.height, stack_b.height)
-    np.testing.assert_allclose(stack_a.intrusion_mask, stack_b.intrusion_mask)
+    intrusion_a = stack_a.intrusion_mask
+    intrusion_b = stack_b.intrusion_mask
+    assert intrusion_a is not None
+    assert intrusion_b is not None
+    np.testing.assert_allclose(intrusion_a, intrusion_b)
     assert not np.allclose(stack_a.height, stack_c.height)
 
 
@@ -298,7 +321,9 @@ def test_validate_strata_consistency_rejects_negative_depths():
     assert any(issue.code == "STRATA_DEPTH_SIGN_INVALID" for issue in issues)
 
 
-def test_pass_stratigraphy_includes_strata_validator_issues(monkeypatch):
+def test_pass_stratigraphy_includes_strata_validator_issues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from veilbreakers_terrain.handlers import terrain_geology_validator
     from veilbreakers_terrain.handlers.terrain_semantics import ValidationIssue
     from veilbreakers_terrain.handlers.terrain_stratigraphy import pass_stratigraphy
@@ -308,10 +333,15 @@ def test_pass_stratigraphy_includes_strata_validator_issues(monkeypatch):
         severity="soft",
         message="validator called",
     )
+
+    def fake_validate_strata_consistency(stack: TerrainMaskStack) -> list[ValidationIssue]:
+        assert stack.tile_size > 0
+        return [sentinel]
+
     monkeypatch.setattr(
         terrain_geology_validator,
         "validate_strata_consistency",
-        lambda stack: [sentinel],
+        fake_validate_strata_consistency,
     )
     stack = _build_stack(heights="ramp")
     state = _build_state(stack, hints={"intrusions_enabled": False, "fold_enabled": False})
@@ -384,7 +414,10 @@ def test_pass_glacial_defaults_snow_line_to_eighty_percent_of_max_height():
 
     result = pass_glacial(state, None)
 
-    assert result.metrics["snow_line_altitude_m"] == pytest.approx(float(stack.height.max()) * 0.8)
+    assert math.isclose(
+        float(result.metrics["snow_line_altitude_m"]),
+        float(stack.height.max()) * 0.8,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +639,7 @@ def test_coastline_uses_water_surface_elevation_as_mean_sea_level():
 
     result = pass_coastline(state, None)
 
-    assert result.metrics["sea_level_m"] == pytest.approx(40.0)
+    assert math.isclose(float(result.metrics["sea_level_m"]), 40.0)
     assert stack.tidal is not None
 
 

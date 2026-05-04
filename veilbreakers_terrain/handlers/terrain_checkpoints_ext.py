@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Set, Tuple
 
 _log = logging.getLogger(__name__)
 
-from .terrain_quality_profiles import TerrainQualityProfile
+from .terrain_quality_profiles import TerrainQualityProfile  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

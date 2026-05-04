@@ -22,13 +22,15 @@ import time
 import warnings
 from typing import Any, Optional
 
+np: Any = None
 try:
-    import numpy as np
-    _NUMPY_AVAILABLE = True
+    import numpy as _np
+    np = _np
 except ImportError:  # pragma: no cover
-    _NUMPY_AVAILABLE = False
+    pass
+_NUMPY_AVAILABLE = np is not None
 
-from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState
+from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -325,21 +327,22 @@ def compute_atmospheric_placements(
             stacklevel=2,
         )
     elif _NUMPY_AVAILABLE:
-        heightmap = np.asarray(heightmap, dtype=np.float64)
-        if heightmap.ndim != 2 or 0 in heightmap.shape:
+        heightmap_arr: Any = np.asarray(heightmap, dtype=np.float64)
+        if heightmap_arr.ndim != 2 or 0 in heightmap_arr.shape:
             raise ValueError("heightmap must be a non-empty 2-D array")
 
         def _coerce_mask(mask: "Optional[Any]", name: str) -> "Optional[Any]":
             if mask is None:
                 return None
             arr = np.asarray(mask, dtype=np.float64)
-            if arr.shape != heightmap.shape:
-                raise ValueError(f"{name} shape {arr.shape} does not match heightmap shape {heightmap.shape}")
+            if arr.shape != heightmap_arr.shape:
+                raise ValueError(f"{name} shape {arr.shape} does not match heightmap shape {heightmap_arr.shape}")
             return arr
 
         ridge_mask = _coerce_mask(ridge_mask, "ridge_mask")
         water_mask = _coerce_mask(water_mask, "water_mask")
         canopy_mask = _coerce_mask(canopy_mask, "canopy_mask")
+        heightmap = heightmap_arr
 
     rng = random.Random(seed)
     rules = BIOME_ATMOSPHERE_RULES.get(biome_name, _DEFAULT_ATMOSPHERE)
@@ -356,9 +359,14 @@ def compute_atmospheric_placements(
     _has_numpy = _NUMPY_AVAILABLE and heightmap is not None
 
     # Derived terrain analysis arrays (populated lazily inside _has_numpy block)
-    _notch_mask: "Optional[Any]" = None        # ridge notch / saddle cells
-    _drainage_acc: "Optional[Any]" = None      # D8 flow accumulation (valley bottoms)
-    _windward_mask: "Optional[Any]" = None     # cells on windward slope
+    hm: Any = None
+    hm_norm: Any = None
+    depression_mask: Any = None
+    rows = 0
+    cols = 0
+    _notch_mask: Any = None        # ridge notch / saddle cells
+    _drainage_acc: Any = None      # D8 flow accumulation (valley bottoms)
+    _windward_mask: Any = None     # cells on windward slope
 
     if _has_numpy:
         hm = heightmap  # shape (rows, cols)
@@ -539,7 +547,7 @@ def compute_atmospheric_placements(
         vol_name: str,
     ) -> tuple[float, float, float, float]:
         """Return (px, py, pz, terrain_z) sampled from prob_map."""
-        _, boost, height_offset = _AFFINITY.get(vol_name, ("none", 0.0, 0.0))
+        _, _, height_offset = _AFFINITY.get(vol_name, ("none", 0.0, 0.0))
 
         if prob_map is not None:
             flat = prob_map.ravel()
@@ -1066,7 +1074,7 @@ def pass_atmospheric_volumes(
         density_scale=density_scale,
         heightmap=stack.height,
         ridge_mask=stack.get("ridge"),
-        water_mask=stack.get("water_surface_mask") if stack.get("water_surface_mask") is not None else stack.get("water_surface"),
+        water_mask=stack.get("water_surface_mask"),
         canopy_mask=stack.get("canopy_density"),
         cell_size=float(stack.cell_size),
         weather_hints=weather_hints,
@@ -1096,7 +1104,7 @@ def register_atmospheric_volumes_pass() -> None:
             name="pass_atmospheric_volumes",
             func=pass_atmospheric_volumes,
             requires_channels=("height",),
-            optional_channels=("ridge", "water_surface", "canopy_density"),
+            optional_channels=("ridge", "water_surface_mask", "canopy_density"),
             produces_channels=("atmospheric_volumes",),
             seed_namespace="pass_atmospheric_volumes",
             requires_scene_read=False,

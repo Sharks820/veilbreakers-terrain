@@ -5,8 +5,10 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from typing import TypeAlias
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from veilbreakers_terrain.handlers.terrain_visual_qa import (
@@ -23,8 +25,14 @@ _SCENARIO_FILES = list(_GOLDEN_SCENARIOS_DIR.glob("*.json"))
 
 _HAS_PILLOW = importlib.util.find_spec("PIL") is not None
 
+FloatArray: TypeAlias = NDArray[np.float32]
+UInt8Array: TypeAlias = NDArray[np.uint8]
+UInt16Array: TypeAlias = NDArray[np.uint16]
+ChannelArray: TypeAlias = FloatArray | UInt8Array | UInt16Array
+ChannelValue: TypeAlias = ChannelArray | None
 
-def _write_rgb_png(path: Path, arr: np.ndarray) -> None:
+
+def _write_rgb_png(path: Path, arr: FloatArray) -> None:
     from PIL import Image
     img = Image.fromarray((arr * 255).clip(0, 255).astype(np.uint8), mode="RGB")
     img.save(str(path))
@@ -35,7 +43,7 @@ def _write_rgb_png(path: Path, arr: np.ndarray) -> None:
 # ---------------------------------------------------------------------------
 
 class TestCompareRenderToGolden:
-    def test_golden_absent_blocks_by_default(self, tmp_path):
+    def test_golden_absent_blocks_by_default(self, tmp_path: Path) -> None:
         render = tmp_path / "render.png"
         golden = tmp_path / "golden_nonexistent.png"
         if _HAS_PILLOW:
@@ -44,7 +52,7 @@ class TestCompareRenderToGolden:
         assert result["ok"] is False
         assert result["reason"] == "golden_absent"
 
-    def test_golden_absent_can_be_allowed_for_seed_runs(self, tmp_path):
+    def test_golden_absent_can_be_allowed_for_seed_runs(self, tmp_path: Path) -> None:
         render = tmp_path / "render.png"
         golden = tmp_path / "golden_nonexistent.png"
         if _HAS_PILLOW:
@@ -57,7 +65,7 @@ class TestCompareRenderToGolden:
         assert result["ok"] is True
         assert result["reason"] == "golden_absent"
 
-    def test_render_absent_returns_ok_false(self, tmp_path):
+    def test_render_absent_returns_ok_false(self, tmp_path: Path) -> None:
         render = tmp_path / "render_nonexistent.png"
         golden = tmp_path / "golden.png"
         if _HAS_PILLOW:
@@ -68,7 +76,7 @@ class TestCompareRenderToGolden:
         assert result["ok"] is False
         assert result["reason"] == "render_absent"
 
-    def test_identical_images_pass(self, tmp_path):
+    def test_identical_images_pass(self, tmp_path: Path) -> None:
         img = np.random.default_rng(0).random((64, 64, 3)).astype(np.float32)
         render = tmp_path / "render.png"
         golden = tmp_path / "golden.png"
@@ -79,7 +87,7 @@ class TestCompareRenderToGolden:
         assert result["ssim"] is not None
         assert result["ssim"] > 0.95
 
-    def test_completely_different_images_fail(self, tmp_path):
+    def test_completely_different_images_fail(self, tmp_path: Path) -> None:
         render = tmp_path / "render.png"
         golden = tmp_path / "golden.png"
         ramp = np.linspace(0.0, 1.0, 64, dtype=np.float32)
@@ -93,7 +101,7 @@ class TestCompareRenderToGolden:
         assert result["ssim"] is not None
         assert result["ssim"] < 0.95
 
-    def test_identical_blank_images_fail_information_floor(self, tmp_path):
+    def test_identical_blank_images_fail_information_floor(self, tmp_path: Path) -> None:
         render = tmp_path / "render.png"
         golden = tmp_path / "golden.png"
         blank = np.zeros((64, 64, 3), dtype=np.float32)
@@ -103,10 +111,14 @@ class TestCompareRenderToGolden:
         assert result["ok"] is False
         assert result["reason"].startswith("low_information_")
 
-    def test_slightly_noisy_image_passes_low_threshold(self, tmp_path):
+    def test_slightly_noisy_image_passes_low_threshold(self, tmp_path: Path) -> None:
         rng = np.random.default_rng(42)
         base = rng.random((64, 64, 3)).astype(np.float32)
-        noisy = np.clip(base + rng.random((64, 64, 3)).astype(np.float32) * 0.02, 0, 1)
+        noisy = np.clip(
+            base + rng.random((64, 64, 3)).astype(np.float32) * 0.02,
+            0,
+            1,
+        ).astype(np.float32)
         render = tmp_path / "render.png"
         golden = tmp_path / "golden.png"
         _write_rgb_png(render, noisy)
@@ -114,20 +126,20 @@ class TestCompareRenderToGolden:
         result = compare_render_to_golden(str(render), str(golden), ssim_threshold=0.80)
         assert result["ok"] is True
 
-    def test_result_always_has_required_keys(self, tmp_path):
+    def test_result_always_has_required_keys(self, tmp_path: Path) -> None:
         render = tmp_path / "r.png"
         golden = tmp_path / "g.png"
         result = compare_render_to_golden(str(render), str(golden))
         for key in ("ok", "ssim", "threshold", "render_path", "golden_path", "reason"):
             assert key in result, f"Missing key: {key}"
 
-    def test_threshold_preserved_in_result(self, tmp_path):
+    def test_threshold_preserved_in_result(self, tmp_path: Path) -> None:
         render = tmp_path / "r.png"
         golden = tmp_path / "g.png"
         result = compare_render_to_golden(str(render), str(golden), ssim_threshold=0.80)
         assert result["threshold"] == 0.80
 
-    def test_handle_wrapper_never_raises(self, tmp_path):
+    def test_handle_wrapper_never_raises(self, tmp_path: Path) -> None:
         result = handle_visual_qa_compare_render(
             str(tmp_path / "bad.png"),
             str(tmp_path / "also_bad.png"),
@@ -135,7 +147,7 @@ class TestCompareRenderToGolden:
         assert isinstance(result, dict)
         assert "ok" in result
 
-    def test_size_mismatch_handled(self, tmp_path):
+    def test_size_mismatch_handled(self, tmp_path: Path) -> None:
         render = tmp_path / "render.png"
         golden = tmp_path / "golden.png"
         rng = np.random.default_rng(3)
@@ -160,58 +172,58 @@ REQUIRED_INTENT_KEYS = {"seed", "region_bounds", "tile_size", "cell_size"}
 
 @pytest.mark.parametrize("scenario_file", _SCENARIO_FILES, ids=[f.stem for f in _SCENARIO_FILES])
 class TestGoldenScenarioFixtures:
-    def test_file_is_valid_json(self, scenario_file):
+    def test_file_is_valid_json(self, scenario_file: Path) -> None:
         text = scenario_file.read_text(encoding="utf-8")
         data = json.loads(text)
         assert isinstance(data, dict)
 
-    def test_required_top_level_keys_present(self, scenario_file):
+    def test_required_top_level_keys_present(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         missing = REQUIRED_FIXTURE_KEYS - set(data.keys())
         assert not missing, f"{scenario_file.name} missing keys: {missing}"
 
-    def test_intent_has_required_fields(self, scenario_file):
+    def test_intent_has_required_fields(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         intent = data.get("intent", {})
         missing = REQUIRED_INTENT_KEYS - set(intent.keys())
         assert not missing, f"{scenario_file.name} intent missing: {missing}"
 
-    def test_seed_is_int(self, scenario_file):
+    def test_seed_is_int(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         assert isinstance(data["intent"]["seed"], int)
 
-    def test_region_bounds_is_four_numbers(self, scenario_file):
+    def test_region_bounds_is_four_numbers(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         bounds = data["intent"]["region_bounds"]
         assert isinstance(bounds, list) and len(bounds) == 4
         assert all(isinstance(v, (int, float)) for v in bounds)
 
-    def test_required_channels_is_non_empty_list(self, scenario_file):
+    def test_required_channels_is_non_empty_list(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         channels = data.get("required_channels", [])
         assert isinstance(channels, list) and len(channels) >= 1
 
-    def test_required_channels_are_strings(self, scenario_file):
+    def test_required_channels_are_strings(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         for ch in data.get("required_channels", []):
             assert isinstance(ch, str) and ch, f"Channel must be non-empty string: {ch!r}"
 
-    def test_channel_assertions_is_dict(self, scenario_file):
+    def test_channel_assertions_is_dict(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         assert isinstance(data.get("channel_assertions"), dict)
 
-    def test_semantic_assertions_is_non_empty_list(self, scenario_file):
+    def test_semantic_assertions_is_non_empty_list(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         assertions = data.get("semantic_assertions")
         assert isinstance(assertions, list) and assertions, (
             f"{scenario_file.name} must execute semantic assertions, not just schema checks"
         )
 
-    def test_version_is_positive_int(self, scenario_file):
+    def test_version_is_positive_int(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         assert isinstance(data["_version"], int) and data["_version"] >= 1
 
-    def test_scenario_name_matches_filename(self, scenario_file):
+    def test_scenario_name_matches_filename(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         assert data["_scenario"] == scenario_file.stem, (
             f"_scenario '{data['_scenario']}' does not match filename '{scenario_file.stem}'"
@@ -220,7 +232,7 @@ class TestGoldenScenarioFixtures:
 
 @pytest.mark.parametrize("scenario_file", _SCENARIO_FILES, ids=[f.stem for f in _SCENARIO_FILES])
 class TestGoldenScenarioSemantics:
-    def test_json_scenario_executes_against_rich_semantic_stack(self, scenario_file):
+    def test_json_scenario_executes_against_rich_semantic_stack(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         result = run_scenario_goldens(
             _rich_semantic_golden_stack(),
@@ -229,7 +241,7 @@ class TestGoldenScenarioSemantics:
         outcome = result["results"][data["_scenario"]]
         assert outcome["ok"] is True, outcome
 
-    def test_json_scenario_fails_when_required_channel_missing(self, scenario_file):
+    def test_json_scenario_fails_when_required_channel_missing(self, scenario_file: Path) -> None:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         stack = _rich_semantic_golden_stack()
         required = data["required_channels"][0]
@@ -242,7 +254,7 @@ class TestGoldenScenarioSemantics:
 
 
 class TestGoldenScenarioCrossChannelSemantics:
-    def test_deep_lake_rejects_depth_outside_water_mask(self):
+    def test_deep_lake_rejects_depth_outside_water_mask(self) -> None:
         data = json.loads((_GOLDEN_SCENARIOS_DIR / "deep_lake_basin.json").read_text(encoding="utf-8"))
         stack = _rich_semantic_golden_stack()
         bad_depth = np.full_like(stack.water_depth_m, 50.0)
@@ -252,7 +264,7 @@ class TestGoldenScenarioCrossChannelSemantics:
         assert outcome["ok"] is False
         assert any("depth_requires_water_mask" in issue for issue in outcome["issues"])
 
-    def test_cliff_talus_rejects_disconnected_talus(self):
+    def test_cliff_talus_rejects_disconnected_talus(self) -> None:
         data = json.loads((_GOLDEN_SCENARIOS_DIR / "cliff_talus_apron.json").read_text(encoding="utf-8"))
         stack = _rich_semantic_golden_stack()
         talus = np.zeros_like(stack.talus_mask)
@@ -263,7 +275,7 @@ class TestGoldenScenarioCrossChannelSemantics:
         assert outcome["ok"] is False
         assert any("talus_near_cliff" in issue for issue in outcome["issues"])
 
-    def test_waterfall_rejects_foam_not_near_water(self):
+    def test_waterfall_rejects_foam_not_near_water(self) -> None:
         data = json.loads((_GOLDEN_SCENARIOS_DIR / "waterfall_plunge_pool.json").read_text(encoding="utf-8"))
         stack = _rich_semantic_golden_stack()
         foam = np.zeros_like(stack.foam)
@@ -279,9 +291,9 @@ class TestGoldenScenarioCrossChannelSemantics:
 # V-1: validate_channel_manifest
 # ---------------------------------------------------------------------------
 
-def _make_stack(**channels) -> TerrainMaskStack:
+def _make_stack(**channels: ChannelValue) -> TerrainMaskStack:
     """Build a production TerrainMaskStack with provided channel arrays."""
-    height = np.asarray(
+    height: ChannelArray = np.asarray(
         channels.pop("height", np.zeros((1, 3), dtype=np.float32))
     )
     stack = TerrainMaskStack(
@@ -302,15 +314,7 @@ def _make_stack(**channels) -> TerrainMaskStack:
             object.__setattr__(stack, channel, value)
     return stack
 
-
-def _force_channel(stack: TerrainMaskStack, channel: str, value):
-    object.__setattr__(stack, channel, value)
-    if value is not None:
-        stack.populated_by_pass[channel] = "test_invalid_fixture"
-    return value
-
-
-def _full_valid_stack():
+def _full_valid_stack() -> TerrainMaskStack:
     """Return a TerrainMaskStack with all REQUIRED_STACK_CHANNELS in-range."""
     splat = np.zeros((1, 3, 4), dtype=np.float32)
     splat[..., 0] = 1.0
@@ -399,7 +403,7 @@ def _rich_semantic_golden_stack() -> TerrainMaskStack:
 
 class TestValidateChannelManifest:
 
-    def test_valid_stack_passes(self):
+    def test_valid_stack_passes(self) -> None:
         """A stack with all required channels in-range returns valid=True."""
         result = validate_channel_manifest(_full_valid_stack())
         assert result["valid"] is True
@@ -407,7 +411,7 @@ class TestValidateChannelManifest:
         assert result["out_of_range"] == []
         assert result["issues"] == []
 
-    def test_missing_channel_detected(self):
+    def test_missing_channel_detected(self) -> None:
         """A stack missing one channel reports it in 'missing' and 'issues'."""
         stack = _full_valid_stack()
         del stack.cliff_mask  # remove attribute entirely
@@ -416,7 +420,7 @@ class TestValidateChannelManifest:
         assert "cliff_mask" in result["missing"]
         assert any("missing:cliff_mask" in s for s in result["issues"])
 
-    def test_out_of_range_value_detected(self):
+    def test_out_of_range_value_detected(self) -> None:
         """A channel whose max exceeds the declared bound is reported in out_of_range."""
         stack = _full_valid_stack()
         # height max is 9000.0; push well beyond it
@@ -426,7 +430,7 @@ class TestValidateChannelManifest:
         assert "height" in result["out_of_range"]
         assert any("out_of_range:height" in s for s in result["issues"])
 
-    def test_custom_required_channels_overrides_default(self):
+    def test_custom_required_channels_overrides_default(self) -> None:
         """Passing a custom spec only validates the channels in that spec."""
         custom_spec = {
             "heightmap": ("float", (0.0, 9000.0)),
@@ -438,7 +442,7 @@ class TestValidateChannelManifest:
         assert result["valid"] is True
         assert result["missing"] == []
 
-    def test_result_always_has_required_keys(self):
+    def test_result_always_has_required_keys(self) -> None:
         """The return dict always contains the four documented keys."""
         stack = _full_valid_stack()
         for channel in REQUIRED_STACK_CHANNELS:
@@ -447,12 +451,12 @@ class TestValidateChannelManifest:
         for key in ("valid", "missing", "out_of_range", "issues"):
             assert key in result, f"Missing key: {key!r}"
 
-    def test_valid_is_bool(self):
+    def test_valid_is_bool(self) -> None:
         """'valid' key is a strict bool, not just truthy."""
         result = validate_channel_manifest(_full_valid_stack())
         assert isinstance(result["valid"], bool)
 
-    def test_multiple_missing_channels_all_reported(self):
+    def test_multiple_missing_channels_all_reported(self) -> None:
         """Every missing channel appears in both 'missing' and 'issues'."""
         stack = _full_valid_stack()
         for channel in REQUIRED_STACK_CHANNELS:

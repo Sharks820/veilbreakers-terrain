@@ -5,19 +5,19 @@ Output CSV: `output/spreadsheet/TEST_GUARDRAIL_AUDIT_2026_04_19.csv`
 
 ## Totals
 
-- Test files scanned: `149`
-- Collected tests mapped to files: `3797`
+- Test files scanned: `161`
+- Collected tests mapped to files: `3960`
 - Files using legacy `blender_addon` alias: `0`
 - Files with source-introspection checks: `42`
 - Files with registry-surface checks: `9`
-- Files with skip/xfail gates: `5`
+- Files with skip/xfail gates: `6`
 
 Label distribution:
 - `broad_fast_logic`: `1`
-- `live_guardrail`: `21`
+- `live_guardrail`: `22`
 - `live_guardrail_expensive`: `1`
-- `logic_guardrail`: `64`
-- `mock_plumbing`: `21`
+- `logic_guardrail`: `72`
+- `mock_plumbing`: `24`
 - `registry_surface`: `3`
 - `soft_guardrail`: `3`
 - `structure_only`: `35`

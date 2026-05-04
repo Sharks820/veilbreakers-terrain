@@ -27,11 +27,18 @@ re-composable bands + a domain-warp field:
 
 from __future__ import annotations
 
+import importlib
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, Tuple
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 import numpy as np
+import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from .terrain_semantics import BBox, PassResult, TerrainPipelineState
 
 # Wrap (never mutate) the existing noise backend.
 from ._terrain_noise import (
@@ -44,6 +51,45 @@ from ._terrain_noise import (
     generate_heightmap,  # re-exported for back-compat / tests
 )
 
+FloatArray: TypeAlias = npt.NDArray[np.float64]
+BoolArray: TypeAlias = npt.NDArray[np.bool_]
+IntArray: TypeAlias = npt.NDArray[np.intp]
+BandWeights: TypeAlias = tuple[float, float, float, float]
+StrataParams: TypeAlias = tuple[int, float, float, float, float]
+
+
+class _DistanceTransformFn(Protocol):
+    def __call__(self, input: BoolArray) -> FloatArray: ...
+
+
+class _AffineTransformFn(Protocol):
+    def __call__(
+        self,
+        input: FloatArray,
+        matrix: FloatArray,
+        *,
+        offset: Sequence[float],
+        mode: str,
+    ) -> FloatArray: ...
+
+
+class _GaussianFilterFn(Protocol):
+    def __call__(
+        self,
+        input: FloatArray,
+        *,
+        sigma: Sequence[float],
+        mode: str,
+    ) -> FloatArray: ...
+
+
+def _scipy_ndimage() -> ModuleType:
+    return importlib.import_module("scipy.ndimage")
+
+
+def _offset_pair(offset: FloatArray) -> tuple[float, float]:
+    return (float(offset[0]), float(offset[1]))
+
 # ---------------------------------------------------------------------------
 # Band weight presets
 # ---------------------------------------------------------------------------
@@ -51,7 +97,7 @@ from ._terrain_noise import (
 # Tuple order is (macro, meso, micro, strata). Weights sum to ~1.0 but
 # ``compose_banded_heightmap`` does not require that; the composite is the
 # literal weighted sum so callers can over- or under-drive bands freely.
-BAND_WEIGHTS: Dict[str, Tuple[float, float, float, float]] = {
+BAND_WEIGHTS: dict[str, BandWeights] = {
     "dark_fantasy_default": (0.55, 0.28, 0.12, 0.05),
     "mountains":           (0.62, 0.24, 0.10, 0.04),
     "plains":              (0.30, 0.45, 0.15, 0.10),
@@ -61,7 +107,7 @@ BAND_WEIGHTS: Dict[str, Tuple[float, float, float, float]] = {
 # Period (in world meters) of the lowest-frequency octave of each band.
 # The noise backend samples coords as ``coord / scale`` so a "period" p
 # in meters corresponds to a scale of p for the first octave.
-_BAND_PERIOD_M: Dict[str, float] = {
+_BAND_PERIOD_M: dict[str, float] = {
     "macro": 1000.0,
     "meso": 150.0,
     "micro": 30.0,
@@ -70,7 +116,7 @@ _BAND_PERIOD_M: Dict[str, float] = {
 
 # Per-band seed offsets: combined with the caller seed so bands are
 # independent yet deterministic.
-_BAND_SEED_OFFSETS: Dict[str, int] = {
+_BAND_SEED_OFFSETS: dict[str, int] = {
     "macro": 0,
     "meso": 104_729,
     "micro": 15_485_863,
@@ -94,21 +140,22 @@ class BandedHeightmap:
     scale in meters is set by ``metadata['vertical_scale_m']``.
     """
 
-    macro_band: np.ndarray
-    meso_band: np.ndarray
-    micro_band: np.ndarray
-    strata_band: np.ndarray
-    warp_band: np.ndarray
-    composite: np.ndarray
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    macro_band: FloatArray
+    meso_band: FloatArray
+    micro_band: FloatArray
+    strata_band: FloatArray
+    warp_band: FloatArray
+    composite: FloatArray
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
 
     @property
-    def shape(self) -> Tuple[int, int]:
-        return self.composite.shape
+    def shape(self) -> tuple[int, int]:
+        height, width = self.composite.shape
+        return int(height), int(width)
 
-    def band(self, name: str) -> np.ndarray:
+    def band(self, name: str) -> FloatArray:
         try:
-            return getattr(self, f"{name}_band")
+            return cast(FloatArray, getattr(self, f"{name}_band"))
         except AttributeError as exc:
             raise KeyError(f"unknown band '{name}'") from exc
 
@@ -125,7 +172,7 @@ def _coord_grids(
     world_origin_y: float,
     cell_size: float,
     period_m: float,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[FloatArray, FloatArray]:
     """Build world-meter coord grids normalized to a band's sampling period.
 
     Rows correspond to world-Y, columns to world-X. ``xs`` and ``ys``
@@ -135,18 +182,18 @@ def _coord_grids(
     xs_1d = (np.arange(width, dtype=np.float64) * cell_size + world_origin_x) / period_m
     ys_1d = (np.arange(height, dtype=np.float64) * cell_size + world_origin_y) / period_m
     xs, ys = np.meshgrid(xs_1d, ys_1d)
-    return xs, ys
+    return cast(FloatArray, xs), cast(FloatArray, ys)
 
 
 def _fbm_array(
-    xs: np.ndarray,
-    ys: np.ndarray,
+    xs: FloatArray,
+    ys: FloatArray,
     *,
     octaves: int,
     persistence: float = _FBM_GAIN,
     lacunarity: float = _FBM_LACUNARITY,
     seed: int,
-) -> np.ndarray:
+) -> FloatArray:
     """Vectorized fBm using AAA-spec spectral synthesis (H=0.85 Hurst exponent).
 
     Default persistence = lacunarity^(-H) = 2.0^(-0.85) ≈ 0.5545, not 0.5.
@@ -170,7 +217,7 @@ def _fbm_array(
     return result
 
 
-def _band_sdf_normalize(arr: np.ndarray) -> np.ndarray:
+def _band_sdf_normalize(arr: FloatArray) -> FloatArray:
     """Normalize a band using signed distance from its median contour line.
 
     Replaces simple std-normalization with SDF-based contour extraction:
@@ -205,7 +252,10 @@ def _band_sdf_normalize(arr: np.ndarray) -> np.ndarray:
     above = arr >= median_val    # True = above contour
 
     try:
-        from scipy.ndimage import distance_transform_edt
+        ndimage = _scipy_ndimage()
+        distance_transform_edt = cast(
+            _DistanceTransformFn, getattr(ndimage, "distance_transform_edt")
+        )
 
         # Distance from above-mask cells to nearest below-mask cell
         dist_to_below = distance_transform_edt(above)
@@ -241,11 +291,11 @@ _normalize_band = _band_sdf_normalize
 
 
 def compute_anisotropic_breakup(
-    band: np.ndarray,
+    band: FloatArray,
     strength: float = 0.3,
     angle_deg: float = 45.0,
     seed: int = 0,
-) -> np.ndarray:
+) -> FloatArray:
     """Apply geological-strike anisotropic noise breakup to a height band.
 
     Simulates wind/water erosion directionality using true geological-strike
@@ -300,29 +350,35 @@ def compute_anisotropic_breakup(
     sigma_perp = max(0.5, sigma_along / 4.0)   # 4:1 geological strike ratio
 
     try:
-        from scipy.ndimage import affine_transform, gaussian_filter
+        ndimage = _scipy_ndimage()
+        affine_transform = cast(
+            _AffineTransformFn, getattr(ndimage, "affine_transform")
+        )
+        gaussian_filter = cast(_GaussianFilterFn, getattr(ndimage, "gaussian_filter"))
 
-        center = np.array([rows / 2.0, cols / 2.0])
+        center = cast(FloatArray, np.array([rows / 2.0, cols / 2.0]))
         # Rotation matrix maps world coords to strike-aligned frame.
         # Row-major convention: [dr', dc'] = R * [dr, dc].
-        rot = np.array([[cos_a, sin_a], [-sin_a, cos_a]])
+        rot = cast(FloatArray, np.array([[cos_a, sin_a], [-sin_a, cos_a]]))
         rot_inv = rot.T  # orthonormal → transpose = inverse
 
         # Rotate noise into strike frame so columns align with strike direction.
         forward_offset = center - rot @ center
-        rotated = affine_transform(noise, rot, offset=forward_offset, mode="reflect")
+        rotated = affine_transform(
+            noise, rot, offset=_offset_pair(forward_offset), mode="reflect"
+        )
 
         # Apply 4:1 anisotropic blur: wide along strike, narrow across.
         blurred = gaussian_filter(
             rotated,
-            sigma=[sigma_along, sigma_perp],  # [along-strike, across-strike]
+            sigma=(sigma_along, sigma_perp),  # [along-strike, across-strike]
             mode="reflect",
         )
 
         # Rotate directional noise back to world space.
         back_offset = center - rot_inv @ center
         directional_noise = affine_transform(
-            blurred, rot_inv, offset=back_offset, mode="reflect"
+            blurred, rot_inv, offset=_offset_pair(back_offset), mode="reflect"
         )
 
     except ImportError:
@@ -331,26 +387,26 @@ def compute_anisotropic_breakup(
         sigma_r = abs(sin_a) * sigma_along + abs(cos_a) * sigma_perp
         sigma_c = abs(cos_a) * sigma_along + abs(sin_a) * sigma_perp
         # Separable Gaussian via 1-D convolutions on each axis.
-        def _gauss_1d(sigma: float, n: int) -> np.ndarray:
+        def _gauss_1d(sigma: float, n: int) -> FloatArray:
             """Build a 1-D Gaussian kernel of width 2*ceil(3*sigma)+1."""
             hw = int(np.ceil(3.0 * sigma))
             x = np.arange(-hw, hw + 1, dtype=np.float64)
             k = np.exp(-0.5 * (x / max(sigma, 1e-9)) ** 2)
-            return k / k.sum()
+            return cast(FloatArray, k / k.sum())
 
         k_r = _gauss_1d(max(0.5, sigma_r), rows)
         k_c = _gauss_1d(max(0.5, sigma_c), cols)
         # Apply separable 1-D convolutions (numpy vectorized, no Python loops).
         pad_r = len(k_r) // 2
         pad_c = len(k_c) // 2
-        tmp = np.apply_along_axis(
+        tmp = cast(FloatArray, np.apply_along_axis(
             lambda row: np.convolve(row, k_r, mode="full")[pad_r: pad_r + rows],
             axis=0, arr=noise,
-        )
-        directional_noise = np.apply_along_axis(
+        ))
+        directional_noise = cast(FloatArray, np.apply_along_axis(
             lambda col: np.convolve(col, k_c, mode="full")[pad_c: pad_c + cols],
             axis=1, arr=tmp,
-        )
+        ))
 
     band_std = float(np.std(band))
     if band_std < 1e-12:
@@ -359,9 +415,9 @@ def compute_anisotropic_breakup(
 
 
 def _kuwahara_filter(
-    arr: np.ndarray,
+    arr: FloatArray,
     radius: int,
-) -> np.ndarray:
+) -> FloatArray:
     """Vectorized Kuwahara filter on a 2-D float array.
 
     The Kuwahara filter partitions the (2r+1) x (2r+1) neighbourhood around
@@ -396,7 +452,7 @@ def _kuwahara_filter(
 
     # Build integral images for mean and variance in O(H*W).
     # sat[i,j] = sum of arr[0:i, 0:j] (inclusive prefix sum, zero-padded border).
-    def _integral(a: np.ndarray) -> np.ndarray:
+    def _integral(a: FloatArray) -> FloatArray:
         """2-D prefix sum (SAT), shape (H+1, W+1)."""
         padded = np.zeros((H + 1, W + 1), dtype=np.float64)
         padded[1:, 1:] = np.cumsum(np.cumsum(a, axis=0), axis=1)
@@ -406,9 +462,9 @@ def _kuwahara_filter(
     sat2 = _integral(arr * arr)  # sum of squared values
 
     def _box_stats(
-        r0: np.ndarray, c0: np.ndarray,
-        r1: np.ndarray, c1: np.ndarray,
-    ):
+        r0: IntArray, c0: IntArray,
+        r1: IntArray, c1: IntArray,
+    ) -> tuple[FloatArray, FloatArray]:
         """Vectorized mean and variance over rectangles [r0:r1, c0:c1].
 
         All arguments are (H, W) integer arrays of corner coordinates
@@ -429,14 +485,21 @@ def _kuwahara_filter(
     # Grid of pixel coordinates (H, W).
     rows_idx = np.arange(H, dtype=np.intp)
     cols_idx = np.arange(W, dtype=np.intp)
-    RR, CC = np.meshgrid(rows_idx, cols_idx, indexing="ij")
+    RR_raw, CC_raw = np.meshgrid(rows_idx, cols_idx, indexing="ij")
+    RR = cast(IntArray, RR_raw)
+    CC = cast(IntArray, CC_raw)
 
     # Four Kuwahara quadrant offsets (top-left corner relative to pixel):
     #   Q0: top-left     [-r, -r] to [0, 0]
     #   Q1: top-right    [-r,  0] to [0, +r]
     #   Q2: bottom-left  [ 0, -r] to [+r, 0]
     #   Q3: bottom-right [ 0,  0] to [+r, +r]
-    def _quadrant_stats(dr0, dc0, dr1, dc1):
+    def _quadrant_stats(
+        dr0: int,
+        dc0: int,
+        dr1: int,
+        dc1: int,
+    ) -> tuple[FloatArray, FloatArray]:
         r0 = np.clip(RR + dr0, 0, H).astype(np.intp)
         c0 = np.clip(CC + dc0, 0, W).astype(np.intp)
         r1 = np.clip(RR + dr1, 0, H).astype(np.intp)
@@ -456,13 +519,13 @@ def _kuwahara_filter(
     best_q = np.argmin(vars_, axis=0)  # (H, W)
     # Gather from means using advanced indexing.
     out = means[best_q, RR, CC]
-    return out.astype(arr.dtype)
+    return out.astype(np.float64)
 
 
 def apply_anti_grain_smoothing(
-    band: np.ndarray,
+    band: FloatArray,
     strength: float = 0.5,
-) -> np.ndarray:
+) -> FloatArray:
     """Remove high-frequency grain artifacts using a Kuwahara filter.
 
     The Kuwahara filter is the correct tool for terrain grain removal: it
@@ -505,7 +568,7 @@ def apply_anti_grain_smoothing(
 
     arr = band.astype(np.float64)
     filtered = _kuwahara_filter(arr, radius)
-    return filtered.astype(band.dtype)
+    return filtered.astype(np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +585,7 @@ def _generate_macro_band(
     cell_size: float,
     scale: float,
     seed: int,
-) -> np.ndarray:
+) -> FloatArray:
     """Continental macro band: fBm + ridged multifractal, 8 octaves, ~1km period.
 
     Uses H=0.85 Hurst exponent: persistence = lacunarity^(-H) ≈ 0.5545.
@@ -562,7 +625,7 @@ def _generate_meso_band(
     cell_size: float,
     scale: float,
     seed: int,
-) -> np.ndarray:
+) -> FloatArray:
     """Domain-warped fBm, 8 octaves (AAA minimum), ~150m period.
 
     Uses H=0.85 persistence and domain warp (Quilez 2002) for organic
@@ -599,7 +662,7 @@ def _generate_micro_band(
     cell_size: float,
     scale: float,
     seed: int,
-) -> np.ndarray:
+) -> FloatArray:
     """Ridged multifractal, 4 octaves, ~30m period.
 
     Raised from 2 to 4 octaves for finer micro-detail.  Uses H=0.85 gain
@@ -631,7 +694,7 @@ def _generate_strata_band(
     scale: float,
     seed: int,
     biome: str,
-) -> np.ndarray:
+) -> FloatArray:
     """Sedimentary strata with variable layer thicknesses, geological dip, and
     hardness-modulated sharpness — matching Gaea's strata node and UE5 Landscape
     layer blending where each stratum has a physically distinct interface.
@@ -644,7 +707,7 @@ def _generate_strata_band(
     rng = np.random.default_rng(strata_seed)
 
     # Biome-dependent strata parameters
-    _BIOME_STRATA: Dict[str, Tuple] = {
+    _BIOME_STRATA: dict[str, StrataParams] = {
         # (n_layers, dip_deg_base, sharpness_exp, period_mult, wobble_strength)
         # Wobble is applied as a low-frequency phase offset, not additive
         # isotropic noise, so layers stay vertically legible.
@@ -653,7 +716,7 @@ def _generate_strata_band(
         "plains":              (5,  1.0, 1.2, 0.7, 0.05),
         "dark_fantasy_default":(7,  3.0, 2.5, 1.0, 0.06),
     }
-    params = None
+    params: StrataParams | None = None
     for k, v in _BIOME_STRATA.items():
         if k in biome:
             params = v
@@ -665,7 +728,9 @@ def _generate_strata_band(
     period = _BAND_PERIOD_M["strata"] * period_mult
     y_coords = np.arange(height, dtype=np.float64) * cell_size + world_origin_y
     x_coords = np.arange(width, dtype=np.float64) * cell_size + world_origin_x
-    xx, yy = np.meshgrid(x_coords, y_coords)
+    xx_raw, yy_raw = np.meshgrid(x_coords, y_coords)
+    xx = cast(FloatArray, xx_raw)
+    yy = cast(FloatArray, yy_raw)
 
     # Geological dip: rotate depth axis so layers tilt slightly.
     # Keep jitter modest so the strata still read primarily along world-Y.
@@ -678,7 +743,9 @@ def _generate_strata_band(
     # Low-frequency vertical wobble offsets the layer phase without injecting
     # isotropic output noise that destroys the sedimentary read.
     mod_period = period * 4.0
-    mxs, mys = np.meshgrid(x_coords / mod_period, y_coords / (mod_period * 2.0))
+    mxs_raw, mys_raw = np.meshgrid(x_coords / mod_period, y_coords / (mod_period * 2.0))
+    mxs = cast(FloatArray, mxs_raw)
+    mys = cast(FloatArray, mys_raw)
     wobble = _fbm_array(mxs, mys, octaves=3, persistence=0.5, lacunarity=2.0, seed=strata_seed)
     depth_coord = depth_coord + wobble * (period * wobble_str * lateral_drift_scale)
 
@@ -691,7 +758,7 @@ def _generate_strata_band(
     depth_norm = (depth_coord % depth_range) / max(depth_range, 1e-9) * n_layers
 
     # Build non-uniform phase: each layer occupies its thickness fraction of 2π.
-    cumulative = np.concatenate([[0.0], np.cumsum(thicknesses * n_layers)])
+    cumulative = cast(FloatArray, np.concatenate([[0.0], np.cumsum(thicknesses * n_layers)]))
     phase = np.zeros_like(depth_norm, dtype=np.float64)
     for i in range(n_layers):
         lo, hi = cumulative[i], cumulative[i + 1]
@@ -718,7 +785,7 @@ def _generate_warp_field(
     cell_size: float,
     scale: float,
     seed: int,
-) -> np.ndarray:
+) -> FloatArray:
     """Domain warp magnitude field — informational, not re-composed.
 
     Returns the displacement magnitude of the domain warp vector at each
@@ -865,13 +932,13 @@ def generate_banded_heightmap(
 
 def compose_banded_heightmap(
     bands: BandedHeightmap,
-    weights: Tuple[float, float, float, float],
+    weights: BandWeights,
     *,
     apply_geological_constraints: bool = False,
     river_valley_sink: float = 0.08,
     ridge_rise: float = 0.06,
     cell_size: float = 1.0,
-) -> np.ndarray:
+) -> FloatArray:
     """Re-composite a heightmap from bands with new weights (macro, meso, micro, strata).
 
     By default this returns the raw weighted sum so callers can reason about
@@ -930,7 +997,10 @@ def compose_banded_heightmap(
 # ---------------------------------------------------------------------------
 
 
-def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
+def pass_banded_macro(
+    state: TerrainPipelineState,
+    region: BBox | None,
+) -> PassResult:
     """Alternative to ``pass_macro_world`` that produces a banded heightmap.
 
     Writes the composite into ``state.mask_stack.height`` and stores the
@@ -951,7 +1021,8 @@ def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
 
     t0 = time.perf_counter()
     stack = state.mask_stack
-    issues: list = []
+    height = cast(FloatArray, stack.height)
+    issues: list[ValidationIssue] = []
 
     try:
         r_slice, c_slice = _region_slice(state, region)
@@ -970,7 +1041,7 @@ def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
             issues=issues,
         )
 
-    h_full, w_full = stack.height.shape
+    h_full, w_full = height.shape
     bands = generate_banded_heightmap(
         w_full,
         h_full,
@@ -979,14 +1050,14 @@ def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
         world_origin_y=stack.world_origin_y,
         cell_size=stack.cell_size,
         seed=int(state.intent.seed),
-        biome=getattr(state.intent, "noise_profile", "dark_fantasy_default"),
+        biome=str(getattr(state.intent, "noise_profile", "dark_fantasy_default")),
     )
 
     # Apply to height, respecting protected zones.
-    protected = _protected_mask(state, stack.height.shape, "banded_macro")
-    new_height = stack.height.copy()
+    protected = cast(BoolArray, _protected_mask(state, height.shape, "banded_macro"))
+    new_height = height.copy()
     # Region mask: only write inside (r_slice, c_slice).
-    region_mask = np.zeros_like(stack.height, dtype=bool)
+    region_mask = np.zeros_like(height, dtype=np.bool_)
     region_mask[r_slice, c_slice] = True
     writable = region_mask & ~protected
     new_height[writable] = bands.composite[writable]
@@ -1001,11 +1072,11 @@ def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
         # Attribute-based cache; TerrainPipelineState is a dataclass but
         # Python dataclasses allow new attributes at runtime.
         try:
-            state.banded_cache = {}  # type: ignore[attr-defined]
+            cast(Any, state).banded_cache = {}
         except Exception:
             pass  # best-effort non-critical attr write
     try:
-        state.banded_cache[side_effect_token] = bands  # type: ignore[attr-defined]
+        cast(Any, state).banded_cache[side_effect_token] = bands
     except Exception:
         pass  # best-effort non-critical attr write
 

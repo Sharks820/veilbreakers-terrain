@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import enum
 import time
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
@@ -31,10 +31,39 @@ from .terrain_semantics import (
 
 try:
     import scipy.ndimage as _ndimage
-    _SCIPY_OK = True
 except ImportError:  # pragma: no cover
-    _ndimage = None  # type: ignore
-    _SCIPY_OK = False
+    _ndimage = None  # type: ignore[assignment]
+
+
+def _scipy_uniform_filter(arr: np.ndarray, size: int) -> Optional[np.ndarray]:
+    if _ndimage is None:
+        return None
+    result = cast(Any, _ndimage).uniform_filter(arr, size=size)
+    return np.asarray(result, dtype=np.float32)
+
+
+def _scipy_label(mask: np.ndarray) -> Optional[Tuple[np.ndarray, int]]:
+    if _ndimage is None:
+        return None
+    labelled_raw, num_labels_raw = cast(Any, _ndimage).label(mask)
+    return (
+        np.asarray(labelled_raw, dtype=np.int32),
+        int(num_labels_raw),
+    )
+
+
+def _scipy_distance_transform_edt(mask: np.ndarray) -> Optional[np.ndarray]:
+    if _ndimage is None:
+        return None
+    result = cast(Any, _ndimage).distance_transform_edt(mask)
+    return np.asarray(result, dtype=np.float32)
+
+
+def _scipy_morphological_gradient(mask: np.ndarray, size: int) -> Optional[np.ndarray]:
+    if _ndimage is None:
+        return None
+    result = cast(Any, _ndimage).morphological_gradient(mask, size=size)
+    return np.asarray(result)
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +419,7 @@ def detect_disturbance_patches(
     disturbance_slope_threshold: float = 0.4,
     disturbance_erosion_threshold: float = 0.3,
     min_patch_area: int = 4,
-    intent=None,
+    intent: Optional[object] = None,
 ) -> List[DisturbancePatch]:
     """Identify disturbance patches using terrain signals AND temporal/proxy change detection.
 
@@ -541,9 +570,8 @@ def detect_disturbance_patches(
     if veg_index_raw is not None:
         veg_idx = np.asarray(veg_index_raw, dtype=np.float32)
         # Neighbourhood mean using a 5×5 box filter (or fallback)
-        if _SCIPY_OK:
-            nbhd_mean = _ndimage.uniform_filter(veg_idx, size=5)
-        else:
+        nbhd_mean = _scipy_uniform_filter(veg_idx, size=5)
+        if nbhd_mean is None:
             # Simple shift-average fallback
             _vi_pad = np.pad(veg_idx, 2, mode="edge")
             nbhd_mean = (
@@ -551,7 +579,10 @@ def detect_disturbance_patches(
                 + _vi_pad[2:-2, :-4] + _vi_pad[2:-2, 4:]
                 + veg_idx
             ) / 5.0
+            nbhd_mean = nbhd_mean.astype(np.float32)
             # np.pad edge mode prevents toroidal tile-seam contamination
+        else:
+            nbhd_mean = nbhd_mean.astype(np.float32)
         # NDVI drop: locally low index surrounded by high-index neighbours
         ndvi_drop_mask = (veg_idx < 0.15) & (nbhd_mean > 0.35)
         disturbed |= ndvi_drop_mask
@@ -560,9 +591,10 @@ def detect_disturbance_patches(
     # -------------------------------------------------------------------------
     # (d3) Surface-roughness anomaly — local height std dev
     # -------------------------------------------------------------------------
-    if _SCIPY_OK:
-        h_sq_mean = _ndimage.uniform_filter(height ** 2, size=3)
-        h_mean_sq = _ndimage.uniform_filter(height, size=3) ** 2
+    h_sq_mean = _scipy_uniform_filter(height ** 2, size=3)
+    h_mean = _scipy_uniform_filter(height, size=3)
+    if h_sq_mean is not None and h_mean is not None:
+        h_mean_sq = h_mean ** 2
         roughness = np.sqrt(np.maximum(0.0, h_sq_mean - h_mean_sq)).astype(np.float32)
     else:
         # Variance via shift arithmetic (cheap 3×3 approximation)
@@ -593,12 +625,12 @@ def detect_disturbance_patches(
         f_mean = float(flow_arr.mean())
         f_std = float(flow_arr.std()) if float(flow_arr.std()) > 1e-9 else 1.0
         high_flow = flow_arr > (f_mean + 2.0 * f_std)
-        convergence_disturbed = high_flow & (
-            erosion_arr is not None
-            and erosion_arr > disturbance_erosion_threshold * 0.5
-            if erosion_arr is not None
-            else high_flow
-        )
+        if erosion_arr is not None:
+            convergence_disturbed = high_flow & (
+                erosion_arr > disturbance_erosion_threshold * 0.5
+            )
+        else:
+            convergence_disturbed = high_flow
         disturbed |= convergence_disturbed
         _score_flood += convergence_disturbed.astype(np.float32) * 0.5
 
@@ -606,9 +638,17 @@ def detect_disturbance_patches(
     # (e) Authored intent patches
     # -------------------------------------------------------------------------
     if intent is not None:
-        manual = getattr(intent, "disturbance_patches", None) or []
+        manual_raw = getattr(intent, "disturbance_patches", ())
+        manual: Sequence[object]
+        if isinstance(manual_raw, Sequence) and not isinstance(manual_raw, (str, bytes)):
+            manual = tuple(cast(Sequence[object], manual_raw))
+        else:
+            manual = ()
         for mp in manual:
-            r_sl, c_sl = mp.bounds.to_cell_slice(
+            bounds = getattr(mp, "bounds", None)
+            if not isinstance(bounds, BBox):
+                continue
+            r_sl, c_sl = bounds.to_cell_slice(
                 stack.world_origin_x,
                 stack.world_origin_y,
                 stack.cell_size,
@@ -622,8 +662,9 @@ def detect_disturbance_patches(
     # -------------------------------------------------------------------------
     # Label connected components (4-connected)
     # -------------------------------------------------------------------------
-    if _SCIPY_OK:
-        labelled, num_labels = _ndimage.label(disturbed)
+    scipy_label = _scipy_label(disturbed)
+    if scipy_label is not None:
+        labelled, num_labels = scipy_label
     else:
         labelled = np.zeros((rows, cols), dtype=np.int32)
         _label_id = 0
@@ -659,14 +700,16 @@ def detect_disturbance_patches(
         if area_cells < min_patch_area:
             continue
 
-        comp_rs, comp_cs = np.where(comp)
+        comp_rs_raw, comp_cs_raw = np.where(comp)
+        comp_rs = np.asarray(comp_rs_raw, dtype=np.int64)
+        comp_cs = np.asarray(comp_cs_raw, dtype=np.int64)
 
         if area_cells <= max_component_cells:
-            candidate_groups = [(comp_rs, comp_cs)]
+            candidate_groups: List[Tuple[np.ndarray, np.ndarray]] = [(comp_rs, comp_cs)]
         else:
             n_sub = max(2, int(np.sqrt(area_cells / max_component_cells)) + 2)
             patch_half = max(2, int(np.sqrt(max_component_cells) // 2))
-            chosen = rng.integers(0, area_cells, size=n_sub)
+            chosen = np.asarray(rng.integers(0, area_cells, size=n_sub), dtype=np.int64)
             candidate_groups = []
             for ci in chosen:
                 cr, cc = int(comp_rs[ci]), int(comp_cs[ci])
@@ -674,9 +717,11 @@ def detect_disturbance_patches(
                 r1 = min(rows - 1, cr + patch_half)
                 c0 = max(0, cc - patch_half)
                 c1 = min(cols - 1, cc + patch_half)
-                sub_rs_g = np.arange(r0, r1 + 1)
-                sub_cs_g = np.arange(c0, c1 + 1)
-                sgr, sgc = np.meshgrid(sub_rs_g, sub_cs_g, indexing="ij")
+                sub_rs_g = np.arange(r0, r1 + 1, dtype=np.int64)
+                sub_cs_g = np.arange(c0, c1 + 1, dtype=np.int64)
+                sgr_raw, sgc_raw = np.meshgrid(sub_rs_g, sub_cs_g, indexing="ij")
+                sgr = np.asarray(sgr_raw, dtype=np.int64)
+                sgc = np.asarray(sgc_raw, dtype=np.int64)
                 candidate_groups.append((sgr.ravel(), sgc.ravel()))
 
         for sub_rs, sub_cs in candidate_groups:
@@ -759,7 +804,7 @@ def detect_disturbance_patches(
 
 def place_clearings(
     stack: TerrainMaskStack,
-    intent,
+    intent: Optional[object],
     count_per_km2: float = 2.0,
     seed: int = 0,
     clearing_max_slope: float = 0.25,
@@ -794,7 +839,9 @@ def place_clearings(
     target = max(1, int(round(count_per_km2 * max(area_km2, 0.001))))
 
     namespace = "vegetation_clearings"
-    base_seed = int(seed) if seed else int(getattr(intent, "seed", 0) or 0)
+    intent_seed_raw = getattr(intent, "seed", 0) if intent is not None else 0
+    intent_seed = int(intent_seed_raw) if isinstance(intent_seed_raw, int) else 0
+    base_seed = int(seed) if seed else intent_seed
     pass_seed = derive_pass_seed(
         base_seed,
         namespace,
@@ -822,14 +869,15 @@ def place_clearings(
     else:
         cliff_arr = (slope_arr > 0.6).astype(np.float32)
 
-    if _SCIPY_OK:
-        cliff_bool = cliff_arr > 0.5
-        if np.any(cliff_bool):
-            dist_from_cliff = _ndimage.distance_transform_edt(~cliff_bool).astype(np.float32)
-        else:
-            dist_from_cliff = np.ones((rows, cols), dtype=np.float32) * max(rows, cols)
+    cliff_bool = cliff_arr > 0.5
+    scipy_dist_from_cliff = (
+        _scipy_distance_transform_edt(~cliff_bool) if np.any(cliff_bool) else None
+    )
+    if scipy_dist_from_cliff is not None:
+        dist_from_cliff = scipy_dist_from_cliff.astype(np.float32)
+    elif not np.any(cliff_bool):
+        dist_from_cliff = np.ones((rows, cols), dtype=np.float32) * max(rows, cols)
     else:
-        cliff_bool = cliff_arr > 0.5
         dist_from_cliff = np.zeros((rows, cols), dtype=np.float32)
         frontier = cliff_bool.copy()
         step = 0
@@ -854,10 +902,10 @@ def place_clearings(
     # Viable mask: only cells with positive score may host a clearing centre.
     viable = score > 0.0
     viable_flat = viable.ravel()
-    viable_indices = np.where(viable_flat)[0]
+    viable_indices = np.asarray(np.where(viable_flat)[0], dtype=np.int64)
     if viable_indices.size == 0:
         # Fallback to fully open grid when no viable cells exist.
-        viable_indices = np.arange(rows * cols)
+        viable_indices = np.arange(rows * cols, dtype=np.int64)
 
     min_radius = float(max(stack.cell_size * clearing_radius_cells * 0.5, 5.0))
     max_radius = float(max(min_radius * 2.0, 15.0))
@@ -869,8 +917,6 @@ def place_clearings(
     # Grid cell size for the background grid = r / sqrt(2) so each grid cell
     # contains at most one sample.
     grid_cell = r_min_cells / np.sqrt(2.0)
-    grid_rows = max(1, int(np.ceil(rows / grid_cell)))
-    grid_cols = max(1, int(np.ceil(cols / grid_cell)))
 
     background: Dict[Tuple[int, int], Tuple[float, float]] = {}  # grid_ij -> (r, c)
 
@@ -891,7 +937,7 @@ def place_clearings(
     active: List[Tuple[float, float]] = []
 
     # Seed with one random viable cell.
-    seed_flat = viable_indices[int(rng.integers(0, viable_indices.size))]
+    seed_flat = int(viable_indices[int(rng.integers(0, int(viable_indices.size)))])
     seed_r = float(seed_flat // cols)
     seed_c = float(seed_flat % cols)
     active.append((seed_r, seed_c))
@@ -940,8 +986,8 @@ def place_clearings(
                 r1 = min(rows, int(nr + radius_cells) + 2)
                 c0 = max(0, int(nc - radius_cells) - 1)
                 c1 = min(cols, int(nc + radius_cells) + 2)
-                rr = np.arange(r0, r1).reshape(-1, 1)
-                cc = np.arange(c0, c1).reshape(1, -1)
+                rr = np.asarray(np.arange(r0, r1, dtype=np.float32)).reshape(-1, 1)
+                cc = np.asarray(np.arange(c0, c1, dtype=np.float32)).reshape(1, -1)
                 dist_sq = ((rr - nr) ** 2 + (cc - nc) ** 2) / max(radius_cells ** 2, 1e-9)
                 falloff = np.maximum(0.0, 1.0 - dist_sq).astype(np.float32)
                 suppress = (1.0 - falloff).astype(np.float32)
@@ -1184,10 +1230,14 @@ def apply_edge_effects(
     if src_mask.shape != shape:
         raise ValueError("boundary mask shape must match vegetation layers")
 
-    if _SCIPY_OK:
-        boundary = _ndimage.morphological_gradient(src_mask, size=3).astype(bool)
-        if np.any(boundary):
-            dist_from_boundary = _ndimage.distance_transform_edt(~boundary).astype(np.float32)
+    boundary_raw = _scipy_morphological_gradient(src_mask, size=3)
+    if boundary_raw is not None:
+        boundary = boundary_raw.astype(bool)
+        scipy_dist_from_boundary = (
+            _scipy_distance_transform_edt(~boundary) if np.any(boundary) else None
+        )
+        if scipy_dist_from_boundary is not None:
+            dist_from_boundary = scipy_dist_from_boundary.astype(np.float32)
         else:
             dist_from_boundary = np.full(shape, float(max(shape)), dtype=np.float32)
     else:
@@ -1243,9 +1293,10 @@ def apply_edge_effects(
 def apply_cultivated_zones(
     vegetation: VegetationLayers,
     cultivation_mask: np.ndarray,
-    intent=None,
+    intent: Optional[object] = None,
     cultivated_density: float = 0.9,
     row_spacing: int = 4,
+    stack: Optional[TerrainMaskStack] = None,
 ) -> VegetationLayers:
     """Override vegetation in cultivated zones with agricultural row pattern.
 
@@ -1300,10 +1351,15 @@ def apply_cultivated_zones(
     ground = vegetation.ground_cover_density.astype(np.float64)
 
     # Resolve zone list from intent composition hints
-    zones_from_intent = []
+    zones_from_intent: Sequence[object] = ()
     if intent is not None:
-        hints = getattr(intent, "composition_hints", None) or {}
-        zones_from_intent = hints.get("cultivated_zones", [])
+        hints_raw = getattr(intent, "composition_hints", {})
+        hints: Dict[str, object] = (
+            cast(Dict[str, object], hints_raw) if isinstance(hints_raw, dict) else {}
+        )
+        zones_raw = hints.get("cultivated_zones", ())
+        if isinstance(zones_raw, Sequence) and not isinstance(zones_raw, (str, bytes)):
+            zones_from_intent = tuple(cast(Sequence[object], zones_raw))
 
     def _apply_zone(r_sl: slice, c_sl: slice, zone_row_spacing: int, row_density: float) -> None:
         rows_in_zone = range(*r_sl.indices(shape[0]))
@@ -1324,14 +1380,17 @@ def apply_cultivated_zones(
 
     if zones_from_intent:
         for zone in zones_from_intent:
-            if hasattr(zone, "to_cell_slice"):
+            if isinstance(zone, BBox):
                 z_bbox = zone
-            elif hasattr(zone, "bounds"):
-                z_bbox = zone.bounds
             else:
-                continue
+                z_bbox = getattr(zone, "bounds", None)
+                if not isinstance(z_bbox, BBox):
+                    continue
 
-            stack = getattr(intent, "_stack", None)
+            if stack is None and intent is not None:
+                intent_stack = getattr(intent, "_stack", None)
+                if isinstance(intent_stack, TerrainMaskStack):
+                    stack = intent_stack
             if stack is not None:
                 r_sl, c_sl = z_bbox.to_cell_slice(
                     stack.world_origin_x,
@@ -1343,7 +1402,8 @@ def apply_cultivated_zones(
                 r_sl, c_sl = slice(None), slice(None)
 
             # Per-zone land-class lookup
-            land_class = getattr(zone, "land_class", None) or ""
+            land_class_raw = getattr(zone, "land_class", "")
+            land_class = land_class_raw if isinstance(land_class_raw, str) else ""
             if land_class in _LAND_CLASS_PARAMS:
                 z_spacing, z_density = _LAND_CLASS_PARAMS[land_class]
             else:
@@ -1465,8 +1525,11 @@ def apply_allelopathic_exclusion(
         # 4. Scale to [0, suppression_weight] and multiply into target densities.
         source_mask = suppressor_map > 0.3
 
-        if _SCIPY_OK and np.any(source_mask):
-            dist_to_source = _ndimage.distance_transform_edt(~source_mask).astype(np.float32)
+        scipy_dist_to_source = (
+            _scipy_distance_transform_edt(~source_mask) if np.any(source_mask) else None
+        )
+        if scipy_dist_to_source is not None:
+            dist_to_source = scipy_dist_to_source.astype(np.float32)
             # exp(-dist / radius): 1.0 at source cells, decays to ~0.14 at 2× radius
             radius = float(max(allelopathy_radius_cells, 1.0))
             suppression_field = np.exp(-dist_to_source / radius).astype(np.float32)
@@ -1586,10 +1649,12 @@ def pass_vegetation_depth(
         cult = stack.get("gameplay_zone")
         if cult is not None:
             cult_mask = np.asarray(cult, dtype=np.int32) == 2
-            # Attach stack to intent so apply_cultivated_zones can resolve BBox coords
-            _intent = state.intent
-            _intent._stack = stack  # type: ignore[attr-defined]
-            layers = apply_cultivated_zones(layers, cult_mask, intent=_intent)
+            layers = apply_cultivated_zones(
+                layers,
+                cult_mask,
+                intent=state.intent,
+                stack=stack,
+            )
 
     # apply_allelopathic_exclusion: always run — canopy acts as default suppressor;
     # if species_density channel is present on the stack, use it as well.
@@ -1598,9 +1663,15 @@ def pass_vegetation_depth(
         # Merge in any per-species density channels from the stack
         stack_species = stack.get("species_density")
         if stack_species is not None and isinstance(stack_species, dict):
-            species_dict.update(
-                {k: np.asarray(v, dtype=np.float32) for k, v in stack_species.items()}
-            )
+            for species_name_raw, species_arr_raw in cast(
+                Dict[object, object],
+                stack_species,
+            ).items():
+                if isinstance(species_name_raw, str):
+                    species_dict[species_name_raw] = np.asarray(
+                        species_arr_raw,
+                        dtype=np.float32,
+                    )
         # Canopy is the default allelopathic suppressor (tall trees = walnut/pine)
         layers = apply_allelopathic_exclusion(
             layers,
@@ -1610,7 +1681,7 @@ def pass_vegetation_depth(
 
     # --- Feature generators (results stored in metrics) ---
     # detect_disturbance_patches: run when hint is set OR slope/erosion channels present
-    disturbance_patches: List = []
+    disturbance_patches: List[DisturbancePatch] = []
     if (
         hints.get("veg_disturbance_patches", False)
         or stack.get("slope") is not None
@@ -1653,8 +1724,15 @@ def pass_vegetation_depth(
         target_arr[r_slice, c_slice] = region_out
         merged[key] = target_arr.astype(np.float32)
 
+    # Copy any per-species or unknown keys from existing verbatim so that
+    # keys injected by pass_procedural_grass (e.g. species-specific density
+    # maps) are not silently dropped.
+    for k, v in existing.items():
+        if k not in merged:
+            merged[k] = v
+
     # place_clearings: run when hint is set OR cliff_mask/slope channel present
-    clearings: List = []
+    clearings: List[Clearing] = []
     if (
         hints.get("veg_clearings", False)
         or stack.get("cliff_mask") is not None
@@ -1665,7 +1743,7 @@ def pass_vegetation_depth(
         )
 
     # place_fallen_logs: run when hint is set OR forest_mask channel present
-    fallen_logs: List = []
+    fallen_logs: List[FallenLogSpec] = []
     if hints.get("veg_fallen_logs", False) or stack.get("forest_mask") is not None:
         forest_mask = merged.get("canopy", layers.canopy_density) > 0.3
         fallen_logs = place_fallen_logs(

@@ -9,10 +9,28 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import numpy as np
+import numpy.typing as npt
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+FloatArray: TypeAlias = npt.NDArray[np.float64 | np.float32]
+JsonObject: TypeAlias = dict[str, object]
+MacroColorFn: TypeAlias = Callable[
+    ["TerrainMaskStack", dict[int, tuple[float, float, float]] | None],
+    FloatArray,
+]
+TextureLoadFn: TypeAlias = Callable[[Path, int], FloatArray]
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +38,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(tile_size: int = 24, seed: int = 7):
+def _make_stack(tile_size: int = 24, seed: int = 7) -> "TerrainMaskStack":
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
@@ -43,7 +61,7 @@ def _make_stack(tile_size: int = 24, seed: int = 7):
     )
 
 
-def _build_state(tile_size: int = 24, seed: int = 7):
+def _build_state(tile_size: int = 24, seed: int = 7) -> "TerrainPipelineState":
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -63,12 +81,12 @@ def _build_state(tile_size: int = 24, seed: int = 7):
 
 
 @pytest.fixture
-def state():
+def state() -> "TerrainPipelineState":
     return _build_state()
 
 
 @pytest.fixture
-def stack(state):
+def stack(state: "TerrainPipelineState") -> "TerrainMaskStack":
     return state.mask_stack
 
 
@@ -77,7 +95,7 @@ def stack(state):
 # ---------------------------------------------------------------------------
 
 
-def test_stochastic_sampling_mask_shape_and_dtype(stack):
+def test_stochastic_sampling_mask_shape_and_dtype(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         build_stochastic_sampling_mask,
     )
@@ -89,7 +107,7 @@ def test_stochastic_sampling_mask_shape_and_dtype(stack):
     assert np.all(np.abs(mask) <= 0.5 + 1e-5)
 
 
-def test_stochastic_sampling_mask_is_deterministic(stack):
+def test_stochastic_sampling_mask_is_deterministic(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         build_stochastic_sampling_mask,
     )
@@ -99,7 +117,7 @@ def test_stochastic_sampling_mask_is_deterministic(stack):
     np.testing.assert_array_equal(a, b)
 
 
-def test_stochastic_sampling_different_seeds_differ(stack):
+def test_stochastic_sampling_different_seeds_differ(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         build_stochastic_sampling_mask,
     )
@@ -109,7 +127,7 @@ def test_stochastic_sampling_different_seeds_differ(stack):
     assert not np.allclose(a, b)
 
 
-def test_stochastic_sampling_rejects_bad_tile_size(stack):
+def test_stochastic_sampling_rejects_bad_tile_size(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         build_stochastic_sampling_mask,
     )
@@ -118,7 +136,7 @@ def test_stochastic_sampling_rejects_bad_tile_size(stack):
         build_stochastic_sampling_mask(stack, tile_size_m=0.0, seed=1)
 
 
-def test_export_unity_shader_template_writes_json():
+def test_export_unity_shader_template_writes_json() -> None:
     from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         StochasticShaderTemplate,
         export_unity_shader_template,
@@ -134,14 +152,17 @@ def test_export_unity_shader_template_writes_json():
         out = Path(td) / "rock_01.json"
         payload = export_unity_shader_template(tpl, out)
         assert out.exists()
-        data = json.loads(out.read_text(encoding="utf-8"))
-        assert data["schema"].startswith("veilbreakers.terrain.stochastic_shader")
-        assert data["template"]["template_id"] == "rock_01"
-        assert data["template"]["layer_index"] == 2
+        data = cast(JsonObject, json.loads(out.read_text(encoding="utf-8")))
+        template = cast(JsonObject, data["template"])
+        schema = data["schema"]
+        assert isinstance(schema, str)
+        assert schema.startswith("veilbreakers.terrain.stochastic_shader")
+        assert template["template_id"] == "rock_01"
+        assert template["layer_index"] == 2
         assert payload == data
 
 
-def test_pass_stochastic_shader_populates_uv_mask(state):
+def test_pass_stochastic_shader_populates_uv_mask(state: "TerrainPipelineState") -> None:
     # Fix 7.18: stochastic_shader no longer writes roughness_variation (single-writer rule).
     # It writes stochastic_uv_mask only; roughness_variation is owned by roughness_driver.
     from veilbreakers_terrain.handlers.terrain_stochastic_shader import pass_stochastic_shader
@@ -160,53 +181,63 @@ def test_pass_stochastic_shader_populates_uv_mask(state):
 # ---------------------------------------------------------------------------
 
 
-def test_macro_color_shape_and_dtype(stack):
-    from veilbreakers_terrain.handlers.terrain_macro_color import compute_macro_color
+def test_macro_color_shape_and_dtype(stack: "TerrainMaskStack") -> None:
+    from veilbreakers_terrain.handlers.terrain_macro_color import (
+        compute_macro_color as raw_compute_macro_color,
+    )
 
-    color = compute_macro_color(stack)
+    compute_macro_color = cast(MacroColorFn, raw_compute_macro_color)
+    color = compute_macro_color(stack, None)
     rows, cols = stack.height.shape
     assert color.shape == (rows, cols, 3)
     assert color.dtype == np.float32
     assert color.min() >= 0.0 and color.max() <= 1.0
 
 
-def test_macro_color_respects_biome_id(stack):
+def test_macro_color_respects_biome_id(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_macro_color import (
         DARK_FANTASY_PALETTE,
-        compute_macro_color,
+        compute_macro_color as raw_compute_macro_color,
     )
 
+    compute_macro_color = cast(MacroColorFn, raw_compute_macro_color)
     biome = np.zeros_like(stack.height, dtype=np.int32)
     biome[5:10, 5:10] = 5  # snowcap
     stack.set("biome_id", biome, "test")
-    color = compute_macro_color(stack)
+    color = compute_macro_color(stack, None)
     np.array(DARK_FANTASY_PALETTE[5], dtype=np.float32)
     # Snow region should be brighter than surrounding by a meaningful margin
     region_mean = color[5:10, 5:10].mean(axis=(0, 1))
     assert region_mean.mean() > 0.6
 
 
-def test_macro_color_wet_darkens(stack):
-    from veilbreakers_terrain.handlers.terrain_macro_color import compute_macro_color
+def test_macro_color_wet_darkens(stack: "TerrainMaskStack") -> None:
+    from veilbreakers_terrain.handlers.terrain_macro_color import (
+        compute_macro_color as raw_compute_macro_color,
+    )
 
-    dry = compute_macro_color(stack)
+    compute_macro_color = cast(MacroColorFn, raw_compute_macro_color)
+    dry = compute_macro_color(stack, None)
     wet = np.ones_like(stack.height, dtype=np.float64) * 0.9
     stack.set("wetness", wet, "test")
-    wet_color = compute_macro_color(stack)
+    wet_color = compute_macro_color(stack, None)
     assert wet_color.mean() < dry.mean()
 
 
-def test_macro_color_custom_palette(stack):
-    from veilbreakers_terrain.handlers.terrain_macro_color import compute_macro_color
+def test_macro_color_custom_palette(stack: "TerrainMaskStack") -> None:
+    from veilbreakers_terrain.handlers.terrain_macro_color import (
+        compute_macro_color as raw_compute_macro_color,
+    )
 
+    compute_macro_color = cast(MacroColorFn, raw_compute_macro_color)
     biome = np.zeros_like(stack.height, dtype=np.int32)
     stack.set("biome_id", biome, "test")
-    color = compute_macro_color(stack, palette={0: (1.0, 0.0, 0.0)})
+    color = compute_macro_color(stack, {0: (1.0, 0.0, 0.0)})
     # Red channel dominant (before altitude cool-shift applies)
     assert color[..., 0].mean() > color[..., 2].mean()
 
 
-def test_pass_macro_color_populates_channel(state):
+def test_pass_macro_color_populates_channel(state: "TerrainPipelineState") -> None:
     from veilbreakers_terrain.handlers.terrain_macro_color import pass_macro_color
 
     result = pass_macro_color(state, None)
@@ -220,7 +251,7 @@ def test_pass_macro_color_populates_channel(state):
 # ---------------------------------------------------------------------------
 
 
-def test_multiscale_breakup_shape_and_dtype(stack):
+def test_multiscale_breakup_shape_and_dtype(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_multiscale_breakup import (
         compute_multiscale_breakup,
     )
@@ -230,7 +261,7 @@ def test_multiscale_breakup_shape_and_dtype(stack):
     assert br.dtype == np.float32
 
 
-def test_multiscale_breakup_deterministic(stack):
+def test_multiscale_breakup_deterministic(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_multiscale_breakup import (
         compute_multiscale_breakup,
     )
@@ -240,7 +271,7 @@ def test_multiscale_breakup_deterministic(stack):
     np.testing.assert_array_equal(a, b)
 
 
-def test_multiscale_breakup_rejects_empty_scales(stack):
+def test_multiscale_breakup_rejects_empty_scales(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_multiscale_breakup import (
         compute_multiscale_breakup,
     )
@@ -249,7 +280,7 @@ def test_multiscale_breakup_rejects_empty_scales(stack):
         compute_multiscale_breakup(stack, scales_m=(), seed=1)
 
 
-def test_pass_multiscale_breakup_does_not_write_roughness(state):
+def test_pass_multiscale_breakup_does_not_write_roughness(state: "TerrainPipelineState") -> None:
     # Fix 7.18: multiscale_breakup no longer writes roughness_variation (single-writer rule).
     # roughness_variation is owned exclusively by terrain_roughness_driver.
     from veilbreakers_terrain.handlers.terrain_multiscale_breakup import pass_multiscale_breakup
@@ -271,7 +302,7 @@ def test_pass_multiscale_breakup_does_not_write_roughness(state):
 # ---------------------------------------------------------------------------
 
 
-def test_bake_shadow_clipmap_shape_and_range(stack):
+def test_bake_shadow_clipmap_shape_and_range(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_shadow_clipmap_bake import bake_shadow_clipmap
 
     mask = bake_shadow_clipmap(stack, sun_dir_rad=(0.5, 0.8), clipmap_res=64)
@@ -280,14 +311,14 @@ def test_bake_shadow_clipmap_shape_and_range(stack):
     assert mask.min() >= 0.0 and mask.max() <= 1.0
 
 
-def test_bake_shadow_clipmap_sun_below_horizon(stack):
+def test_bake_shadow_clipmap_sun_below_horizon(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_shadow_clipmap_bake import bake_shadow_clipmap
 
     mask = bake_shadow_clipmap(stack, sun_dir_rad=(0.0, -0.1), clipmap_res=32)
     assert np.all(mask == 0.0)
 
 
-def test_export_shadow_clipmap_exr_and_sidecar(stack):
+def test_export_shadow_clipmap_exr_and_sidecar(stack: "TerrainMaskStack") -> None:
     """export_shadow_clipmap_exr writes a valid EXR (or fallback) plus JSON sidecar.
 
     The primary path now uses the struct-packed mini-EXR writer (no external
@@ -315,7 +346,7 @@ def test_export_shadow_clipmap_exr_and_sidecar(stack):
 
         sidecar = actual_path.with_suffix(".json")
         assert sidecar.exists(), "JSON sidecar must always be written"
-        meta = json.loads(sidecar.read_text(encoding="utf-8"))
+        meta = cast(JsonObject, json.loads(sidecar.read_text(encoding="utf-8")))
 
         # format must be one of the known valid formats
         assert meta["format"] in {
@@ -331,7 +362,7 @@ def test_export_shadow_clipmap_exr_and_sidecar(stack):
         assert "cascade_levels" in meta
 
 
-def test_pass_shadow_clipmap_populates_cloud_shadow(state):
+def test_pass_shadow_clipmap_populates_cloud_shadow(state: "TerrainPipelineState") -> None:
     """Bundle K's shadow clipmap bake owns ``baked_cloud_shadow`` post-2026-04-23.
 
     The legacy ``cloud_shadow`` channel is no longer written by Bundle K; that
@@ -352,7 +383,7 @@ def test_pass_shadow_clipmap_populates_cloud_shadow(state):
 # ---------------------------------------------------------------------------
 
 
-def test_roughness_driver_default_baseline(stack):
+def test_roughness_driver_default_baseline(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_roughness_driver import (
         compute_roughness_from_wetness_wear,
     )
@@ -364,7 +395,7 @@ def test_roughness_driver_default_baseline(stack):
     assert 0.4 < r.mean() < 0.7
 
 
-def test_roughness_driver_wet_reduces_roughness(stack):
+def test_roughness_driver_wet_reduces_roughness(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_roughness_driver import (
         compute_roughness_from_wetness_wear,
     )
@@ -376,7 +407,7 @@ def test_roughness_driver_wet_reduces_roughness(stack):
     assert wet_r.mean() < baseline.mean()
 
 
-def test_roughness_driver_erosion_increases_roughness(stack):
+def test_roughness_driver_erosion_increases_roughness(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_roughness_driver import (
         compute_roughness_from_wetness_wear,
     )
@@ -388,7 +419,7 @@ def test_roughness_driver_erosion_increases_roughness(stack):
     assert eroded.mean() > baseline.mean()
 
 
-def test_pass_roughness_driver(state):
+def test_pass_roughness_driver(state: "TerrainPipelineState") -> None:
     from veilbreakers_terrain.handlers.terrain_roughness_driver import pass_roughness_driver
 
     result = pass_roughness_driver(state, None)
@@ -398,7 +429,7 @@ def test_pass_roughness_driver(state):
     assert rough.dtype == np.float32
 
 
-def test_pass_roughness_driver_consumes_breakup_signal(state):
+def test_pass_roughness_driver_consumes_breakup_signal(state: "TerrainPipelineState") -> None:
     from veilbreakers_terrain.handlers.terrain_roughness_driver import pass_roughness_driver
 
     baseline_result = pass_roughness_driver(state, None)
@@ -436,7 +467,7 @@ def _make_fake_quixel_asset(root: Path, asset_id: str = "rock_mossy_01") -> Path
     return asset_dir
 
 
-def test_ingest_quixel_asset_parses_channels():
+def test_ingest_quixel_asset_parses_channels() -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import ingest_quixel_asset
 
     with tempfile.TemporaryDirectory() as td:
@@ -450,14 +481,14 @@ def test_ingest_quixel_asset_parses_channels():
         assert asset.metadata.get("displayName") == "rock_mossy_01"
 
 
-def test_ingest_quixel_asset_missing_folder_raises():
+def test_ingest_quixel_asset_missing_folder_raises() -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import ingest_quixel_asset
 
     with pytest.raises(FileNotFoundError):
         ingest_quixel_asset(Path("/nonexistent/quixel/asset"))
 
 
-def test_apply_quixel_to_layer_creates_splatmap(stack):
+def test_apply_quixel_to_layer_creates_splatmap(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,
         apply_quixel_to_layer,
@@ -465,19 +496,19 @@ def test_apply_quixel_to_layer_creates_splatmap(stack):
 
     asset = QuixelAsset(asset_id="rock_01", textures={"albedo": Path("fake.png")})
     assert stack.splatmap_weights_layer is None
-    side_effects: list = []
+    side_effects: list[str] = []
     apply_quixel_to_layer(stack, "rock_layer", asset, side_effects=side_effects)
-    assert stack.splatmap_weights_layer is not None
-    assert stack.splatmap_weights_layer.shape[-1] == 1
+    weights = stack.splatmap_weights_layer
+    assert weights is not None
+    assert weights.shape[-1] == 1
     assert len(side_effects) == 1
-    import json
-    payload = json.loads(side_effects[0])
+    payload = cast(JsonObject, json.loads(side_effects[0]))
     assert payload["event"] == "quixel_layer"
     assert payload["layer_id"] == "rock_layer"
     assert payload["asset_id"] == "rock_01"
 
 
-def test_apply_quixel_to_layer_appends_visible_weight(stack):
+def test_apply_quixel_to_layer_appends_visible_weight(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,
         apply_quixel_to_layer,
@@ -489,12 +520,13 @@ def test_apply_quixel_to_layer_appends_visible_weight(stack):
     apply_quixel_to_layer(stack, "moss_layer", asset)
 
     weights = stack.splatmap_weights_layer
+    assert weights is not None
     assert weights.shape[-1] == 2
     assert float(weights[..., -1].min()) > 0.0
     np.testing.assert_allclose(weights.sum(axis=2), 1.0, atol=1e-6)
 
 
-def test_apply_quixel_to_layer_blends_albedo_in_linear_space(stack):
+def test_apply_quixel_to_layer_blends_albedo_in_linear_space(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,
         apply_quixel_to_layer,
@@ -506,32 +538,42 @@ def test_apply_quixel_to_layer_blends_albedo_in_linear_space(stack):
     apply_quixel_to_layer(stack, "albedo_layer", asset, albedo_array=albedo)
 
     expected_linear = ((0.5 + 0.055) / 1.055) ** 2.4
-    np.testing.assert_allclose(stack.macro_color[..., 0], expected_linear, atol=1e-6)
+    macro_color = stack.macro_color
+    assert macro_color is not None
+    np.testing.assert_allclose(macro_color[..., 0], expected_linear, atol=1e-6)
 
 
-def test_load_texture_as_float_normalizes_hdr_float_without_uint8_divide(tmp_path, monkeypatch):
+def test_load_texture_as_float_normalizes_hdr_float_without_uint8_divide(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import sys
-    from types import SimpleNamespace
 
-    from veilbreakers_terrain.handlers.terrain_quixel_ingest import _load_texture_as_float
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
+        _load_texture_as_float as raw_load_texture_as_float,
+    )
 
+    load_texture_as_float = cast(TextureLoadFn, raw_load_texture_as_float)
     texture_path = tmp_path / "hero_displacement.exr"
     texture_path.write_bytes(b"fake")
     raw = np.array([[0.0, 4.0], [8.0, 2.0]], dtype=np.float32)
+    def fake_imread(_path: str | Path) -> FloatArray:
+        return raw
+
     fake_imageio = SimpleNamespace(
-        v3=SimpleNamespace(imread=lambda _path: raw)
+        v3=SimpleNamespace(imread=fake_imread)
     )
     monkeypatch.setitem(sys.modules, "imageio", fake_imageio)
 
-    loaded = _load_texture_as_float(texture_path, channels=1)
+    loaded = load_texture_as_float(texture_path, 1)
 
-    assert float(loaded.min()) == pytest.approx(0.0)
-    assert float(loaded.max()) == pytest.approx(1.0)
-    assert float(loaded[0, 1]) == pytest.approx(0.5)
+    assert abs(float(loaded.min()) - 0.0) <= 1e-6
+    assert abs(float(loaded.max()) - 1.0) <= 1e-6
+    assert abs(float(loaded[0, 1]) - 0.5) <= 1e-6
     assert float(loaded[0, 1]) > 0.01
 
 
-def test_apply_quixel_to_layer_decodes_packed_flat_normals(stack):
+def test_apply_quixel_to_layer_decodes_packed_flat_normals(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,
         apply_quixel_to_layer,
@@ -545,12 +587,14 @@ def test_apply_quixel_to_layer_decodes_packed_flat_normals(stack):
 
     apply_quixel_to_layer(stack, "normal_layer", asset, normal_array=normal)
 
-    np.testing.assert_allclose(stack.terrain_normals[..., 0], 0.0, atol=1e-6)
-    np.testing.assert_allclose(stack.terrain_normals[..., 1], 0.0, atol=1e-6)
-    np.testing.assert_allclose(stack.terrain_normals[..., 2], 1.0, atol=1e-6)
+    terrain_normals = stack.terrain_normals
+    assert terrain_normals is not None
+    np.testing.assert_allclose(terrain_normals[..., 0], 0.0, atol=1e-6)
+    np.testing.assert_allclose(terrain_normals[..., 1], 0.0, atol=1e-6)
+    np.testing.assert_allclose(terrain_normals[..., 2], 1.0, atol=1e-6)
 
 
-def test_pass_quixel_ingest_with_assets_param(state):
+def test_pass_quixel_ingest_with_assets_param(state: "TerrainPipelineState") -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,
         pass_quixel_ingest,
@@ -562,7 +606,7 @@ def test_pass_quixel_ingest_with_assets_param(state):
     assert result.metrics["asset_count"] == 1
 
 
-def test_pass_quixel_ingest_handles_missing_paths(state):
+def test_pass_quixel_ingest_handles_missing_paths(state: "TerrainPipelineState") -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import pass_quixel_ingest
 
     state.intent.composition_hints["quixel_assets"] = [
@@ -574,7 +618,9 @@ def test_pass_quixel_ingest_handles_missing_paths(state):
     assert any(i.code == "quixel_ingest_failure" for i in result.issues)
 
 
-def test_pass_quixel_ingest_bundle_k_uses_composition_hints(state):
+def test_pass_quixel_ingest_bundle_k_uses_composition_hints(
+    state: "TerrainPipelineState",
+) -> None:
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import pass_quixel_ingest_bundle_k
 
     state.intent.composition_hints["quixel_assets"] = [
@@ -590,7 +636,7 @@ def test_pass_quixel_ingest_bundle_k_uses_composition_hints(state):
 # ---------------------------------------------------------------------------
 
 
-def test_register_bundle_k_passes():
+def test_register_bundle_k_passes() -> None:
     from veilbreakers_terrain.handlers.terrain_bundle_k import (
         BUNDLE_K_PASSES,
         register_bundle_k_passes,
@@ -614,7 +660,7 @@ def test_register_bundle_k_passes():
             TerrainPassController.PASS_REGISTRY[k] = v
 
 
-def test_bundle_k_passes_produce_unity_channels():
+def test_bundle_k_passes_produce_unity_channels() -> None:
     """Ensure Bundle K passes collectively produce macro_color +
     roughness_variation + (implicit via cloud_shadow) for Unity export."""
     from veilbreakers_terrain.handlers.terrain_bundle_k import register_bundle_k_passes
@@ -624,7 +670,7 @@ def test_bundle_k_passes_produce_unity_channels():
     try:
         TerrainPassController.clear_registry()
         register_bundle_k_passes()
-        produced = set()
+        produced: set[str] = set()
         for name in ("macro_color", "multiscale_breakup", "shadow_clipmap",
                      "roughness_driver", "stochastic_shader", "quixel_ingest"):
             produced.update(TerrainPassController.PASS_REGISTRY[name].produces_channels)

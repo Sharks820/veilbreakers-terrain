@@ -15,9 +15,13 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, cast
 from unittest.mock import patch
 
-import pytest
+Vec3 = tuple[float, float, float]
+Edge = tuple[int, int]
+Face = Sequence[int]
 
 
 # ---------------------------------------------------------------------------
@@ -32,18 +36,22 @@ def _install_bpy_stub() -> None:
     if "bpy" in sys.modules:
         return
 
-    bpy = types.ModuleType("bpy")
-    data = types.SimpleNamespace()
-    context = types.SimpleNamespace()
-
-    _meshes: dict[str, object] = {}
-    _objects: dict[str, object] = {}
+    _meshes: dict[str, "_StubMesh"] = {}
+    _objects: dict[str, "_StubObject"] = {}
 
     class _StubMesh:
         def __init__(self, name: str) -> None:
             self.name = name
+            self.verts: list[Vec3] = []
+            self.edges: list[Edge] = []
+            self.faces: list[Face] = []
 
-        def from_pydata(self, verts, edges, faces) -> None:  # noqa: D401
+        def from_pydata(
+            self,
+            verts: Iterable[Vec3],
+            edges: Iterable[Edge],
+            faces: Iterable[Face],
+        ) -> None:  # noqa: D401
             self.verts = list(verts)
             self.edges = list(edges)
             self.faces = list(faces)
@@ -77,13 +85,28 @@ def _install_bpy_stub() -> None:
 
     class _SceneCollection:
         def __init__(self) -> None:
-            self.objects = types.SimpleNamespace(
-                link=lambda obj: _objects.setdefault(obj.name, obj)
-            )
+            self.objects = _SceneObjectLinks()
 
-    data.meshes = _MeshCollection()
-    data.objects = _ObjectCollection()
-    context.collection = _SceneCollection()
+    class _SceneObjectLinks:
+        def link(self, obj: _StubObject) -> _StubObject:
+            return _objects.setdefault(obj.name, obj)
+
+    class _BpyData:
+        def __init__(self) -> None:
+            self.meshes = _MeshCollection()
+            self.objects = _ObjectCollection()
+
+    class _BpyContext:
+        def __init__(self) -> None:
+            self.collection = _SceneCollection()
+
+    class _BpyStub(types.ModuleType):
+        data: _BpyData
+        context: _BpyContext
+
+    bpy = _BpyStub("bpy")
+    data = _BpyData()
+    context = _BpyContext()
     bpy.data = data
     bpy.context = context
     sys.modules["bpy"] = bpy
@@ -97,6 +120,11 @@ _install_bpy_stub()
 # ---------------------------------------------------------------------------
 
 from veilbreakers_terrain.handlers import terrain_caves  # noqa: E402
+from veilbreakers_terrain.handlers.terrain_semantics import (  # noqa: E402
+    BBox,
+    PassResult,
+    TerrainPipelineState,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +132,12 @@ from veilbreakers_terrain.handlers import terrain_caves  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def _baseline_params(**overrides) -> dict:
+Metadata = terrain_caves.Metadata
+
+
+def _baseline_params(**overrides: object) -> Metadata:
     """Default cave-adapter param shape — matches what compose_map sends."""
-    base = {
+    base: Metadata = {
         "name": "TestCave",
         "seed": 42,
         "width": 16,
@@ -142,7 +173,7 @@ def test_handle_generate_cave_wraps_pass_caves() -> None:
 
     real_pass_caves = terrain_caves.pass_caves
 
-    def fake_pass_caves(state, region):
+    def fake_pass_caves(state: TerrainPipelineState, region: BBox) -> PassResult:
         # Return a sentinel-bearing PassResult — the adapter must surface
         # this through meta (per plan must_haves: "carry sentinel data
         # through meta or an explicit cave_bundle key").
@@ -238,7 +269,7 @@ def test_handle_generate_cave_error_path_returns_dict() -> None:
     them escape into the MCP framework dispatch loop.
     """
     # Force pass_caves to raise — proves the try/except gate works.
-    def boom(state, region):
+    def boom(state: TerrainPipelineState, region: BBox) -> PassResult:
         raise RuntimeError("synthetic pass_caves failure for adapter error test")
 
     with patch.object(terrain_caves, "pass_caves", side_effect=boom):
@@ -315,11 +346,12 @@ def test_cave_speleothem_pairing_density() -> None:
     assert high["status"] in {"ok", "warning"}, high
     assert low["status"] in {"ok", "warning"}, low
 
-    def _counts(res) -> dict[str, int]:
+    def _counts(res: Mapping[str, Any]) -> dict[str, int]:
         c = {"stalactite": 0, "stalagmite": 0, "column": 0}
-        for prop in res.get("natural_props", []):
+        natural_props = cast(Iterable[Mapping[str, object]], res.get("natural_props", []))
+        for prop in natural_props:
             t = prop.get("prop_type")
-            if t in c:
+            if isinstance(t, str) and t in c:
                 c[t] += 1
         return c
 
@@ -440,7 +472,6 @@ def test_cave_canyon_dual_exit_regression() -> None:
     ``generate_canyon_dual_exit`` helper must still exist, be callable, and
     traversable=True on the adapter must surface an ``exit_secondary`` archway.
     """
-    import math
     import numpy as np
 
     # Helper must exist in the public API

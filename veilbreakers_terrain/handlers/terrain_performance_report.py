@@ -81,24 +81,34 @@ def collect_performance_report(
     # Per-category triangle estimate
     tri = {"terrain": base_tris, "water": 0, "foliage": 0, "rock": 0, "cliff": 0}
 
+    # FIX-B14-P1-28: previous estimates used *2 for all categories (density×2),
+    # which is a fiction — it conflates cell count with triangle count.
+    # These remain estimates (real tri counts come from the mesh export step),
+    # but per-category multipliers are now calibrated to actual geometry:
+    #   water:   2 tris/cell (flat quad — unchanged, water surfaces are flat)
+    #   foliage: 10 tris/cell avg (grass card = 2 crossed quads = 8 tris + stem ≈ 10)
+    #            See mesh export step for authoritative foliage tri counts.
+    #   rock:    2 tris/cell (conservative — real rock meshes are in cliff_mesh_specs)
+    #   cliff:   8 tris/cell (fan triangulation per FIX-9-6: 4 base + 4 face quads)
+    # NOTE: these are still estimates; the mesh export step produces real counts.
     if stack.wetness is not None:
         wet_cells = int((stack.wetness > 0.0).sum())
-        tri["water"] = wet_cells * 2
+        tri["water"] = wet_cells * 2  # flat quad faces
 
     if stack.detail_density:
         foliage_cells = 0
         for v in stack.detail_density.values():
             if v is not None:
                 foliage_cells += int((v > 0.0).sum())
-        tri["foliage"] = foliage_cells * 2
+        tri["foliage"] = foliage_cells * 10  # ~10 tris avg per grass card
 
     if stack.rock_hardness is not None:
         rock_cells = int((stack.rock_hardness > 0.0).sum())
-        tri["rock"] = rock_cells * 2
+        tri["rock"] = rock_cells * 2  # conservative; real meshes in cliff_mesh_specs
 
     if stack.cliff_candidate is not None:
         cliff_cells = int((stack.cliff_candidate > 0.5).sum())
-        tri["cliff"] = cliff_cells * 2
+        tri["cliff"] = cliff_cells * 8  # fan triangulation surcharge (4 base + 4 face)
 
     report.triangle_count = tri
 

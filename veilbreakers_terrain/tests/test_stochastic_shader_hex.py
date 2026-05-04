@@ -7,8 +7,24 @@ All tests are pure numpy; no bpy required.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any, TypeAlias
+
 import numpy as np
+import numpy.typing as npt
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        PassResult,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+    from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
+        StochasticShaderTemplate,
+    )
+
+CompositionHints: TypeAlias = dict[str, Any]
+Float64Array: TypeAlias = npt.NDArray[np.float64]
 
 
 # ---------------------------------------------------------------------------
@@ -16,11 +32,13 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(tile_size: int = 32, seed: int = 7, cell_size: float = 2.0):
+def _make_stack(
+    tile_size: int = 32, seed: int = 7, cell_size: float = 2.0
+) -> TerrainMaskStack:
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
-    h = (
+    h: Float64Array = (
         60.0
         + 350.0 * rng.standard_normal((tile_size + 1, tile_size + 1))
     ).astype(np.float64)
@@ -35,7 +53,9 @@ def _make_stack(tile_size: int = 32, seed: int = 7, cell_size: float = 2.0):
     )
 
 
-def _make_state(tile_size: int = 32, seed: int = 7, hints: dict | None = None):
+def _make_state(
+    tile_size: int = 32, seed: int = 7, hints: CompositionHints | None = None
+) -> TerrainPipelineState:
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -45,18 +65,19 @@ def _make_state(tile_size: int = 32, seed: int = 7, hints: dict | None = None):
     stack = _make_stack(tile_size=tile_size, seed=seed)
     extent = float(tile_size) * float(stack.cell_size)
     region = BBox(0.0, 0.0, extent, extent)
+    composition_hints: CompositionHints = {} if hints is None else hints
     intent = TerrainIntentState(
         seed=seed,
         region_bounds=region,
         tile_size=tile_size,
         cell_size=stack.cell_size,
-        composition_hints=hints or {},
+        composition_hints=composition_hints,
     )
     return TerrainPipelineState(intent=intent, mask_stack=stack)
 
 
 @pytest.fixture()
-def stack():
+def stack() -> TerrainMaskStack:
     return _make_stack()
 
 
@@ -66,7 +87,7 @@ def stack():
 
 
 class TestBuildHexTilingMaskContracts:
-    def test_shape_matches_heightmap(self, stack):
+    def test_shape_matches_heightmap(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -75,7 +96,7 @@ class TestBuildHexTilingMaskContracts:
         rows, cols = stack.height.shape
         assert mask.shape == (rows, cols, 2)
 
-    def test_dtype_is_float32(self, stack):
+    def test_dtype_is_float32(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -83,7 +104,9 @@ class TestBuildHexTilingMaskContracts:
         mask = build_hex_tiling_mask(stack, tile_size_m=4.0, seed=0)
         assert mask.dtype == np.float32
 
-    def test_range_within_half_with_histogram_preserving(self, stack):
+    def test_range_within_half_with_histogram_preserving(
+        self, stack: TerrainMaskStack
+    ):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -92,7 +115,9 @@ class TestBuildHexTilingMaskContracts:
         assert float(mask.min()) >= -0.5 - 1e-6
         assert float(mask.max()) <= 0.5 + 1e-6
 
-    def test_range_within_half_without_histogram_preserving(self, stack):
+    def test_range_within_half_without_histogram_preserving(
+        self, stack: TerrainMaskStack
+    ):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -101,7 +126,7 @@ class TestBuildHexTilingMaskContracts:
         assert float(mask.min()) >= -0.5 - 1e-4
         assert float(mask.max()) <= 0.5 + 1e-4
 
-    def test_deterministic_same_seed(self, stack):
+    def test_deterministic_same_seed(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -110,7 +135,7 @@ class TestBuildHexTilingMaskContracts:
         b = build_hex_tiling_mask(stack, tile_size_m=4.0, seed=99)
         np.testing.assert_array_equal(a, b)
 
-    def test_different_seeds_differ(self, stack):
+    def test_different_seeds_differ(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -119,7 +144,7 @@ class TestBuildHexTilingMaskContracts:
         b = build_hex_tiling_mask(stack, tile_size_m=4.0, seed=2)
         assert not np.array_equal(a, b)
 
-    def test_rejects_non_positive_tile_size(self, stack):
+    def test_rejects_non_positive_tile_size(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -135,12 +160,11 @@ class TestBuildHexTilingMaskContracts:
             build_hex_tiling_mask,
         )
 
-        class _FakeStack:
-            height = None
-            cell_size = 1.0
+        stack = _make_stack()
+        object.__setattr__(stack, "height", None)
 
         with pytest.raises((ValueError, AttributeError)):
-            build_hex_tiling_mask(_FakeStack(), tile_size_m=4.0, seed=0)
+            build_hex_tiling_mask(stack, tile_size_m=4.0, seed=0)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +173,7 @@ class TestBuildHexTilingMaskContracts:
 
 
 class TestHistogramPreserving:
-    def test_hp_true_yields_exact_uniform_distribution(self, stack):
+    def test_hp_true_yields_exact_uniform_distribution(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -161,7 +185,7 @@ class TestHistogramPreserving:
             expected = np.linspace(-0.5, 0.5, n, dtype=np.float32)
             np.testing.assert_allclose(vals, expected, atol=1e-6)
 
-    def test_hp_false_differs_from_hp_true(self, stack):
+    def test_hp_false_differs_from_hp_true(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -170,15 +194,17 @@ class TestHistogramPreserving:
         no_hp = build_hex_tiling_mask(stack, tile_size_m=4.0, seed=5, histogram_preserving=False)
         assert not np.array_equal(hp, no_hp)
 
-    def test_hp_true_endpoints_are_exactly_minus_half_and_half(self, stack):
+    def test_hp_true_endpoints_are_exactly_minus_half_and_half(
+        self, stack: TerrainMaskStack
+    ):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
 
         mask = build_hex_tiling_mask(stack, tile_size_m=4.0, seed=3, histogram_preserving=True)
         for ch in range(2):
-            assert float(mask[..., ch].min()) == pytest.approx(-0.5, abs=1e-6)
-            assert float(mask[..., ch].max()) == pytest.approx(0.5, abs=1e-6)
+            np.testing.assert_allclose(float(mask[..., ch].min()), -0.5, atol=1e-6)
+            np.testing.assert_allclose(float(mask[..., ch].max()), 0.5, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +213,7 @@ class TestHistogramPreserving:
 
 
 class TestUVRotation:
-    def test_zero_rotation_is_default(self, stack):
+    def test_zero_rotation_is_default(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -196,7 +222,7 @@ class TestUVRotation:
         b = build_hex_tiling_mask(stack, tile_size_m=4.0, seed=11)
         np.testing.assert_array_equal(a, b)
 
-    def test_nonzero_rotation_changes_output(self, stack):
+    def test_nonzero_rotation_changes_output(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -205,7 +231,7 @@ class TestUVRotation:
         with_rot = build_hex_tiling_mask(stack, tile_size_m=4.0, seed=11, uv_rotation_range=0.5)
         assert not np.array_equal(no_rot, with_rot)
 
-    def test_rotation_preserves_shape_dtype(self, stack):
+    def test_rotation_preserves_shape_dtype(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -217,7 +243,7 @@ class TestUVRotation:
         assert mask.shape == (rows, cols, 2)
         assert mask.dtype == np.float32
 
-    def test_rotation_deterministic(self, stack):
+    def test_rotation_deterministic(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -233,7 +259,7 @@ class TestUVRotation:
 
 
 class TestTileSizesAndResolutions:
-    def test_large_tile_size(self, stack):
+    def test_large_tile_size(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -241,7 +267,7 @@ class TestTileSizesAndResolutions:
         mask = build_hex_tiling_mask(stack, tile_size_m=512.0, seed=0)
         assert mask.shape == (*stack.height.shape, 2)
 
-    def test_small_tile_size(self, stack):
+    def test_small_tile_size(self, stack: TerrainMaskStack):
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             build_hex_tiling_mask,
         )
@@ -287,7 +313,7 @@ class TestTileSizesAndResolutions:
 
 class TestHexDispatchViaHints:
     @staticmethod
-    def _run_pass(hints: dict):
+    def _run_pass(hints: CompositionHints) -> tuple[TerrainPipelineState, PassResult]:
         from veilbreakers_terrain.handlers.terrain_semantics import BBox
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             pass_stochastic_shader,
@@ -352,11 +378,11 @@ class TestHexDispatchViaHints:
 
 
 class TestStochasticShaderTemplateTilingMode:
-    def _make_tpl(self, **kwargs):
+    def _make_tpl(self, tiling_mode: str = "triangular") -> StochasticShaderTemplate:
         from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
             StochasticShaderTemplate,
         )
-        return StochasticShaderTemplate(template_id="test_mat", **kwargs)
+        return StochasticShaderTemplate(template_id="test_mat", tiling_mode=tiling_mode)
 
     def test_default_tiling_mode_is_triangular(self):
         tpl = self._make_tpl()

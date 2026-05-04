@@ -14,15 +14,15 @@ from __future__ import annotations
 
 import math
 import random
+import importlib
+import importlib.util
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
-try:
-    import numpy as _np
-    from scipy.spatial import Voronoi as _ScipyVoronoi
-    _SCIPY_AVAILABLE = True
-except ImportError:
-    _SCIPY_AVAILABLE = False
+_SCIPY_AVAILABLE = (
+    importlib.util.find_spec("numpy") is not None
+    and importlib.util.find_spec("scipy.spatial") is not None
+)
 
 # ---------------------------------------------------------------------------
 # Data dictionaries
@@ -359,6 +359,9 @@ def _compute_voronoi_bounds(
     cx, cy = centers[idx]
 
     if _SCIPY_AVAILABLE and len(centers) >= 3:
+        _np = importlib.import_module("numpy")
+        spatial = importlib.import_module("scipy.spatial")
+        scipy_voronoi = getattr(spatial, "Voronoi")
         # Mirror points around each map edge to give scipy boundary context,
         # then collect the exact Voronoi vertices that belong to region idx.
         pts = _np.array(centers, dtype=float)
@@ -373,7 +376,7 @@ def _compute_voronoi_bounds(
             pts + _np.array([0, -2 * map_size]),                    # bottom
         ])
         all_pts = _np.vstack([pts, mirrors])
-        vor = _ScipyVoronoi(all_pts)
+        vor = scipy_voronoi(all_pts)
         # point_region maps input index → region index in vor.regions
         region_idx = vor.point_region[idx]
         vert_indices = vor.regions[region_idx]
@@ -432,7 +435,7 @@ def _build_connections(
 
     while len(in_tree) < len(regions):
         best_dist = math.inf
-        best_pair = (None, None)
+        best_pair: tuple[Region, Region] | None = None
         for r in regions:
             if r.name not in in_tree:
                 continue
@@ -443,6 +446,8 @@ def _build_connections(
                 if d < best_dist:
                     best_dist = d
                     best_pair = (r, s)
+        if best_pair is None:
+            raise RuntimeError("failed to find candidate region connection")
         a, b = best_pair
         road_type = "main" if best_dist < (map_size * 0.25) else "path"
         connections.append(Connection(

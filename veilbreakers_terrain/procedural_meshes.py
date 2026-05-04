@@ -50,12 +50,29 @@ from __future__ import annotations
 
 import math
 from functools import lru_cache, wraps
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import Any, Protocol, TypeAlias
 
 # ---------------------------------------------------------------------------
 # Mesh result type alias
 # ---------------------------------------------------------------------------
 MeshSpec = dict[str, Any]
+Vertex: TypeAlias = tuple[float, float, float]
+Face: TypeAlias = tuple[int, ...]
+MeshPart: TypeAlias = tuple[list[Vertex], list[Face]]
+MeshGenerator: TypeAlias = Callable[..., MeshSpec]
+
+__all__ = [
+    "GENERATORS",
+    "MeshSpec",
+    "_circle_points",
+    "_detect_grid_dims",
+    "_detect_grid_dims_from_vertices",
+]
+
+
+class _GridMeshLike(Protocol):
+    verts: Iterable[Any]
 
 # ---------------------------------------------------------------------------
 # Grid-mesh dimension detection (Phase 50-02 G2 — moved from environment.py)
@@ -93,7 +110,7 @@ def _detect_grid_dims_from_vertices(vertices: list[Any]) -> tuple[int, int]:
     return side, side
 
 
-def _detect_grid_dims(bm) -> tuple[int, int]:
+def _detect_grid_dims(bm: _GridMeshLike) -> tuple[int, int]:
     """WORLD-004: Detect actual (rows, cols) of a terrain grid mesh.
 
     Counts unique rounded X and Y coordinate positions to infer actual grid
@@ -280,9 +297,9 @@ def _make_result(
 
 
 def _alias_generator_category(
-    generator: Any,
+    generator: MeshGenerator,
     alias_category: str,
-) -> Any:
+) -> MeshGenerator:
     """Return a wrapper that rewrites metadata.category for alias access."""
 
     @wraps(generator)
@@ -290,41 +307,41 @@ def _alias_generator_category(
         result = generator(*args, **kwargs)
         metadata = dict(result.get("metadata", {}))
         metadata["category"] = alias_category
-        alias_result = dict(result)
+        alias_result: MeshSpec = dict(result)
         alias_result["metadata"] = metadata
-        return alias_result  # type: ignore[return-value]
+        return alias_result
 
     return _wrapped
 
 
-class _GeneratorRegistry(dict[str, dict[str, Any]]):
+class _GeneratorRegistry(dict[str, dict[str, MeshGenerator]]):
     """Dictionary-like registry with backward-compatible category aliases."""
 
     def __init__(
         self,
-        canonical: dict[str, dict[str, Any]],
+        canonical: dict[str, dict[str, MeshGenerator]],
         aliases: dict[str, str],
     ) -> None:
         super().__init__(canonical)
         self._aliases = aliases
-        self._alias_cache: dict[str, dict[str, Any]] = {}
+        self._alias_cache: dict[str, dict[str, MeshGenerator]] = {}
 
     def __contains__(self, key: object) -> bool:
-        return dict.__contains__(self, key) or (
+        return super().__contains__(key) or (
             isinstance(key, str) and key in self._aliases
         )
 
-    def __getitem__(self, key: str) -> dict[str, Any]:
-        if dict.__contains__(self, key):
-            return dict.__getitem__(self, key)
+    def __getitem__(self, key: str) -> dict[str, MeshGenerator]:
+        if super().__contains__(key):
+            return super().__getitem__(key)
         canonical_key = self._aliases.get(key)
         if canonical_key is None:
             raise KeyError(key)
         cached = self._alias_cache.get(key)
         if cached is not None:
             return cached
-        canonical_group = dict.__getitem__(self, canonical_key)
-        alias_group = {
+        canonical_group = super().__getitem__(canonical_key)
+        alias_group: dict[str, MeshGenerator] = {
             name: _alias_generator_category(func, key)
             for name, func in canonical_group.items()
         }
@@ -813,7 +830,7 @@ def _enhance_mesh_detail(
         for fi, face in enumerate(fcs):
             n = len(face)
             # Check which edges of this face are sharp and got new verts
-            splits = {}
+            splits: dict[int, tuple[int, int]] = {}
             for i in range(n):
                 a = face[i]
                 b = face[(i + 1) % n]
@@ -1105,7 +1122,7 @@ def generate_table_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Table top
     top_thickness = 0.05 if style == "stone_slab" else 0.04
@@ -1135,7 +1152,7 @@ def generate_table_mesh(
             )
             parts.append((sv, sf))
     else:
-        positions = []
+        positions: list[tuple[float, float]] = []
         inset_x = width * 0.42
         inset_z = depth * 0.42
         if legs == 4:
@@ -1186,7 +1203,7 @@ def generate_table_mesh(
             _rotated_v = [
                 (-width * 0.42 + (v[0] + brace_y) / leg_height * width * 0.84,
                  brace_y, inset_z)
-                for i, v in enumerate(sv)
+                for v in sv
             ]
             # Simplified: just use a box brace
             bv, bf = _make_box(0, brace_y, inset_z, width * 0.42, brace_r, brace_r)
@@ -1214,7 +1231,7 @@ def generate_chair_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     seat_w = 0.45 if style != "throne" else 0.6
     seat_d = 0.42 if style != "throne" else 0.55
     seat_h = 0.45
@@ -1321,7 +1338,7 @@ def generate_shelf_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     tier_spacing = 0.35
     shelf_thick = 0.02
     total_h = tiers * tier_spacing
@@ -1390,7 +1407,7 @@ def generate_chest_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     w = 0.5 * size
     h = 0.3 * size
     d = 0.35 * size
@@ -1490,7 +1507,7 @@ def generate_barrel_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Main barrel body with bulge profile
     profile: list[tuple[float, float]] = []
@@ -1540,7 +1557,7 @@ def generate_candelabra_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 8
 
     if wall_mounted:
@@ -1650,7 +1667,7 @@ def generate_bookshelf_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     total_w = 0.9
     total_d = 0.28
     section_h = 0.32
@@ -1736,7 +1753,7 @@ def generate_tree_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 14
 
     # Trunk with taper and organic wobble
@@ -1957,7 +1974,7 @@ def generate_rock_mesh(
         MeshSpec with vertices, faces, uvs, and metadata.
     """
     detail = max(1, min(5, detail))
-    parts = []
+    parts: list[MeshPart] = []
 
     if rock_type == "boulder":
         verts, faces = _make_faceted_rock_shell(
@@ -2057,7 +2074,7 @@ def generate_rock_mesh(
         # Hexagonal crystal cluster
         import random as _rng
         rng = _rng.Random(99)
-        for c in range(3 + detail):
+        for _ in range(3 + detail):
             cx = rng.uniform(-0.15, 0.15) * size
             cz = rng.uniform(-0.15, 0.15) * size
             crystal_h = rng.uniform(0.3, 0.7) * size
@@ -2112,7 +2129,7 @@ def generate_mushroom_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 12
 
     if cap_style == "giant_cap":
@@ -2242,7 +2259,7 @@ def generate_root_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs_circ = 6
 
     for i in range(segments):
@@ -2392,7 +2409,7 @@ def generate_ivy_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     import random as _rng
     rng = _rng.Random(71)
 
@@ -2449,7 +2466,7 @@ def generate_torch_sconce_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 8
 
     # Wall plate
@@ -2521,7 +2538,7 @@ def generate_prison_door_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     bar_r = 0.015
     bar_segs = 6
 
@@ -2601,7 +2618,7 @@ def generate_sarcophagus_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     w = 0.5
     h = 0.4
     d = 1.0
@@ -2670,7 +2687,7 @@ def generate_altar_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "sacrificial":
         # Large stone slab on pillars
@@ -2753,7 +2770,7 @@ def generate_pillar_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "stone_round":
         # Classical column with base and capital
@@ -2768,7 +2785,7 @@ def generate_pillar_mesh(
         parts.append((bv, bf))
 
         # Shaft with entasis (slight mid-bulge)
-        shaft_profile = []
+        shaft_profile: list[tuple[float, float]] = []
         shaft_rings = 12
         for i in range(shaft_rings + 1):
             t = i / shaft_rings
@@ -2816,7 +2833,7 @@ def generate_pillar_mesh(
 
     elif style == "wooden":
         # Rough wooden post with grain ridges
-        shaft_profile = []
+        shaft_profile: list[tuple[float, float]] = []
         shaft_rings = 16
         for i in range(shaft_rings + 1):
             t = i / shaft_rings
@@ -2851,7 +2868,7 @@ def generate_pillar_mesh(
         parts.append((bv, bf))
 
         # Truncated shaft
-        shaft_profile = []
+        shaft_profile: list[tuple[float, float]] = []
         shaft_rings = 8
         for i in range(shaft_rings + 1):
             t = i / shaft_rings
@@ -2881,7 +2898,7 @@ def generate_pillar_mesh(
 
     else:  # carved_serpent
         # Round column with spiral carved groove
-        profile = []
+        profile: list[tuple[float, float]] = []
         rings = 24
         for i in range(rings + 1):
             t = i / rings
@@ -2921,7 +2938,7 @@ def generate_archway_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     post_w = 0.2
     arch_segs = 12
 
@@ -3115,7 +3132,7 @@ def generate_chain_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     link_spacing = link_size * 1.8
     wire_r = link_size * 0.15
 
@@ -3156,7 +3173,7 @@ def generate_skull_pile_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     import random as _rng
     rng = _rng.Random(666)  # Appropriately dark seed
 
@@ -3214,7 +3231,7 @@ def generate_hammer_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     handle_r = 0.015
     segs = 8
 
@@ -3290,7 +3307,7 @@ def generate_spear_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     shaft_r = 0.012
     segs = 8
 
@@ -3310,7 +3327,7 @@ def generate_spear_mesh(
         blade_h = 0.2
         blade_w = 0.04
         blade_d = 0.008
-        profile = []
+        profile: list[tuple[float, float]] = []
         blade_segs = 8
         for i in range(blade_segs + 1):
             t = i / blade_segs
@@ -3387,7 +3404,7 @@ def generate_crossbow_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     s = size
 
     # Stock (main body)
@@ -3457,7 +3474,7 @@ def generate_scythe_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     shaft_r = 0.015
     segs = 8
 
@@ -3518,7 +3535,7 @@ def generate_flail_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     handle_len = 0.4
     handle_r = 0.018
     segs = 8
@@ -3597,7 +3614,7 @@ def generate_whip_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     handle_len = 0.25
     handle_r = 0.018
     segs_circ = 6
@@ -3651,7 +3668,7 @@ def generate_claw_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     finger_count = max(3, min(5, finger_count))
 
     # Palm/gauntlet base
@@ -3716,7 +3733,7 @@ def generate_tome_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     s = size
 
     cover_w = 0.15 * s
@@ -3753,7 +3770,7 @@ def generate_tome_mesh(
     spine_faces: list[tuple[int, ...]] = []
     spine_h_segs = 8
     for i in range(len(spine_profile)):
-        r, z = spine_profile[i]
+        _, z = spine_profile[i]
         for j in range(spine_h_segs + 1):
             t = j / spine_h_segs
             y = t * cover_h
@@ -6067,7 +6084,7 @@ def generate_gargoyle_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Body (hunched torso)
     body_r = 0.12
@@ -6163,7 +6180,7 @@ def generate_fountain_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     tiers = max(1, min(3, tiers))
 
     for tier in range(tiers):
@@ -6237,7 +6254,7 @@ def generate_statue_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     s = size
 
     # Pedestal
@@ -6332,7 +6349,7 @@ def generate_bridge_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style in {"stone", "stone_arch", "stone_viaduct"}:
         # Stone bridges are modular arch systems rather than one stretched rib.
@@ -6631,7 +6648,7 @@ def generate_gate_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "portcullis":
         bar_r = 0.02
@@ -6764,7 +6781,7 @@ def generate_staircase_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     step_h = 0.18
     step_d = 0.28
 
@@ -6877,7 +6894,7 @@ def generate_fence_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     posts = max(2, posts)
     spacing = length / (posts - 1)
 
@@ -7026,7 +7043,7 @@ def generate_fence_mesh(
             # Rotate to horizontal
             r_verts = [(v[1] - rail_y + (-length / 2), rail_y + v[0] - (-length / 2) * 0, v[2]) for v in rv]
             # Proper rotation: the cylinder is along Y, we need it along X
-            r_verts2 = []
+            r_verts2: list[Vertex] = []
             for v in rv:
                 nx = v[1] - rail_y + (-length / 2)
                 ny = rail_y
@@ -7052,7 +7069,7 @@ def generate_barricade_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "wooden_hasty":
         # Main angled planks
@@ -7170,7 +7187,7 @@ def generate_railing_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     rail_h = 0.9
 
     if style == "iron_ornate":
@@ -7299,7 +7316,7 @@ def generate_spike_trap_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     hs = size / 2
     pit_depth = 0.3
 
@@ -7309,23 +7326,23 @@ def generate_spike_trap_mesh(
 
     # Pit walls (4 sides)
     wall_thick = 0.03
-    for side, (cx, cz, wx, wz) in enumerate([
+    for cx, cz, wx, wz in [
         (0, -hs, hs, wall_thick),
         (0, hs, hs, wall_thick),
         (-hs, 0, wall_thick, hs),
         (hs, 0, wall_thick, hs),
-    ]):
+    ]:
         wv, wf = _make_box(cx, -pit_depth / 2, cz, wx, pit_depth / 2, wz)
         parts.append((wv, wf))
 
     # Rim/lip around pit edge
     rim_w = 0.05
-    for side, (cx, cz, rx, rz) in enumerate([
+    for cx, cz, rx, rz in [
         (0, -hs - rim_w / 2, hs + rim_w, rim_w / 2),
         (0, hs + rim_w / 2, hs + rim_w, rim_w / 2),
         (-hs - rim_w / 2, 0, rim_w / 2, hs),
         (hs + rim_w / 2, 0, rim_w / 2, hs),
-    ]):
+    ]:
         rv, rf = _make_beveled_box(cx, 0.01, cz, rx, 0.015, rz, bevel=0.003)
         parts.append((rv, rf))
 
@@ -7363,7 +7380,7 @@ def generate_bear_trap_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     r = size / 2
     plate_h = 0.015
 
@@ -7427,7 +7444,7 @@ def generate_pressure_plate_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     hs = size / 2
     plate_h = 0.03
     recess_depth = 0.015
@@ -7439,12 +7456,12 @@ def generate_pressure_plate_mesh(
 
     # Frame border pieces (4 sides)
     border_w = 0.03
-    for side, (cx, cz, bx, bz) in enumerate([
+    for cx, cz, bx, bz in [
         (0, -hf + border_w / 2, hf, border_w / 2),
         (0, hf - border_w / 2, hf, border_w / 2),
         (-hf + border_w / 2, 0, border_w / 2, hf - border_w),
         (hf - border_w / 2, 0, border_w / 2, hf - border_w),
-    ]):
+    ]:
         fv, ff = _make_beveled_box(
             cx, -recess_depth / 2, cz,
             bx, recess_depth / 2, bz,
@@ -7486,7 +7503,7 @@ def generate_dart_launcher_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Wall mount plate
     plate_w = 0.2
@@ -7520,7 +7537,7 @@ def generate_dart_launcher_mesh(
         # Rotate tubes to point outward (along Z)
         _t_verts = [(v[0], v[1], v[1] - ty + plate_d / 2) for v in tv]
         # Proper: cylinder is along Y, we need it along Z
-        t_verts2 = []
+        t_verts2: list[Vertex] = []
         for v in tv:
             nz = v[1] - ty + plate_d / 2
             ny = ty
@@ -7531,7 +7548,7 @@ def generate_dart_launcher_mesh(
         dv, df = _make_cone(tx, ty, plate_d / 2 + tube_depth * 0.3,
                             tube_r * 0.5, tube_depth * 0.6, segments=4)
         # Rotate dart to point along Z
-        d_verts = []
+        d_verts: list[Vertex] = []
         for v in dv:
             nz = v[1] - ty + plate_d / 2 + tube_depth * 0.3
             ny = ty
@@ -7556,7 +7573,7 @@ def generate_swinging_blade_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Ceiling mount bracket
     bracket_w = arc
@@ -7626,7 +7643,7 @@ def generate_falling_cage_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     hs = size / 2
     cage_h = size * 1.2
     bar_r = 0.012
@@ -7720,7 +7737,7 @@ def generate_cart_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     s = size
 
     # Base platform
@@ -7755,7 +7772,7 @@ def generate_cart_mesh(
     # Wheels
     wheel_r = 0.25 * s
     wheel_thick = 0.03 * s
-    wheel_positions = []
+    wheel_positions: list[tuple[float, float]] = []
     if wheels == 4:
         for ax in axle_positions:
             wheel_positions.append((ax, -platform_d / 2 - 0.06 * s))
@@ -7883,7 +7900,7 @@ def generate_boat_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     s = size
 
     if style == "rowboat":
@@ -8105,7 +8122,7 @@ def generate_wagon_wheel_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     rim_minor = radius * 0.06
     hub_r = radius * 0.15
     hub_h = rim_minor * 2.5
@@ -8137,10 +8154,6 @@ def generate_wagon_wheel_mesh(
         sx = math.cos(angle) * (hub_r + spoke_len / 2)
         sz = math.sin(angle) * (hub_r + spoke_len / 2)
         # Each spoke is a cylinder from hub to rim, rotated into the XZ plane
-        sv, sf = _make_cylinder(
-            sx, -spoke_r, sz,
-            spoke_r, spoke_r * 2, segments=4,
-        )
         # Create spoke as a box oriented radially
         sv2, sf2 = _make_box(
             sx, 0, sz,
@@ -8148,7 +8161,7 @@ def generate_wagon_wheel_mesh(
         )
         # Rotate box to align with spoke direction
         ca, sa = math.cos(angle), math.sin(angle)
-        sv_rotated = []
+        sv_rotated: list[Vertex] = []
         for v in sv2:
             # Rotate around Y axis
             nx = v[0] * ca - v[2] * sa
@@ -8158,7 +8171,7 @@ def generate_wagon_wheel_mesh(
         mid_r = (hub_r + radius - rim_minor) / 2
         offset_x = math.cos(angle) * mid_r
         offset_z = math.sin(angle) * mid_r
-        sv_final = []
+        sv_final: list[Vertex] = []
         for v in sv_rotated:
             sv_final.append((v[0] - sx + offset_x, v[1], v[2] - sz + offset_z))
         parts.append((sv_final, sf2))
@@ -8188,7 +8201,7 @@ def generate_column_row_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     col_h = 3.0
 
     for i in range(count):
@@ -8302,7 +8315,7 @@ def generate_buttress_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "flying":
         # Pier (outer support pillar)
@@ -8384,7 +8397,7 @@ def generate_rampart_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     wall_thick = 0.6
     walkway_w = 0.8
     merlon_h = 0.5
@@ -8444,7 +8457,7 @@ def generate_drawbridge_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     plank_thick = 0.1
 
     # Main bridge deck (planks)
@@ -8529,7 +8542,7 @@ def generate_well_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     wall_thick = 0.1
     wall_h = 0.6
     inner_r = radius - wall_thick
@@ -8631,7 +8644,7 @@ def generate_ladder_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     ladder_w = 0.4
     rail_w = 0.04
     rail_d = 0.025
@@ -8679,7 +8692,7 @@ def generate_scaffolding_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     depth = 0.8
     pole_r = 0.025
     pole_segs = 6
@@ -8761,7 +8774,7 @@ def generate_sacrificial_circle_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Ground circle disc
     gv, gf = _make_cylinder(0, -0.02, 0, radius, 0.02, segments=24)
@@ -8830,7 +8843,7 @@ def generate_sacrificial_circle_mesh(
         )
         # Rotate to point outward
         ca, sa = math.cos(angle), math.sin(angle)
-        c_verts = []
+        c_verts: list[Vertex] = []
         for v in cv:
             nx = v[0] * ca - v[2] * sa
             nz = v[0] * sa + v[2] * ca
@@ -8855,7 +8868,7 @@ def generate_corruption_crystal_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Main crystal (hexagonal prism with pointed ends)
     crystal_r = height * 0.15
@@ -8883,7 +8896,7 @@ def generate_corruption_crystal_mesh(
     import random as _rng
     rng = _rng.Random(42)
     n_shards = max(3, facets // 2)
-    for i in range(n_shards):
+    for _ in range(n_shards):
         angle = rng.uniform(0, 2 * math.pi)
         dist = rng.uniform(crystal_r * 0.8, crystal_r * 1.5)
         shard_h = rng.uniform(height * 0.2, height * 0.4)
@@ -8925,7 +8938,7 @@ def generate_veil_tear_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Jagged frame (irregular ring of shards)
     n_shards = 16
@@ -8996,7 +9009,7 @@ def generate_soul_cage_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     r = size / 2
     cage_h = size * 1.4
     bar_r = 0.008
@@ -9089,7 +9102,7 @@ def generate_blood_fountain_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     tiers = max(1, min(3, tiers))
     basin_size = 1.2
 
@@ -9171,7 +9184,7 @@ def generate_bone_throne_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     seat_w = 0.7
     seat_d = 0.6
     seat_h = 0.5
@@ -9273,7 +9286,7 @@ def generate_dark_obelisk_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     base_w = height * 0.15
     top_w = base_w * 0.6
 
@@ -9375,7 +9388,7 @@ def generate_spider_web_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     strand_r = 0.003
     _strand_segs = 3
 
@@ -9406,7 +9419,7 @@ def generate_spider_web_mesh(
             )
             # Rotate to align with radial direction
             ca, sa = math.cos(angle), math.sin(angle)
-            s_verts = []
+            s_verts: list[Vertex] = []
             for v in sv:
                 nx = v[0] * ca - v[2] * sa
                 nz = v[0] * sa + v[2] * ca
@@ -9432,7 +9445,7 @@ def generate_spider_web_mesh(
             # Rotate segment to follow arc
             mid_angle = (a0 + a1) / 2
             ca, sa = math.cos(mid_angle + math.pi / 2), math.sin(mid_angle + math.pi / 2)
-            s_verts = []
+            s_verts: list[Vertex] = []
             for v in sv:
                 nx = v[0] * ca - v[2] * sa
                 nz = v[0] * sa + v[2] * ca
@@ -9455,7 +9468,7 @@ def generate_coffin_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     # Classic hexagonal coffin shape
     coffin_l = 1.9
     coffin_w = 0.6
@@ -9546,7 +9559,7 @@ def generate_gibbet_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     pole_r = 0.04
     cage_r = 0.25
     cage_h = 0.8
@@ -9653,7 +9666,7 @@ def generate_urn_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 16
 
     if style == "ceramic_round":
@@ -9759,7 +9772,7 @@ def generate_crate_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     hs = size / 2
     plank_t = size * 0.02  # plank thickness
     bevel = size * 0.005
@@ -9830,7 +9843,7 @@ def generate_sack_mesh(
         MeshSpec with vertices, faces, uvs, and metadata.
     """
     fullness = max(0.0, min(1.0, fullness))
-    parts = []
+    parts: list[MeshPart] = []
     segs = 12
     h = 0.4
     base_r = 0.15
@@ -9879,7 +9892,7 @@ def generate_basket_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 16
     h = size * 0.8
     r_bottom = size * 0.35
@@ -9942,7 +9955,7 @@ def generate_treasure_pile_mesh(
     """
     import random as _rng
     rng = _rng.Random(42)
-    parts = []
+    parts: list[MeshPart] = []
 
     # Base mound (flattened sphere)
     mound_profile = [
@@ -10000,7 +10013,7 @@ def generate_potion_bottle_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 12
 
     if style == "round_flask":
@@ -10114,7 +10127,7 @@ def generate_scroll_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 12
 
     if rolled:
@@ -10194,7 +10207,7 @@ def generate_lantern_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 8
 
     if style == "iron_cage":
@@ -10314,7 +10327,7 @@ def generate_brazier_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 12
 
     if style == "iron_standing":
@@ -10424,7 +10437,7 @@ def generate_campfire_mesh(
         MeshSpec with vertices, faces, uvs, and metadata.
     """
     log_count = max(2, min(8, log_count))
-    parts = []
+    parts: list[MeshPart] = []
 
     # Stone ring
     ring_r = 0.3
@@ -10490,7 +10503,7 @@ def generate_crystal_light_mesh(
     import random as _rng
     rng = _rng.Random(77)
     cluster_count = max(2, min(12, cluster_count))
-    parts = []
+    parts: list[MeshPart] = []
 
     # Base rock
     base_r = size * 0.3
@@ -10532,7 +10545,7 @@ def generate_magic_orb_light_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Central glowing orb
     ov, of = _make_sphere(0, 0, 0, radius, rings=8, sectors=12)
@@ -10595,7 +10608,7 @@ def generate_door_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     depth = 0.08
     _bevel = 0.005
 
@@ -10769,7 +10782,7 @@ def generate_window_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     frame_t = 0.04  # frame thickness
     frame_d = 0.06  # frame depth
 
@@ -10897,7 +10910,7 @@ def generate_trapdoor_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     hs = size / 2
     thickness = 0.04
 
@@ -10995,7 +11008,7 @@ def generate_banner_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Hanging rod (box approximation)
     rod_r = 0.012
@@ -11051,7 +11064,7 @@ def generate_wall_shield_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "round":
         # Circular shield with boss
@@ -11154,7 +11167,7 @@ def generate_mounted_head_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     # Wall plaque (shield-shaped mount)
     plaque_profile = [
@@ -11263,7 +11276,7 @@ def generate_painting_frame_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     frame_w = 0.04 if frame_style == "simple" else 0.06
     frame_d = 0.03
     inner_w = width - frame_w * 2
@@ -11337,7 +11350,7 @@ def generate_rug_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "circular":
         rug_r = min(width, length) / 2
@@ -11427,7 +11440,7 @@ def generate_chandelier_mesh(
     """
     arms = max(3, min(12, arms))
     tiers = max(1, min(3, tiers))
-    parts = []
+    parts: list[MeshPart] = []
 
     total_h = 0.3 + (tiers - 1) * 0.2
     # Central chain/rod
@@ -11496,7 +11509,7 @@ def generate_hanging_cage_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     bar_r = size * 0.01
 
     # Cage body - vertical bars in a cylindrical arrangement
@@ -11566,7 +11579,7 @@ def generate_anvil_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     s = size
 
     # Main body
@@ -11629,7 +11642,7 @@ def generate_forge_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     s = size
 
     # Main forge body (stone/brick base)
@@ -11696,7 +11709,7 @@ def generate_workbench_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     depth = 0.6
     height = 0.85
     top_t = 0.05
@@ -11773,7 +11786,7 @@ def generate_cauldron_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 16
 
     profile = [
@@ -11834,7 +11847,7 @@ def generate_grinding_wheel_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 16
     wheel_t = radius * 0.15
 
@@ -11891,7 +11904,7 @@ def generate_loom_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     beam_r = 0.02
     width = 0.8
     height = 1.2
@@ -11958,7 +11971,7 @@ def generate_market_stall_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     depth = 1.0
     counter_h = 0.9
     post_r = 0.03
@@ -12050,7 +12063,7 @@ def generate_signpost_mesh(
         MeshSpec with vertices, faces, uvs, and metadata.
     """
     arms = max(1, min(4, arms))
-    parts = []
+    parts: list[MeshPart] = []
 
     # Main post
     post_h = 1.5
@@ -12108,7 +12121,7 @@ def generate_gravestone_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "cross":
         arm_w = 0.08
@@ -12198,7 +12211,7 @@ def generate_waystone_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     base_r = height * 0.12
     sv, sf = _make_tapered_cylinder(0, 0, 0, base_r, base_r * 0.7,
@@ -12240,7 +12253,7 @@ def generate_milestone_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     stone_w = 0.15
     stone_h = 0.6
@@ -12293,7 +12306,7 @@ def generate_stalactite_mesh(
     """
     import random as _rng
     rng = _rng.Random(31)
-    parts = []
+    parts: list[MeshPart] = []
     segs = 8
 
     profile = [
@@ -12349,7 +12362,7 @@ def generate_stalagmite_mesh(
     """
     import random as _rng
     rng = _rng.Random(37)
-    parts = []
+    parts: list[MeshPart] = []
     segs = 8
 
     profile = [
@@ -12404,7 +12417,7 @@ def generate_bone_pile_mesh(
     import random as _rng
     rng = _rng.Random(66)
     count = max(5, min(30, count))
-    parts = []
+    parts: list[MeshPart] = []
     s = creature_size
 
     for _ in range(count):
@@ -12456,7 +12469,7 @@ def generate_nest_mesh(
     """
     import random as _rng
     rng = _rng.Random(44)
-    parts = []
+    parts: list[MeshPart] = []
 
     if material == "bird_sticks":
         bowl_profile = [
@@ -12560,7 +12573,7 @@ def generate_geyser_vent_mesh(
     """
     import random as _rng
     rng = _rng.Random(51)
-    parts = []
+    parts: list[MeshPart] = []
     segs = 12
 
     rim_profile = [
@@ -12615,7 +12628,7 @@ def generate_fallen_log_mesh(
     """
     import random as _rng
     rng = _rng.Random(73)
-    parts = []
+    parts: list[MeshPart] = []
     segs = 12
     r = diameter / 2
 
@@ -13573,7 +13586,12 @@ def generate_arrow_mesh(shaft_length: float = 0.7, head_style: str = "broadhead"
     hy = shaft_length
     if head_style == "broadhead":
         hh, hw = shaft_length * 0.06, sr * 6
-        dv = [(0, hy, 0), (hw, hy + hh * 0.4, 0), (0, hy + hh, 0), (-hw, hy + hh * 0.4, 0)]
+        dv: list[Vertex] = [
+            (0.0, hy, 0.0),
+            (hw, hy + hh * 0.4, 0.0),
+            (0.0, hy + hh, 0.0),
+            (-hw, hy + hh * 0.4, 0.0),
+        ]
         parts.append((dv, [(0, 1, 2, 3)]))
         parts.append(([(v[0], v[1], sr * 0.5) for v in dv], [(3, 2, 1, 0)]))
     elif head_style == "bodkin":
@@ -14137,7 +14155,7 @@ def generate_magical_barrier_mesh(size: float = 1.0) -> MeshSpec:
     br = 0.30 * size
     segs = 16
     # Upper hemisphere dome via lathe profile
-    dome_profile = []
+    dome_profile: list[tuple[float, float]] = []
     for _ri in range(7):
         phi = math.pi * 0.5 * _ri / 6
         dome_profile.append((br * math.cos(phi), br * math.sin(phi)))
@@ -14585,7 +14603,12 @@ def generate_fire_arrow_mesh(shaft_length: float = 0.7) -> MeshSpec:
                       [(0, 1, 2, 3)]))
     hy = shaft_length
     hh, hw = shaft_length * 0.06, sr * 5
-    dv = [(0, hy, 0), (hw, hy + hh * 0.4, 0), (0, hy + hh, 0), (-hw, hy + hh * 0.4, 0)]
+    dv: list[Vertex] = [
+        (0.0, hy, 0.0),
+        (hw, hy + hh * 0.4, 0.0),
+        (0.0, hy + hh, 0.0),
+        (-hw, hy + hh * 0.4, 0.0),
+    ]
     parts.append((dv, [(0, 1, 2, 3)]))
     parts.append(([(v[0], v[1], sr * 0.5) for v in dv], [(3, 2, 1, 0)]))
     wv, wf = _make_sphere(0, hy - shaft_length * 0.02, 0, sr * 4, rings=4, sectors=6)
@@ -14710,8 +14733,14 @@ def generate_silver_arrow_mesh(shaft_length: float = 0.7) -> MeshSpec:
     hy = shaft_length
     hh = shaft_length * 0.07
     hw = sr * 7
-    ddv = [(0, hy, 0), (hw, hy + hh * 0.3, 0), (hw * 0.6, hy + hh * 0.7, 0),
-           (0, hy + hh, 0), (-hw * 0.6, hy + hh * 0.7, 0), (-hw, hy + hh * 0.3, 0)]
+    ddv: list[Vertex] = [
+        (0.0, hy, 0.0),
+        (hw, hy + hh * 0.3, 0.0),
+        (hw * 0.6, hy + hh * 0.7, 0.0),
+        (0.0, hy + hh, 0.0),
+        (-hw * 0.6, hy + hh * 0.7, 0.0),
+        (-hw, hy + hh * 0.3, 0.0),
+    ]
     parts.append((ddv, [(0, 1, 2, 3), (0, 3, 4, 5)]))
     parts.append(([(v[0], v[1], sr * 0.4) for v in ddv], [(3, 2, 1, 0), (5, 4, 3, 0)]))
     for ri in range(2):
@@ -15244,7 +15273,7 @@ def generate_mirror_mesh(
         parts.append((rv, rf))
 
         # Handle
-        hv, hf = _make_tapered_cylinder(
+        hv, _hf = _make_tapered_cylinder(
             0, -mirror_r - handle_len / 2, 0,
             0.012, 0.008, handle_len,
             segments=6, rings=2,
@@ -16717,7 +16746,7 @@ def generate_palisade_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     log_radius = 0.08
     log_spacing = log_radius * 2.2
     n_logs = max(3, int(width / log_spacing))
@@ -16798,7 +16827,7 @@ def generate_watchtower_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     hs = base_size / 2
 
     if style == "wooden":
@@ -16937,7 +16966,7 @@ def generate_battlement_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     wall_thick = 0.4
     wall_h = height * 0.5  # Lower wall portion
     merlon_h = height * 0.5  # Upper merlon portion
@@ -17030,7 +17059,7 @@ def generate_moat_edge_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     section_d = 2.0  # Depth along Z axis
 
     if style == "stone":
@@ -17130,7 +17159,7 @@ def generate_windmill_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     segs = 12
 
     if style == "wooden":
@@ -17248,7 +17277,7 @@ def generate_dock_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "wooden":
         # Support posts underneath
@@ -17339,7 +17368,7 @@ def generate_bridge_stone_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     deck_thick = 0.2
     railing_h = 0.6
 
@@ -17500,7 +17529,7 @@ def generate_rope_bridge_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     plank_count = int(span / 0.18)
     rope_r = 0.015
     rope_h = 0.7
@@ -17624,7 +17653,7 @@ def generate_tent_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "small":
         # A-frame tent
@@ -17635,7 +17664,7 @@ def generate_tent_mesh(
         hd = tent_d / 2
 
         # Tent body as triangular prism
-        tent_verts = [
+        tent_verts: list[Vertex] = [
             (-hw, 0, -hd),
             (hw, 0, -hd),
             (0, tent_h, -hd),
@@ -17643,7 +17672,7 @@ def generate_tent_mesh(
             (hw, 0, hd),
             (0, tent_h, hd),
         ]
-        tent_faces = [
+        tent_faces: list[Face] = [
             (0, 2, 1),
             (3, 4, 5),
             (0, 3, 5, 2),
@@ -17793,7 +17822,7 @@ def generate_hitching_post_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     post_h = 1.0
     bar_len = 1.5
 
@@ -17849,7 +17878,7 @@ def generate_feeding_trough_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     trough_w = 1.2
     trough_h = 0.4
     trough_d = 0.5
@@ -17911,7 +17940,7 @@ def generate_barricade_outdoor_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "wooden":
         n_stakes = max(4, int(width / 0.25))
@@ -17920,7 +17949,7 @@ def generate_barricade_outdoor_mesh(
             x = -width / 2 + (i + 0.5) * width / n_stakes
             sv, sf = _make_cylinder(x, 0, 0, stake_r, height, segments=6)
             tilt = 0.15
-            tilted = []
+            tilted: list[Vertex] = []
             for v in sv:
                 ny = v[1]
                 nz = v[2] + (v[1] / height) * tilt * height
@@ -17990,7 +18019,7 @@ def generate_lookout_post_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "raised":
         platform_h = 3.0
@@ -18006,7 +18035,7 @@ def generate_lookout_post_mesh(
                 bot_z = sz * (hs + 0.15)
                 pv, pf = _make_cylinder(top_x, 0, top_z, post_r,
                                         platform_h, segments=6)
-                splayed = []
+                splayed: list[Vertex] = []
                 for v in pv:
                     t = v[1] / platform_h
                     nx = v[0] + (1.0 - t) * (bot_x - top_x)
@@ -18100,7 +18129,7 @@ def generate_spike_fence_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "iron":
         n_spikes = max(4, int(length / 0.15))
@@ -18180,7 +18209,7 @@ def generate_portcullis_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     bar_r = 0.018
     h_bar_r = 0.012
     v_bar_count = 8
@@ -18237,7 +18266,7 @@ def generate_iron_gate_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     frame_w = 0.06
     frame_d = 0.04
 
@@ -18326,7 +18355,7 @@ def generate_bridge_plank_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "wooden":
         plank_d = 0.12
@@ -18415,7 +18444,7 @@ def generate_shackle_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     ring_r = 0.035
     wire_r = 0.006
     chain_link_r = 0.015
@@ -18501,7 +18530,7 @@ def generate_cage_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     bar_r = size * 0.008
     cage_r = size * 0.35
     cage_h = size
@@ -18592,7 +18621,7 @@ def generate_stocks_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     board_w = 0.8
     board_h = 0.04
     board_d = 0.25
@@ -18643,7 +18672,7 @@ def generate_iron_maiden_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     w = 0.35
     h = 1.8
     d = 0.3
@@ -18726,7 +18755,7 @@ def generate_prisoner_skeleton_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     bone_r = 0.012
 
     sv, sf = _make_sphere(0, 1.6, 0, 0.08, rings=5, sectors=8)
@@ -18810,7 +18839,7 @@ def generate_summoning_circle_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     line_h = 0.008
     line_w = 0.015
 
@@ -18837,7 +18866,7 @@ def generate_summoning_circle_mesh(
         lv, lf = _make_box(mx, line_h, mz, line_w, line_h * 0.5, line_len)
         ang = math.atan2(z1 - z0, x1 - x0)
         ca, sa = math.cos(ang), math.sin(ang)
-        l_verts = []
+        l_verts: list[Vertex] = []
         for v in lv:
             nx = mx + (v[0] - mx) * ca - (v[2] - mz) * sa
             nz = mz + (v[0] - mx) * sa + (v[2] - mz) * ca
@@ -18876,7 +18905,7 @@ def generate_ritual_candles_mesh(
     """
     import random as _rng_candles
     rng = _rng_candles.Random(55)
-    parts = []
+    parts: list[MeshPart] = []
     count = max(3, min(9, count))
 
     for i in range(count):
@@ -18929,7 +18958,7 @@ def generate_occult_symbols_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     line_h = 0.005
     line_w = 0.012
 
@@ -19000,7 +19029,7 @@ def generate_cobweb_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     strand_r = 0.002
 
     if style == "corner":
@@ -19119,7 +19148,7 @@ def generate_spider_egg_sac_mesh(
     """
     import random as _rng_eggs
     rng = _rng_eggs.Random(88)
-    parts = []
+    parts: list[MeshPart] = []
 
     for _ in range(count):
         ox = rng.uniform(-0.08, 0.08)
@@ -19141,7 +19170,7 @@ def generate_spider_egg_sac_mesh(
 
     thread_r = 0.001
     rng2 = _rng_eggs.Random(88)
-    positions = []
+    positions: list[Vertex] = []
     for _ in range(count):
         positions.append((
             rng2.uniform(-0.08, 0.08),
@@ -19178,7 +19207,7 @@ def generate_rubble_pile_mesh(
     """
     import random as _rng_rubble
     rng = _rng_rubble.Random(44)
-    parts = []
+    parts: list[MeshPart] = []
 
     mound_profile = [
         (0.001, 0),
@@ -19229,7 +19258,7 @@ def generate_hanging_skeleton_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     bone_r = 0.01
 
     chain_r = 0.015
@@ -19289,7 +19318,7 @@ def generate_dripping_water_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     length = 0.4
     thickness = 0.06
 
@@ -19339,7 +19368,7 @@ def generate_rat_nest_mesh() -> MeshSpec:
     """
     import random as _rng_nest
     rng = _rng_nest.Random(66)
-    parts = []
+    parts: list[MeshPart] = []
     nest_r = 0.12
 
     mound_profile = [
@@ -19380,11 +19409,11 @@ def generate_rotting_barrel_mesh() -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     height = 0.8
     radius = 0.22
 
-    barrel_profile = []
+    barrel_profile: list[tuple[float, float]] = []
     rings = 12
     for i in range(rings + 1):
         t = i / rings
@@ -19439,7 +19468,7 @@ def generate_treasure_chest_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
     w = 0.5 * size
     h = 0.3 * size
     d = 0.35 * size
@@ -19552,7 +19581,7 @@ def generate_gem_pile_mesh(
     """
     import random as _rng_gems
     rng = _rng_gems.Random(33)
-    parts = []
+    parts: list[MeshPart] = []
 
     for _ in range(gem_count):
         gx = rng.uniform(-size * 0.6, size * 0.6)
@@ -19589,7 +19618,7 @@ def generate_gold_pile_mesh(
     """
     import random as _rng_gold
     rng = _rng_gold.Random(42)
-    parts = []
+    parts: list[MeshPart] = []
 
     mound_profile = [
         (0.001, 0),
@@ -19629,7 +19658,7 @@ def generate_lore_tablet_mesh(
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     if style == "stone":
         w, h, d = 0.25, 0.35, 0.04
@@ -19804,7 +19833,7 @@ def generate_deer_mesh(style: str = "adult") -> MeshSpec:
                        v[1], v[2] - (v[1] - head_y - head_r * 0.5) * 0.15) for v in abv]
             parts.append((abv_a, abf))
             # Tines (2 per side)
-            for ti, th in enumerate([0.12, 0.2]):
+            for th in [0.12, 0.2]:
                 ty = head_y + head_r * 0.5 + th
                 tx = ax + side * th * 0.4
                 tv2, tf2 = _make_tapered_cylinder(
@@ -21639,7 +21668,7 @@ def generate_mine_entrance_mesh(style: str = "timber") -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     tunnel_w = 2.0
     tunnel_h = 2.5
@@ -21797,7 +21826,7 @@ def generate_sewer_tunnel_mesh(style: str = "brick") -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     tunnel_w = 3.0
     tunnel_h = 2.5
@@ -21941,7 +21970,7 @@ def generate_catacomb_mesh(style: str = "ossuary") -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     corridor_w = 2.0
     corridor_h = 2.8
@@ -22047,7 +22076,7 @@ def generate_temple_mesh(style: str = "gothic") -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     temple_w = 10.0
     temple_d = 16.0
@@ -22241,7 +22270,7 @@ def generate_harbor_dock_mesh(style: str = "wooden") -> MeshSpec:
     Returns:
         MeshSpec with vertices, faces, uvs, and metadata.
     """
-    parts = []
+    parts: list[MeshPart] = []
 
     dock_w = 12.0
     dock_d = 18.0
@@ -22428,7 +22457,7 @@ def generate_harbor_dock_mesh(style: str = "wooden") -> MeshSpec:
 # Registry: all generators by category
 # =========================================================================
 
-GENERATORS = {
+_GENERATOR_MAP: dict[str, dict[str, MeshGenerator]] = {
     "furniture": {
         "table": generate_table_mesh,
         "chair": generate_chair_mesh,
@@ -22784,4 +22813,4 @@ _GENERATOR_CATEGORY_ALIASES = {
     "swamp_animals": "swamp_animal",
 }
 
-GENERATORS = _GeneratorRegistry(GENERATORS, _GENERATOR_CATEGORY_ALIASES)
+GENERATORS = _GeneratorRegistry(_GENERATOR_MAP, _GENERATOR_CATEGORY_ALIASES)

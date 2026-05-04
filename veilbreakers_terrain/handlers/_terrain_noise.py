@@ -25,9 +25,11 @@ Performance notes (2026-03):
 from __future__ import annotations
 
 import heapq
+import importlib
+import importlib.util
 import math
 import warnings
-from typing import Any
+from typing import Any, Callable, cast
 
 import numpy as np
 
@@ -35,14 +37,7 @@ import numpy as np
 # Noise backend: opensimplex or permutation-table fallback
 # ---------------------------------------------------------------------------
 
-_USE_OPENSIMPLEX = False
-_NUMBA_AVAILABLE = False
-
-try:
-    from numba import njit as _numba_njit  # noqa: F401
-    _NUMBA_AVAILABLE = True
-except ImportError:
-    pass
+_NUMBA_AVAILABLE: bool = importlib.util.find_spec("numba") is not None
 
 try:
     from opensimplex import OpenSimplex as _RealOpenSimplex
@@ -50,9 +45,12 @@ try:
     # handles the performance concern: it routes through noise2array on regular
     # meshgrids (fast C path) and falls back to per-element noise2 calls for
     # irregular/warped grids — so numba is not a prerequisite here.
-    _USE_OPENSIMPLEX = True
+    _opensimplex_available = True
 except ImportError:
     _RealOpenSimplex = None  # type: ignore[assignment,misc]
+    _opensimplex_available = False
+
+_USE_OPENSIMPLEX: bool = _opensimplex_available
 
 
 # --- Permutation-table gradient noise (fallback) -------------------------
@@ -786,32 +784,20 @@ def domain_warp_fbm(
     # IQ canonical: q and r are 2D vectors (two independent fBm calls per pass).
     # Using fixed coordinate offsets (5.2, 1.3) / (1.7, 9.2) / (8.3, 2.8) from
     # IQ's shadertoy reference to break diagonal symmetry artifacts.
-    fbm_kwargs = {"octaves": octaves, "lacunarity": lacunarity, "gain": gain}
+    _octaves = int(octaves)
+    _lacunarity = float(lacunarity)
+    _gain = float(gain)
+    # IQ canonical: q and r are 2D vectors (two independent fBm calls per pass).
     # Pass 1: q = (fbm(p), fbm(p + (5.2, 1.3)))
-    q_x = fbm_iq(p_x, p_y, seed=seed, **fbm_kwargs)
-    q_y = fbm_iq(p_x + 5.2, p_y + 1.3, seed=seed + 17, **fbm_kwargs)
+    q_x = fbm_iq(p_x, p_y, octaves=_octaves, lacunarity=_lacunarity, gain=_gain, seed=seed)
+    q_y = fbm_iq(p_x + 5.2, p_y + 1.3, octaves=_octaves, lacunarity=_lacunarity, gain=_gain, seed=seed + 17)
 
     # Pass 2: r = (fbm(p + q*s + (1.7, 9.2)), fbm(p + q*s + (8.3, 2.8)))
-    r_x = fbm_iq(
-        p_x + q_x * warp_strength + 1.7,
-        p_y + q_y * warp_strength + 9.2,
-        seed=seed + 1,
-        **fbm_kwargs,
-    )
-    r_y = fbm_iq(
-        p_x + q_x * warp_strength + 8.3,
-        p_y + q_y * warp_strength + 2.8,
-        seed=seed + 19,
-        **fbm_kwargs,
-    )
+    r_x = fbm_iq(p_x + q_x * warp_strength + 1.7, p_y + q_y * warp_strength + 9.2, octaves=_octaves, lacunarity=_lacunarity, gain=_gain, seed=seed + 1)
+    r_y = fbm_iq(p_x + q_x * warp_strength + 8.3, p_y + q_y * warp_strength + 2.8, octaves=_octaves, lacunarity=_lacunarity, gain=_gain, seed=seed + 19)
 
     # Pass 3: result = fbm(p + r*s)
-    return fbm_iq(
-        p_x + r_x * warp_strength,
-        p_y + r_y * warp_strength,
-        seed=seed + 2,
-        **fbm_kwargs,
-    )
+    return fbm_iq(p_x + r_x * warp_strength, p_y + r_y * warp_strength, octaves=_octaves, lacunarity=_lacunarity, gain=_gain, seed=seed + 2)
 
 
 # ---------------------------------------------------------------------------
@@ -1427,8 +1413,15 @@ def _apply_terrain_preset(
         rows, cols = hmap.shape
         if rows >= 3 and cols >= 3:
             try:
-                from scipy.ndimage import uniform_filter as _uf
-                hmap = _uf(hmap.astype(np.float64), size=3, mode="reflect")
+                scipy_ndimage = importlib.import_module("scipy.ndimage")
+                uniform_filter = cast(
+                    Callable[..., np.ndarray],
+                    getattr(scipy_ndimage, "uniform_filter"),
+                )
+                hmap = np.asarray(
+                    uniform_filter(hmap.astype(np.float64), size=3, mode="reflect"),
+                    dtype=np.float64,
+                )
             except ImportError:
                 # Pure-numpy 3x3 box blur: stack 9 shifted views and mean them.
                 padded = np.pad(hmap.astype(np.float64), 1, mode="edge")
@@ -1502,9 +1495,12 @@ def _theoretical_max_amplitude(octaves: int, persistence: float) -> float:
     """Return the geometric-series amplitude bound for an fBm stack."""
     if octaves <= 0:
         return 0.0
+    # Keep the public helper aligned with the normalization bound used by
+    # generate_heightmap; tests import this legacy name directly.
     if abs(1.0 - persistence) < 1e-12:
         return float(octaves)
     return (1.0 - persistence**octaves) / (1.0 - persistence)
+
 
 
 # ---------------------------------------------------------------------------
@@ -1662,7 +1658,7 @@ _OFFSETS_16 = _OFFSETS_24  # deprecated alias, use _OFFSETS_24
 
 def _neighbors(row: int, col: int, rows: int, cols: int) -> list[tuple[int, int]]:
     """Return valid 24-connected neighbors (8 cardinal/diagonal + 8 knight + 8 extended knight)."""
-    result = []
+    result: list[tuple[int, int]] = []
     for dr, dc in _OFFSETS_24:
         nr, nc = row + dr, col + dc
         if 0 <= nr < rows and 0 <= nc < cols:
@@ -1753,7 +1749,7 @@ def _legacy_astar(
         return (dx + dy) + (math.sqrt(2) - 2.0) * min(dx, dy)
 
     while open_set:
-        f, g, cr, cc = heapq.heappop(open_set)
+        _, g, cr, cc = heapq.heappop(open_set)
 
         # Skip stale heap entries whose cost has been superseded
         if g > g_score.get((cr, cc), float("inf")):
@@ -1785,7 +1781,7 @@ def _legacy_astar(
                 heapq.heappush(open_set, (f_score, tentative_g, nr, nc))
 
     # No path found -- fallback to straight line
-    path = []
+    path: list[tuple[int, int]] = []
     steps = max(abs(dr - sr), abs(dc - sc), 1)
     for i in range(steps + 1):
         t = i / steps
@@ -2070,7 +2066,7 @@ def _catmull_rom_segment(
     samples: int = 10,
 ) -> list[tuple[int, int]]:
     """Sample one Catmull-Rom segment from p1 to p2."""
-    pts = []
+    pts: list[tuple[int, int]] = []
     for i in range(samples):
         t = i / samples
         t2 = t * t

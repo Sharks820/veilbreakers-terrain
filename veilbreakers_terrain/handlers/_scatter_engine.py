@@ -19,12 +19,14 @@ import math
 import random
 from typing import Any
 
+from .terrain_rng import derive_pass_seed  # noqa: F401 — re-exported for scatter callers
+
 try:
     import numpy as _np_engine
-    _HAS_NUMPY = True
 except ImportError:
     _np_engine = None  # type: ignore[assignment]
-    _HAS_NUMPY = False
+
+_HAS_NUMPY = _np_engine is not None
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +82,9 @@ def poisson_disk_sample(
         return []
 
     # Use numpy RNG when available for better statistical quality
-    if _HAS_NUMPY:
-        np_rng = _np_engine.random.default_rng(seed)
+    if _np_engine is not None:
+        np_engine = _np_engine
+        np_rng = np_engine.random.default_rng(seed)
         def _rand_uniform(lo: float, hi: float) -> float:
             return float(np_rng.uniform(lo, hi))
         def _rand_int(lo: int, hi: int) -> int:
@@ -97,8 +100,9 @@ def poisson_disk_sample(
     _dmap: Any | None = None
     _dmap_rows = 1
     _dmap_cols = 1
-    if density_map is not None and _HAS_NUMPY:
-        _dmap = _np_engine.asarray(density_map, dtype=_np_engine.float32)
+    if density_map is not None and _np_engine is not None:
+        np_engine = _np_engine
+        _dmap = np_engine.asarray(density_map, dtype=np_engine.float32)
         if _dmap.ndim == 2 and _dmap.shape[0] > 0 and _dmap.shape[1] > 0:
             _dmap_rows, _dmap_cols = _dmap.shape
         else:
@@ -730,32 +734,37 @@ def context_scatter(
     # Pre-cache numpy arrays for optional maps (avoids repeated asarray calls in loop)
     _hmap: Any | None = None
     _hmap_rows = _hmap_cols = 1
-    if heightmap is not None and _HAS_NUMPY:
-        _hmap = _np_engine.asarray(heightmap, dtype=_np_engine.float32)
+    if heightmap is not None and _np_engine is not None:
+        np_engine = _np_engine
+        _hmap = np_engine.asarray(heightmap, dtype=np_engine.float32)
         _hmap_rows, _hmap_cols = _hmap.shape
 
     _smap: Any | None = None
     _smap_rows = _smap_cols = 1
-    if slope_map is not None and _HAS_NUMPY:
-        _smap = _np_engine.asarray(slope_map, dtype=_np_engine.float32)
+    if slope_map is not None and _np_engine is not None:
+        np_engine = _np_engine
+        _smap = np_engine.asarray(slope_map, dtype=np_engine.float32)
         _smap_rows, _smap_cols = _smap.shape
 
     _df: Any | None = None
     _df_rows = _df_cols = 1
-    if density_field is not None and _HAS_NUMPY:
-        _df = _np_engine.asarray(density_field, dtype=_np_engine.float32)
+    if density_field is not None and _np_engine is not None:
+        np_engine = _np_engine
+        _df = np_engine.asarray(density_field, dtype=np_engine.float32)
         _df_rows, _df_cols = _df.shape
 
     _wmap: Any | None = None
     _wmap_rows = _wmap_cols = 1
-    if water_proximity_map is not None and _HAS_NUMPY:
-        _wmap = _np_engine.asarray(water_proximity_map, dtype=_np_engine.float32)
+    if water_proximity_map is not None and _np_engine is not None:
+        np_engine = _np_engine
+        _wmap = np_engine.asarray(water_proximity_map, dtype=np_engine.float32)
         _wmap_rows, _wmap_cols = _wmap.shape
 
     _cmap: Any | None = None
     _cmap_rows = _cmap_cols = 1
-    if canopy_map is not None and _HAS_NUMPY:
-        _cmap = _np_engine.asarray(canopy_map, dtype=_np_engine.float32)
+    if canopy_map is not None and _np_engine is not None:
+        np_engine = _np_engine
+        _cmap = np_engine.asarray(canopy_map, dtype=np_engine.float32)
         _cmap_rows, _cmap_cols = _cmap.shape
 
     def _map_sample(arr: Any, rows: int, cols: int, x: float, y: float) -> float:
@@ -900,15 +909,16 @@ def _weighted_choice(
     if total <= 0.0:
         return names[-1]
 
-    if _HAS_NUMPY:
+    if _np_engine is not None:
+        np_engine = _np_engine
         # numpy.random.choice with p= uses the alias method — O(1) per call,
         # no cumulative sum loop. Normalise weights to a probability array.
-        p = _np_engine.array(weights, dtype=_np_engine.float64)
+        p = np_engine.array(weights, dtype=np_engine.float64)
         p /= p.sum()
         # Use a fresh numpy Generator seeded from the Python rng state so the
         # two RNG streams don't diverge determinism.
         seed_val = rng.getrandbits(32)
-        _np_rng_local = _np_engine.random.default_rng(seed_val)
+        _np_rng_local = np_engine.random.default_rng(seed_val)
         idx = int(_np_rng_local.choice(len(names), p=p))
         return names[idx]
 
@@ -1030,7 +1040,7 @@ def generate_breakable_variants(
     }
 
 
-def _build_geometry_op(geom: dict) -> dict:
+def _build_geometry_op(geom: dict[str, Any]) -> dict[str, Any]:
     """Convert geometry config to an operation dict."""
     op: dict[str, Any] = {"type": geom["type"]}
     if geom["type"] == "cylinder":
@@ -1045,7 +1055,7 @@ def _build_geometry_op(geom: dict) -> dict:
 
 
 def _generate_fragments(
-    geom: dict,
+    geom: dict[str, Any],
     count: int,
     rng: random.Random,
 ) -> list[dict[str, Any]]:
@@ -1092,7 +1102,7 @@ def _generate_fragments(
 
 
 def _generate_debris(
-    geom: dict,
+    geom: dict[str, Any],
     count: int,
     rng: random.Random,
 ) -> list[dict[str, Any]]:
@@ -1198,33 +1208,35 @@ def cluster_density_map(
     -------
     np.ndarray (resolution, resolution) float32 in [0, 1].
     """
-    if not _HAS_NUMPY:
+    if _np_engine is None:
         raise RuntimeError("cluster_density_map requires numpy")
 
-    rng = _np_engine.random.default_rng(seed)
-    xs = _np_engine.linspace(0, width / max(cluster_size, 1e-6), resolution)
-    ys = _np_engine.linspace(0, depth / max(cluster_size, 1e-6), resolution)
-    xx, yy = _np_engine.meshgrid(xs, ys)
+    np_engine = _np_engine
+    rng = np_engine.random.default_rng(seed)
 
-    # 4-octave fBm gives stable large/mid/small cluster variation.
+    # Build a non-periodic cluster density map using successive downsampled
+    # random layers (fBm substitute).  Each octave uses an independent random
+    # field at a coarser resolution, upsampled with nearest-neighbour so there
+    # is no periodic tiling artefact from sin×sin patterns.
+    noise = np_engine.zeros((resolution, resolution), dtype=np_engine.float32)
     freq, amp, total = 1.0, 1.0, 0.0
-    noise = _np_engine.zeros((resolution, resolution), dtype=_np_engine.float32)
     for _ in range(4):
-        phase_x = float(rng.uniform(0, 2 * math.pi))
-        phase_y = float(rng.uniform(0, 2 * math.pi))
-        noise += float(amp) * 0.5 * (
-            _np_engine.sin(xx * freq * 2 * math.pi + phase_x).astype(_np_engine.float32)
-            * _np_engine.sin(yy * freq * 2 * math.pi + phase_y).astype(_np_engine.float32)
-            + 1.0
-        )
+        oct_res = max(1, int(round(resolution * freq / (width / max(cluster_size, 1e-6)))))
+        oct_res = max(2, min(oct_res, resolution))
+        raw = rng.random((oct_res, oct_res)).astype(np_engine.float32)
+        # Nearest-neighbour upsample to (resolution, resolution)
+        row_idx = (np_engine.arange(resolution) * oct_res // resolution).astype(np_engine.intp)
+        col_idx = (np_engine.arange(resolution) * oct_res // resolution).astype(np_engine.intp)
+        upsampled = raw[np_engine.ix_(row_idx, col_idx)]
+        noise += float(amp) * upsampled
         total += amp
         freq *= 2.0
         amp *= 0.5
 
-    cluster_map = (noise / max(total, 1e-9)).astype(_np_engine.float32)
+    cluster_map = (noise / max(total, 1e-9)).astype(np_engine.float32)
     # Blend toward 1.0 by noise_amount so rogue items appear outside cluster centres
     result = cluster_map * (1.0 - float(noise_amount)) + float(noise_amount)
-    return _np_engine.clip(result, 0.0, 1.0).astype(_np_engine.float32)
+    return np_engine.clip(result, 0.0, 1.0).astype(np_engine.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -1293,10 +1305,10 @@ def edge_scatter(
 # ---------------------------------------------------------------------------
 
 def apply_collision_exclusion(
-    placements: "list[dict]",
+    placements: "list[dict[str, Any]]",
     collision_radii: "dict[str, float]",
     default_radius: float = 1.5,
-) -> "list[dict]":
+) -> "list[dict[str, Any]]":
     """Remove placements violating inter-species bounding-sphere separation.
 
     Uses bounding-sphere separation with spatial hash for O(n) average
@@ -1322,7 +1334,7 @@ def apply_collision_exclusion(
     max_r = max(collision_radii.values(), default=default_radius)
     cell = max_r * 2.0
     grid: dict[tuple[int, int], list[int]] = {}
-    kept: list[dict] = []
+    kept: list[dict[str, Any]] = []
 
     for pl in placements:
         px, py = float(pl["position"][0]), float(pl["position"][1])

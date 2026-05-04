@@ -2,20 +2,35 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn, TypeAlias
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
+
+from veilbreakers_terrain.handlers.terrain_live_preview import LivePreviewSession
+from veilbreakers_terrain.handlers.terrain_master_registrar import register_all_terrain_passes
+from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
+from veilbreakers_terrain.handlers.terrain_pipeline import (
+    TerrainPassController,
+    build_default_pass_sequence,
+)
+from veilbreakers_terrain.handlers.terrain_protocol import ProtocolViolation
+from veilbreakers_terrain.handlers.terrain_semantics import (
+    BBox,
+    PassDefinition,
+    PassResult,
+    TerrainIntentState,
+    TerrainMaskStack,
+    TerrainPipelineState,
+    TerrainSceneRead,
+    ValidationIssue,
+)
+
+Float32Array: TypeAlias = NDArray[np.float32]
 
 
-def _state(*, hints: dict | None = None):
-    from veilbreakers_terrain.handlers.terrain_semantics import (
-        BBox,
-        TerrainIntentState,
-        TerrainMaskStack,
-        TerrainPipelineState,
-    )
-
+def _state(*, hints: dict[str, Any] | None = None) -> TerrainPipelineState:
     height = np.zeros((5, 5), dtype=np.float32)
     stack = TerrainMaskStack(
         tile_size=4,
@@ -36,12 +51,8 @@ def _state(*, hints: dict | None = None):
     return TerrainPipelineState(intent=intent, mask_stack=stack)
 
 
-def test_controller_protocol_rule2_requires_explicit_headless_opt_out(tmp_path: Path):
-    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolViolation
-    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
-
-    def _pass(state, region):
+def test_controller_protocol_rule2_requires_explicit_headless_opt_out(tmp_path: Path) -> None:
+    def _pass(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         del region
         state.mask_stack.set("wetness", np.ones_like(state.mask_stack.height), "needs_view")
         return PassResult(
@@ -74,12 +85,8 @@ def test_controller_protocol_rule2_requires_explicit_headless_opt_out(tmp_path: 
     assert result.status == "ok"
 
 
-def test_controller_protocol_rule5_blocks_full_tile_bulk_without_policy(tmp_path: Path):
-    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolViolation
-    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
-
-    def _pass(state, region):
+def test_controller_protocol_rule5_blocks_full_tile_bulk_without_policy(tmp_path: Path) -> None:
+    def _pass(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         del region
         state.mask_stack.set("wetness", np.ones_like(state.mask_stack.height), "bulk_guard")
         return PassResult(
@@ -122,14 +129,14 @@ def test_controller_protocol_rule5_blocks_full_tile_bulk_without_policy(tmp_path
     assert result.status == "ok"
 
 
-def test_live_preview_cache_miss_routes_through_controller(monkeypatch, tmp_path: Path):
+def test_live_preview_cache_miss_routes_through_controller(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     from types import MethodType
 
-    from veilbreakers_terrain.handlers.terrain_live_preview import LivePreviewSession
-    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
-
-    def _raw_pass(state, region):
+    def _raw_pass(state: TerrainPipelineState, region: BBox | None) -> NoReturn:
+        del state, region
         raise AssertionError("live preview must not call raw pass function directly")
 
     TerrainPassController.register_pass(
@@ -138,7 +145,15 @@ def test_live_preview_cache_miss_routes_through_controller(monkeypatch, tmp_path
     controller = TerrainPassController(_state(), checkpoint_dir=tmp_path)
     calls: list[str] = []
 
-    def _run_pass(self, pass_name, region=None, *, force=False, checkpoint=True):
+    def _run_pass(
+        self: TerrainPassController,
+        pass_name: str,
+        region: BBox | None = None,
+        *,
+        force: bool = False,
+        checkpoint: bool = True,
+    ) -> PassResult:
+        del region
         del force, checkpoint
         calls.append(pass_name)
         self.state.mask_stack.set("wetness", np.ones_like(self.state.mask_stack.height), pass_name)
@@ -155,12 +170,10 @@ def test_live_preview_cache_miss_routes_through_controller(monkeypatch, tmp_path
     assert calls == ["preview_guard"]
 
 
-def test_parallel_dag_merge_preserves_side_effects_and_recomputes_height_metadata(tmp_path: Path):
-    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
-    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
-
-    def _height_pass(state, region):
+def test_parallel_dag_merge_preserves_side_effects_and_recomputes_height_metadata(
+    tmp_path: Path,
+) -> None:
+    def _height_pass(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         del region
         state.mask_stack.set("height", np.full_like(state.mask_stack.height, 2.0), "height_pass")
         state.side_effects.append("height_pass side effect")
@@ -171,7 +184,7 @@ def test_parallel_dag_merge_preserves_side_effects_and_recomputes_height_metadat
             produced_channels=("height",),
         )
 
-    def _wetness_pass(state, region):
+    def _wetness_pass(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         del region
         state.mask_stack.set("wetness", np.ones_like(state.mask_stack.height), "wetness_pass")
         state.side_effects.append("wetness_pass side effect")
@@ -193,17 +206,14 @@ def test_parallel_dag_merge_preserves_side_effects_and_recomputes_height_metadat
         controller,
         max_workers=2,
     )
-    assert controller.state.mask_stack.height_min_m == pytest.approx(2.0)
-    assert controller.state.mask_stack.height_max_m == pytest.approx(2.0)
+    assert controller.state.mask_stack.height_min_m == 2.0
+    assert controller.state.mask_stack.height_max_m == 2.0
     assert "height_pass side effect" in controller.state.side_effects
     assert "wetness_pass side effect" in controller.state.side_effects
 
 
-def test_dag_keeps_edges_from_channel_mutators_to_later_consumers():
-    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
-    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
-
-    def _noop(state, region):
+def test_dag_keeps_edges_from_channel_mutators_to_later_consumers() -> None:
+    def _noop(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         del state, region
         return PassResult(pass_name="noop", status="ok", duration_seconds=0.0)
 
@@ -235,16 +245,8 @@ def test_dag_keeps_edges_from_channel_mutators_to_later_consumers():
     assert order.index("erosion_mutator") < order.index("downstream_material")
 
 
-def test_canonical_default_sequence_is_dag_addressable_without_duplicate_pass_names():
+def test_canonical_default_sequence_is_dag_addressable_without_duplicate_pass_names() -> None:
     from collections import Counter
-
-    from veilbreakers_terrain.handlers.terrain_master_registrar import register_all_terrain_passes
-    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
-    from veilbreakers_terrain.handlers.terrain_pipeline import (
-        TerrainPassController,
-        build_default_pass_sequence,
-    )
-    from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainIntentState, TerrainSceneRead
 
     TerrainPassController.clear_registry()
     register_all_terrain_passes(strict=True)
@@ -279,10 +281,7 @@ def test_canonical_default_sequence_is_dag_addressable_without_duplicate_pass_na
     assert set(PassDAG.from_registry(sequence).topological_order()) == set(sequence)
 
 
-def test_pipeline_registrations_keep_soft_inputs_optional():
-    from veilbreakers_terrain.handlers.terrain_master_registrar import register_all_terrain_passes
-    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-
+def test_pipeline_registrations_keep_soft_inputs_optional() -> None:
     TerrainPassController.clear_registry()
     register_all_terrain_passes(strict=True)
 
@@ -297,11 +296,8 @@ def test_pipeline_registrations_keep_soft_inputs_optional():
 def test_override_writes_do_not_emit_undeclared_channel_warning(
     caplog: pytest.LogCaptureFixture,
     tmp_path: Path,
-):
-    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
-
-    def _pass(state: Any, region: object | None):
+) -> None:
+    def _pass(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         del region
         state.mask_stack.set("height", np.ones_like(state.mask_stack.height), "override_height")
         return PassResult(
@@ -328,28 +324,45 @@ def test_override_writes_do_not_emit_undeclared_channel_warning(
     assert "wrote undeclared channels" not in caplog.text
 
 
-def test_scatter_hard_validation_issue_fails(monkeypatch):
+def test_scatter_hard_validation_issue_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     from veilbreakers_terrain.handlers import terrain_assets
-    from veilbreakers_terrain.handlers.terrain_semantics import ValidationIssue
 
-    state = _state()
-    monkeypatch.setattr(terrain_assets, "place_assets_by_zone", lambda *a, **k: {})
-    monkeypatch.setattr(
-        terrain_assets,
-        "_build_tree_instance_array",
-        lambda *a, **k: np.zeros((0, 5), dtype=np.float32),
-    )
-    monkeypatch.setattr(terrain_assets, "_build_detail_density", lambda *a, **k: {})
-    monkeypatch.setattr(
-        terrain_assets,
-        "validate_asset_density_and_overlap",
-        lambda *a, **k: [
+    def _place_assets_by_zone_stub(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {}
+
+    def _build_tree_instance_array_stub(
+        *_args: object,
+        **_kwargs: object,
+    ) -> Float32Array:
+        return np.zeros((0, 5), dtype=np.float32)
+
+    def _build_detail_density_stub(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {}
+
+    def _validate_asset_density_and_overlap_stub(
+        *_args: object,
+        **_kwargs: object,
+    ) -> list[ValidationIssue]:
+        return [
             ValidationIssue(
                 code="SCATTER_HARD",
                 severity="hard",
                 message="forced hard scatter validation issue",
             )
-        ],
+        ]
+
+    state = _state()
+    monkeypatch.setattr(terrain_assets, "place_assets_by_zone", _place_assets_by_zone_stub)
+    monkeypatch.setattr(
+        terrain_assets,
+        "_build_tree_instance_array",
+        _build_tree_instance_array_stub,
+    )
+    monkeypatch.setattr(terrain_assets, "_build_detail_density", _build_detail_density_stub)
+    monkeypatch.setattr(
+        terrain_assets,
+        "validate_asset_density_and_overlap",
+        _validate_asset_density_and_overlap_stub,
     )
 
     result = terrain_assets.pass_scatter_intelligent(state, None)

@@ -386,7 +386,7 @@ def _intent_to_dict(intent: TerrainIntentState) -> Dict[str, Any]:
     }
 
 
-import logging as _ckpt_log
+import logging as _ckpt_log  # noqa: E402
 _ckpt_logger = _ckpt_log.getLogger(__name__)
 
 

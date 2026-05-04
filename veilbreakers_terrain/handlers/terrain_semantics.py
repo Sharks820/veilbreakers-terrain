@@ -17,6 +17,7 @@ from __future__ import annotations
 import enum
 import hashlib
 import json
+import os
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -238,10 +239,13 @@ class TerrainMaskStack:
     and downstream pass contracts can type-check against them.
     """
 
-    # Set True in tests to turn direct channel assignment into a hard error.
-    # Production code leaves this False so the existing warning-only path is
-    # preserved and no runtime behavior changes outside of test runs.
-    _STRICT_PROVENANCE: ClassVar[bool] = False
+    # When TERRAIN_STRICT_PROVENANCE=1 is set in the environment (e.g. in CI),
+    # direct channel assignment raises AttributeError instead of just logging a
+    # warning.  Production code runs without the env var so existing behaviour
+    # is preserved.  FIX-B14-P1-12.
+    _STRICT_PROVENANCE: ClassVar[bool] = (
+        os.environ.get("TERRAIN_STRICT_PROVENANCE", "").strip() == "1"
+    )
 
     # Shape and coordinate contract
     tile_size: int
@@ -422,6 +426,12 @@ class TerrainMaskStack:
     terrain_ao: Optional[np.ndarray] = None
     # Height/parallax displacement accumulated by quixel_ingest. float32 (H, W).
     terrain_displacement: Optional[np.ndarray] = None
+    # Brucks/wet-rock blended weight for MicroSplat subsurface scatter. float32 (H, W) in [0,1].
+    terrain_brucks_weight: Optional[np.ndarray] = None
+    # Per-cell snow coverage fraction written by material passes. float32 (H, W) in [0,1].
+    snow_coverage: Optional[np.ndarray] = None
+    # Summed micro-feature height delta produced by pass_biome_surface_features. float32 (H, W).
+    biome_surface_feature_delta: Optional[np.ndarray] = None
     # Navmesh area classification: walkable/unwalkable/jump/climb per cell.
     navmesh_area_id: Optional[np.ndarray] = None
     # Physics collider tag: solid / trigger / nocollide.
@@ -448,6 +458,13 @@ class TerrainMaskStack:
     # Road network channels (Phase 8)
     road_mask: Optional[np.ndarray] = None
     road_sdf_dist: Optional[np.ndarray] = None
+    # FIX-B14-18: height delta carved by worn-path erosion along road corridors.
+    # Negative values = terrain deepened; populated by pass_road_network and
+    # consumed by the delta integrator (integrate_deltas pass).
+    road_worn_path_delta: Optional[np.ndarray] = None
+    # Serialisable road segment list populated by pass_road_network.
+    # Each entry is a dict with keys: start, end, width, road_type.
+    road_segments: Optional[list] = None
 
     # Structural terrain labels (Phase 10 / Fix 10.10 / REQ-P10-001)
     # Feature generators stamp these during generation; materials pass reads as
@@ -653,6 +670,7 @@ class TerrainMaskStack:
             # Road network (Phase 8)
             "road_mask",
             "road_sdf_dist",
+            "road_worn_path_delta",
             # Horizon LOD / skyline sampling (Bundle L)
             "horizon_elevation_angles",
             # Height decomposition (Fix 12.1)
@@ -710,6 +728,11 @@ class TerrainMaskStack:
             # Bundle I coastline channels (FIX-14-2, FIX-14-3)
             "tidal_zone_label",
             "wave_energy",
+            # Material weight channels (FIX-B14-12)
+            "terrain_brucks_weight",
+            "snow_coverage",
+            # Biome surface feature delta (FIX-B14-4)
+            "biome_surface_feature_delta",
         ),
     )
 
@@ -953,6 +976,34 @@ class TerrainMaskStack:
         self.dirty_channels.discard(channel)
         # Any mutation invalidates cached hash
         self.content_hash = None
+
+    def _bulk_set(
+        self,
+        channel_values: Dict[str, Any],
+        pass_name: str,
+    ) -> None:
+        """Write multiple channels in one call, validating and recording provenance for each.
+
+        This is a performance-optimised batch alternative to calling ``set()``
+        per channel in tight loops (e.g. the parallel merge and lightweight-copy
+        code paths).  All channels are written through the normal ``set()``
+        path — dtype/shape validation, provenance recording, and dirty-flag
+        management are all preserved.
+
+        Parameters
+        ----------
+        channel_values:
+            Mapping of channel name → value.  Each entry is forwarded to
+            ``self.set(channel, value, pass_name)``.  Dict-valued and opaque
+            channels are accepted just as ``set()`` accepts them.
+        pass_name:
+            Producer name recorded in ``populated_by_pass`` for every channel
+            in the batch.  Pass ``"__copy__"`` when replicating an existing
+            stack (e.g. lightweight_state_copy) and ``"__merge__"`` when
+            merging worker results back into the shared controller state.
+        """
+        for channel, value in channel_values.items():
+            self.set(channel, value, pass_name)
 
     def mark_dirty(self, channel: str) -> None:
         self.dirty_channels.add(channel)
@@ -1611,6 +1662,14 @@ class PassDefinition:
     # otherwise. Use this for "if the cliffs pass ran, read its mask; if not,
     # fall through to a default" patterns like ``pass_scatter_intelligent``.
     optional_channels: Tuple[str, ...] = ()
+    # FIX-B14-P1-13: explicit "read if available" alias for the DAG.
+    # Semantically identical to ``optional_channels`` — the DAG treats these
+    # as soft dependencies: schedule the producer first when available, but
+    # never block execution when the channel is absent.  Added as a distinct
+    # field so callers can be explicit about *why* a channel is optional (i.e.
+    # "I read this if the upstream pass ran") vs ``optional_channels`` which
+    # covers both "available at runtime" and "produced by an optional pass".
+    requires_channels_optional: Tuple[str, ...] = ()
     # Channels this pass intentionally overwrites (rather than being the sole
     # first writer). Populated for legitimate secondary writers of shared
     # channels (e.g. ``erosion`` overwrites ``height`` after ``macro_world``).
