@@ -54,6 +54,17 @@
 - `ce-slack-research`: organizational context research when configured.
 - `lfg` / `ce-work-beta`: CE autonomous/beta workflows only when explicitly appropriate; never substitute GSD.
 
+## Solutions Knowledge Base
+
+`docs/solutions/` contains CE-documented solutions indexed by YAML frontmatter (`module`, `component`, `tags`, `problem_type`). Categories map to subdirectories: `logic-errors/`, `architecture-patterns/`, `runtime-errors/`, `best-practices/`, etc.
+
+**Search before implementing** any fix or pass change in a documented module:
+```bash
+grep -r "module: <module-name>" docs/solutions/
+grep -r "<keyword>" docs/solutions/
+```
+Frontmatter fields to search: `module`, `component`, `tags`, `title`. Check the matching `docs/solutions/<category>/` directory first when the problem type is clear.
+
 ## Compound Engineering Best Practices
 
 - Treat CE plans and docs as decision artifacts; progress lives in git status, commits, task tracker, and verification output.
