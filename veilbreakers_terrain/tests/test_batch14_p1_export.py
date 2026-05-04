@@ -96,8 +96,16 @@ def test_splatmap_layer_cap_enforced_at_4_per_cell():
     for i in range(L):
         weights[:, :, i] = float(L - i)  # 6, 5, 4, 3, 2, 1
 
-    stack = TerrainMaskStack(height=np.zeros((H, W), dtype=np.float32))
-    stack.splatmap_weights_layer = weights
+    stack = TerrainMaskStack(
+        tile_size=H,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=np.zeros((H, W), dtype=np.float32),
+    )
+    stack.set('splatmap_weights_layer', weights, 'test')
 
     import tempfile, pathlib
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -222,10 +230,21 @@ def test_golden_snapshot_tolerances_per_channel():
     )
 
     H, W = 4, 4
-    height_base = np.ones((H, W), dtype=np.float32) * 100.0
+    height_base = np.ones((H, W), dtype=np.float32) * 1.0
+
+    def _make_stack(h: np.ndarray) -> "TerrainMaskStack":
+        return TerrainMaskStack(
+            tile_size=H,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=h,
+        )
 
     # Golden stack
-    stack_golden = TerrainMaskStack(height=height_base.copy())
+    stack_golden = _make_stack(height_base.copy())
 
     with tempfile.TemporaryDirectory() as tmpdir:
         golden_dir = pathlib.Path(tmpdir)
@@ -240,7 +259,7 @@ def test_golden_snapshot_tolerances_per_channel():
 
         # Current stack: height differs by 0.005 m (within tolerance)
         height_current = height_base + 0.005
-        stack_current = TerrainMaskStack(height=height_current.copy())
+        stack_current = _make_stack(height_current.copy())
 
         # With channel_tolerances specifying height=0.01, no hard failures.
         issues = compare_against_golden(

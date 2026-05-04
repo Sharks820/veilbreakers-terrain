@@ -42,6 +42,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .terrain_asset_metadata import AssetContextRuleExt
 from .terrain_pipeline import TerrainPassController, derive_pass_seed
 from .terrain_semantics import (
     BBox,
@@ -273,6 +274,33 @@ def build_asset_context_rules() -> List[AssetContextRule]:
             cluster_radius_m=1.0,
         ),
     ]
+
+
+# FIX-B14-P1-41: build companion AssetContextRuleExt objects for each rule
+# returned by build_asset_context_rules().  These carry scale_variance_by_role
+# and camera_priority_weight fields that pass_scatter_intelligent now consumes
+# via blended_score() when scoring placements.
+def build_asset_context_rule_exts() -> Dict[str, AssetContextRuleExt]:
+    """Return asset_id → AssetContextRuleExt for every default rule.
+
+    Defaults match the scatter budget contract:
+      - hero/support props get lower scale variance (consistent silhouette).
+      - filler/ground-cover gets higher variance (visual breakup).
+      - camera_priority_weight is 0.0 (no camera bias) unless the asset is
+        silhouette-critical — caller may override after construction.
+    """
+    return {
+        "grass_clump":      AssetContextRuleExt("grass_clump",      scale_variance_by_role=0.3, camera_priority_weight=0.0),
+        "moss_patch":       AssetContextRuleExt("moss_patch",       scale_variance_by_role=0.25, camera_priority_weight=0.0),
+        "oak_tree":         AssetContextRuleExt("oak_tree",         scale_variance_by_role=0.2, camera_priority_weight=0.1),
+        "pine_tree":        AssetContextRuleExt("pine_tree",        scale_variance_by_role=0.2, camera_priority_weight=0.05),
+        "dead_tree":        AssetContextRuleExt("dead_tree",        scale_variance_by_role=0.35, camera_priority_weight=0.15),
+        "bush_dense":       AssetContextRuleExt("bush_dense",       scale_variance_by_role=0.3, camera_priority_weight=0.0),
+        "fern_cluster":     AssetContextRuleExt("fern_cluster",     scale_variance_by_role=0.3, camera_priority_weight=0.0),
+        "cliff_boulder":    AssetContextRuleExt("cliff_boulder",    scale_variance_by_role=0.4, camera_priority_weight=0.2),
+        "waterfall_rock":   AssetContextRuleExt("waterfall_rock",   scale_variance_by_role=0.35, camera_priority_weight=0.3),
+        "cave_rubble":      AssetContextRuleExt("cave_rubble",      scale_variance_by_role=0.5, camera_priority_weight=0.0),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -831,6 +859,11 @@ def pass_scatter_intelligent(
     stack = state.mask_stack
     intent = state.intent
     rules = build_asset_context_rules()
+    # FIX-B14-P1-41: build ext objects and apply blended_score() per-asset.
+    # exts carries scale_variance_by_role and camera_priority_weight; these
+    # are consumed below to filter low-priority placements and later by
+    # _build_tree_instance_array for scale variance application.
+    exts = build_asset_context_rule_exts()
 
     protected = _protected_mask(state, stack.height.shape, "scatter_intelligent")
 
@@ -839,6 +872,27 @@ def pass_scatter_intelligent(
         region=region,
         protected=protected,
     )
+
+    # FIX-B14-P1-41: apply blended_score() to filter placements whose
+    # combined viability + camera-priority score is below the minimum
+    # threshold.  We use normalized placement count as a viability proxy
+    # (relative to the largest placement list in this run).  camera_dot=0.0
+    # is always used here (no real-time viewport in headless/CI).
+    max_placements = max((len(v) for v in placements.values()), default=1) or 1
+    for asset_id in list(placements.keys()):
+        ext = exts.get(asset_id)
+        if ext is None:
+            continue
+        base_viability = len(placements[asset_id]) / max_placements
+        score = ext.blended_score(base_viability, camera_dot=0.0)
+        # Drop assets whose blended score is negligible (< 5% of max).
+        if score < 0.05 and len(placements[asset_id]) > 0:
+            import logging as _logging
+            _logging.getLogger(__name__).debug(
+                "scatter_intelligent: dropping %r (blended_score=%.3f < 0.05)",
+                asset_id, score,
+            )
+            placements[asset_id] = []
 
     # Cluster-add rocks/debris where hero-candidate masks exist.
     cliff_mask = stack.get("cliff_candidate")

@@ -1752,7 +1752,37 @@ def handle_generate_lods(params: dict[str, Any]) -> HandlerResult:
     col_obj.scale = obj.scale
     col_obj.display_type = "WIRE"
 
-    return {
+    # P1-18: export LOD FBX files when export_dir is provided
+    export_dir = params.get("export_dir")
+    exported_files: list[str] = []
+    if export_dir:
+        import pathlib
+        export_path = pathlib.Path(export_dir)
+        export_path.mkdir(parents=True, exist_ok=True)
+
+        all_lod_names = [r["name"] for r in lod_results] + [col_name]
+        for lod_name_export in all_lod_names:
+            export_obj = bpy.data.objects.get(lod_name_export)
+            if export_obj is None:
+                continue
+            fbx_path = str(export_path / f"{lod_name_export}.fbx")
+            bpy.ops.object.select_all(action="DESELECT")
+            export_obj.select_set(True)
+            bpy.context.view_layer.objects.active = export_obj
+            bpy.ops.export_scene.fbx(
+                filepath=fbx_path,
+                use_selection=True,
+                global_scale=1.0,
+                apply_unit_scale=True,
+                apply_scale_options="FBX_SCALE_NONE",
+                use_mesh_modifiers=True,
+                mesh_smooth_type="FACE",
+                add_leaf_bones=False,
+                bake_anim=False,
+            )
+            exported_files.append(fbx_path)
+
+    result: dict[str, Any] = {
         "status": "success",
         "source": object_name,
         "asset_type": asset_type,
@@ -1771,6 +1801,9 @@ def handle_generate_lods(params: dict[str, Any]) -> HandlerResult:
             "preserve_regions": preset.get("preserve_regions", []),
         },
     }
+    if exported_files:
+        result["exported_files"] = exported_files
+    return result
 
 
 # ---------------------------------------------------------------------------

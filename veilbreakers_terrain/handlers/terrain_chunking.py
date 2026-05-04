@@ -549,6 +549,11 @@ def build_tile_seam_contract(
         "west": arr[:, 0, ...],
         "east": arr[:, cols - 1, ...],
     }
+    # FIX-B14-P1-42: scalar float corners (2-D heightmap [row, col] → numpy
+    # scalar) are always wrapped in a list here so corners.json values are
+    # always arrays, never bare scalars. _coerce_jsonable_edge_samples handles
+    # the float→Python-native conversion; the `[coerced]` branch covers the
+    # case where the result is a plain float rather than a list.
     def _corner_as_list(v: Any) -> list:
         coerced = _coerce_jsonable_edge_samples(v)
         if not isinstance(coerced, list):

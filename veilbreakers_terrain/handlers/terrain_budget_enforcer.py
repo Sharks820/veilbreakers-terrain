@@ -371,6 +371,16 @@ def compute_tile_budget_usage(
     hero_per_km2 = hero_count / km2 if km2 > 0 else 0.0
 
     lod_tris = _estimate_tri_count_per_lod(stack)
+    # FIX-B14-P1-27: hero mesh tris were excluded from the LOD0 total, so the
+    # budget check compared only terrain+cliff tris against the LOD0 limit.
+    # Add hero_tri_lod0 to lod_tris[0] so enforce_budget catches tiles where
+    # hero meshes push the total over budget.
+    hero_tri_lod0 = hero_count * _HERO_TRI_PER_FEATURE[0]
+    lod_tris = {
+        0: lod_tris[0] + hero_tri_lod0,
+        1: lod_tris[1] + hero_count * _HERO_TRI_PER_FEATURE[1],
+        2: lod_tris[2] + hero_count * _HERO_TRI_PER_FEATURE[2],
+    }
     tri_count = lod_tris[0]  # LOD0 for legacy key
     unique_materials = _count_unique_materials(stack)
     scatter = _count_scatter_instances(stack)

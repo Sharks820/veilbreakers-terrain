@@ -470,30 +470,57 @@ def evaluate_mesh_quality(
             PQ = Q - P                                          # (B, 3)
             pq_len_sq = (PQ * PQ).sum(axis=1)                  # (B,)
 
-            # For each boundary edge, check all vertices for T-junction.
-            # Vectorized per-edge over all vertices: project V onto segment,
-            # clamp t to (eps, 1-eps), compute closest point, check distance.
-            # This is O(B * N_verts) but boundary edges are rare in good meshes.
+            # Spatial-hash T-junction detection — O(B × avg_bucket_size)
+            # instead of O(B × N_verts).  FIX-B14-P1-37.
             _eps = 1e-6
             _tol_sq = _eps * _eps
+            # Build a 3-D spatial hash: bucket each vertex by a grid cell of
+            # size (tol).  Use an integer key (ix, iy, iz) in a plain dict.
+            _cell = max(_eps * 10, 1e-4)
+            _vtx_buckets: dict = {}
+            for vi, vpos in enumerate(V):
+                key = (
+                    int(vpos[0] / _cell),
+                    int(vpos[1] / _cell),
+                    int(vpos[2] / _cell),
+                )
+                _vtx_buckets.setdefault(key, []).append(vi)
+
             for bi in range(boundary_packed.size):
                 if pq_len_sq[bi] < _tol_sq:
                     continue
                 p = P[bi]                # (3,)
                 pq = PQ[bi]              # (3,)
-                # t = dot(V - p, pq) / |pq|^2 for all vertices
-                diff = V - p             # (N_verts, 3)
-                t = (diff * pq).sum(axis=1) / pq_len_sq[bi]  # (N_verts,)
-                # Only interior of segment is a T-junction (not the endpoints).
-                interior = (t > _eps) & (t < 1.0 - _eps)
-                if not interior.any():
-                    continue
-                # Closest point on segment for candidate vertices.
-                t_clamped = t[interior, np.newaxis]            # (K, 1)
-                proj = p + t_clamped * pq                      # (K, 3)
-                dist_sq = ((V[interior] - proj) ** 2).sum(axis=1)
-                if (dist_sq < _tol_sq).any():
-                    t_junction_count += 1
+                pq_len = pq_len_sq[bi] ** 0.5
+                # AABB of the edge segment (expanded by _cell for border cells).
+                lo = np.minimum(p, p + pq)
+                hi = np.maximum(p, p + pq)
+                ix0, iy0, iz0 = (int(lo[k] / _cell) - 1 for k in range(3))
+                ix1, iy1, iz1 = (int(hi[k] / _cell) + 1 for k in range(3))
+                found = False
+                for ix in range(ix0, ix1 + 1):
+                    if found:
+                        break
+                    for iy in range(iy0, iy1 + 1):
+                        if found:
+                            break
+                        for iz in range(iz0, iz1 + 1):
+                            candidates = _vtx_buckets.get((ix, iy, iz))
+                            if not candidates:
+                                continue
+                            cand_v = V[candidates]      # (K, 3)
+                            diff = cand_v - p           # (K, 3)
+                            t = (diff * pq).sum(axis=1) / pq_len_sq[bi]
+                            interior = (t > _eps) & (t < 1.0 - _eps)
+                            if not interior.any():
+                                continue
+                            t_int = t[interior, np.newaxis]
+                            proj = p + t_int * pq
+                            dist_sq = ((cand_v[interior] - proj) ** 2).sum(axis=1)
+                            if (dist_sq < _tol_sq).any():
+                                t_junction_count += 1
+                                found = True
+                                break
 
     # ------------------------------------------------------------------
     # UV coverage (vectorized triangle fan for polygons)

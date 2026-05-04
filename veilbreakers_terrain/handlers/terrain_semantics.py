@@ -17,6 +17,7 @@ from __future__ import annotations
 import enum
 import hashlib
 import json
+import os
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -238,10 +239,13 @@ class TerrainMaskStack:
     and downstream pass contracts can type-check against them.
     """
 
-    # Set True in tests to turn direct channel assignment into a hard error.
-    # Production code leaves this False so the existing warning-only path is
-    # preserved and no runtime behavior changes outside of test runs.
-    _STRICT_PROVENANCE: ClassVar[bool] = False
+    # When TERRAIN_STRICT_PROVENANCE=1 is set in the environment (e.g. in CI),
+    # direct channel assignment raises AttributeError instead of just logging a
+    # warning.  Production code runs without the env var so existing behaviour
+    # is preserved.  FIX-B14-P1-12.
+    _STRICT_PROVENANCE: ClassVar[bool] = (
+        os.environ.get("TERRAIN_STRICT_PROVENANCE", "").strip() == "1"
+    )
 
     # Shape and coordinate contract
     tile_size: int
@@ -1658,6 +1662,14 @@ class PassDefinition:
     # otherwise. Use this for "if the cliffs pass ran, read its mask; if not,
     # fall through to a default" patterns like ``pass_scatter_intelligent``.
     optional_channels: Tuple[str, ...] = ()
+    # FIX-B14-P1-13: explicit "read if available" alias for the DAG.
+    # Semantically identical to ``optional_channels`` — the DAG treats these
+    # as soft dependencies: schedule the producer first when available, but
+    # never block execution when the channel is absent.  Added as a distinct
+    # field so callers can be explicit about *why* a channel is optional (i.e.
+    # "I read this if the upstream pass ran") vs ``optional_channels`` which
+    # covers both "available at runtime" and "produced by an optional pass".
+    requires_channels_optional: Tuple[str, ...] = ()
     # Channels this pass intentionally overwrites (rather than being the sole
     # first writer). Populated for legitimate secondary writers of shared
     # channels (e.g. ``erosion`` overwrites ``height`` after ``macro_world``).

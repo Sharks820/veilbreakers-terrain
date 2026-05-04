@@ -23,6 +23,7 @@ from . import (
     terrain_budget_enforcer,
     terrain_determinism_ci,
     terrain_golden_snapshots,
+    terrain_iteration_metrics,
     terrain_performance_report,
     terrain_readability_bands,
     terrain_review_ingest,
@@ -469,6 +470,32 @@ def run_bundle_n_post_pipeline_hooks(
                 )
         except Exception as exc:  # noqa: BLE001
             summary["determinism_error"] = repr(exc)
+
+    # FIX-B14-P1-40: wire IterationMetrics into post-pipeline hooks so each
+    # production run emits a summary_report.json alongside telemetry.
+    # Populate metrics from the results sequence (pass name + duration) and
+    # write to output_dir / "summary_report.json" when output_dir is configured.
+    try:
+        metrics = terrain_iteration_metrics.IterationMetrics()
+        for result in results:
+            channels_written = list(getattr(result, "channels_written", None) or [])
+            metrics.record(
+                result.pass_name,
+                float(getattr(result, "duration_seconds", 0.0) or 0.0),
+                cached=bool(getattr(result, "from_cache", False)),
+                channels_written=channels_written or None,
+            )
+        summary["iteration_metrics"] = metrics.summary_report()
+        output_dir_raw = options.get("output_dir") or (
+            str(Path(telemetry_path).parent) if telemetry_path else None
+        )
+        if output_dir_raw:
+            report_path = Path(output_dir_raw) / "summary_report.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(metrics.to_json(), encoding="utf-8")
+            summary["iteration_metrics_path"] = str(report_path)
+    except Exception as exc:  # noqa: BLE001
+        summary["iteration_metrics_error"] = repr(exc)
 
     _merge_bundle_n_metrics(last, summary)
     return summary

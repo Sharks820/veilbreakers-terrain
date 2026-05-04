@@ -334,6 +334,15 @@ def test_mask_stack_channels_populated_after_each_pass():
 
 def test_pipeline_determinism_bit_identical_reruns():
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_banded import register_bundle_g_passes
+    from veilbreakers_terrain.handlers.terrain_banded_advanced import register_banded_advanced_pass
+
+    # Pre-register banded_macro and pass_banded_advanced so run_pipeline()
+    # never triggers register_all_terrain_passes() mid-run, which would
+    # overwrite the fast erosion mock below and cause run A vs run B to use
+    # different erosion implementations → different heights → hash mismatch.
+    register_bundle_g_passes()
+    register_banded_advanced_pass()
 
     with tempfile.TemporaryDirectory() as td:
         state_a = _build_state(tile_size=24, seed=9001, quality_profile="preview")

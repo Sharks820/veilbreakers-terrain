@@ -221,11 +221,37 @@ def force_addon_reload() -> bool:
     the addon via ``bpy.ops.preferences.addon_disable`` /
     ``bpy.ops.preferences.addon_enable``.
 
+    .. warning:: **Drop all references before calling this function.**
+
+        FIX-B14-P1-29: After ``importlib.reload()`` every class object
+        (``PassResult``, ``ValidationIssue``, ``TerrainMaskStack``, etc.) is
+        re-created as a *new* type.  Any existing instances held by callers
+        will fail ``isinstance`` checks against the reloaded class — a subtle
+        identity corruption that manifests as ``AttributeError`` or silent
+        logic errors.
+
+        Callers MUST:
+          1. Release all references to ``PassResult``, ``ValidationIssue``,
+             ``TerrainMaskStack``, and other semantic dataclass instances
+             **before** invoking this function.
+          2. Re-acquire fresh references from the reloaded module after the
+             call returns ``True``.
+          3. Never call this during an active pass execution — the mid-flight
+             ``PassResult`` will become a zombie of the old class identity.
+
+        If called inside a live Blender session while a modal operator or
+        edit-mode context is active, operator data may also be invalidated.
+        Prefer calling from the Python console or a ``bpy.app.timers`` callback
+        that fires between frame evaluations.
+
     Returns:
         ``True`` on success, ``False`` in headless/stub mode or on error.
     """
     import importlib
     import sys
+    import logging as _logging
+
+    _log_reload = _logging.getLogger(__name__)
 
     # Guard: skip entirely when bpy is a test stub. Reloading modules in
     # headless mode corrupts class identity (e.g. PassResult gets two
@@ -233,6 +259,26 @@ def force_addon_reload() -> bool:
     # isinstance checks to fail in subsequent tests.
     if not _is_live_blender():
         return False
+
+    # FIX-B14-P1-29: warn when called outside OBJECT mode in a live Blender
+    # session.  Modal operators (sculpt, edit, weight-paint, etc.) hold
+    # references to operator-specific bmesh/depsgraph data that become stale
+    # after a module reload, which can corrupt Blender's undo stack or crash
+    # the operator context.
+    try:
+        import bpy as _bpy
+        current_mode = getattr(_bpy.context, "mode", None)
+        if current_mode is not None and current_mode != "OBJECT":
+            _log_reload.warning(
+                "force_addon_reload called while Blender context mode is %r "
+                "(expected 'OBJECT').  Any active modal operator or edit-mode "
+                "data that holds references to PassResult/ValidationIssue "
+                "instances will become invalid after reload.  Drop all "
+                "references and exit the active mode before reloading.",
+                current_mode,
+            )
+    except Exception:  # noqa: BLE001
+        pass  # non-fatal: warning is best-effort
 
     try:
         _live = _import_addon_package()

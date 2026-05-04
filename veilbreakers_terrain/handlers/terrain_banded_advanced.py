@@ -521,7 +521,7 @@ def pass_banded_advanced(state, region):  # type: ignore[no-untyped-def]
     if h is None:
         return PassResult(
             pass_name="pass_banded_advanced",
-            success=False,
+            status="warning",
             duration_seconds=time.perf_counter() - t0,
             issues=[ValidationIssue(
                 code="BANDED_ADVANCED_NO_HEIGHT",
@@ -544,7 +544,7 @@ def pass_banded_advanced(state, region):  # type: ignore[no-untyped-def]
 
     return PassResult(
         pass_name="pass_banded_advanced",
-        success=True,
+        status="ok",
         duration_seconds=time.perf_counter() - t0,
         metrics={"sigma": sigma, "height_shape": list(smoothed.shape)},
     )

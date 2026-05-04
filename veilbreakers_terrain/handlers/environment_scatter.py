@@ -884,7 +884,12 @@ def _filter_multipass_scatter_placements(
         if chosen_rule is None:
             continue
 
-        if (apply_rule_density or "density" in chosen_rule) and rng.random() > float(chosen_rule.get("density", 1.0)):
+        # FIX-B14-P1-7: always run density gating when any rule in the
+        # matching list declares a density key — not only when the caller
+        # explicitly passes apply_rule_density=True.  This prevents 2-3x
+        # over-dense scatter when callers omit the flag.
+        _any_rule_has_density = any("density" in r for r in matching_rules)
+        if (apply_rule_density or _any_rule_has_density) and rng.random() > float(chosen_rule.get("density", 1.0)):
             continue
 
         placement_local = dict(placement)

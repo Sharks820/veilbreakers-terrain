@@ -73,6 +73,8 @@ jobs:
           python scripts/terrain_best_practice_guardrail.py --strict-grade-status --strict-verification
 
       - name: Test with pytest + coverage
+        env:
+          TERRAIN_STRICT_PROVENANCE: "1"
         run: |
           python -m pytest \
             --cov=veilbreakers_terrain \

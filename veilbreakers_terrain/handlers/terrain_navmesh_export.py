@@ -581,22 +581,26 @@ def export_navmesh_json(
         json.dumps(descriptor, indent=2, sort_keys=True, default=_json_default)
     )
 
-    # D-2: Emit sibling .obj for Unity AI Navigation import.
-    # Unity's NavMesh baking pipeline cannot consume raw JSON; an OBJ walkable
-    # mesh gives the Editor-side import script geometry to bake into a NavMeshData asset.
-    obj_path = output_path.with_suffix(".obj")
-    verts = geometry["vertices"]
-    polys = geometry["triangles"]
-    areas = geometry["area_ids"]
-    with obj_path.open("w", encoding="utf-8") as _f:
-        _f.write("# VeilBreakers navmesh walkable geometry\n")
-        for v in verts:
-            _f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
-        for i, p in enumerate(polys):
-            area = areas[i] if i < len(areas) else 0
-            _f.write(f"# area_id={area}\n")
-            _f.write(f"f {p[0]+1} {p[1]+1} {p[2]+1}\n")
-    descriptor["obj_path"] = str(obj_path)
+    # FIX-B14-P1-23: Unity reads the .bin navmesh asset, not a .obj sidecar.
+    # Writing an .obj here creates a spurious artefact that Unity's importer
+    # ignores (it binds to the NavMeshData .asset from the .bin export path).
+    # The OBJ sidecar is now gated behind a debug env-var so production builds
+    # stay clean while local debugging remains possible.
+    import os as _os
+    if _os.environ.get("VB_NAVMESH_EXPORT_OBJ", "0") == "1":
+        obj_path = output_path.with_suffix(".obj")
+        verts = geometry["vertices"]
+        polys = geometry["triangles"]
+        areas = geometry["area_ids"]
+        with obj_path.open("w", encoding="utf-8") as _f:
+            _f.write("# VeilBreakers navmesh walkable geometry (debug only)\n")
+            for v in verts:
+                _f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+            for i, p in enumerate(polys):
+                area = areas[i] if i < len(areas) else 0
+                _f.write(f"# area_id={area}\n")
+                _f.write(f"f {p[0]+1} {p[1]+1} {p[2]+1}\n")
+        descriptor["obj_path"] = str(obj_path)
 
     return descriptor
 

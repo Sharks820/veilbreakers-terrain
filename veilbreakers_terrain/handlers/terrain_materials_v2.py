@@ -303,6 +303,9 @@ def triplanar_blend(
     normal = np.asarray(normal, dtype=np.float64)
     pos = np.asarray(pos, dtype=np.float64)
 
+    # FIX-B14-P1-16: power-blend (sharpness >= 4) eliminates visible 45° seams
+    # at triplanar projection boundaries. Simple abs() blend creates hard seams;
+    # raising to a power >= 4 pushes weight toward the dominant axis.
     w = np.abs(normal) ** sharpness                    # (H, W, 3)
     w_sum = w.sum(axis=2, keepdims=True).clip(1e-9, None)
     w = w / w_sum                                       # normalised
@@ -1036,10 +1039,10 @@ def pass_materials(
         state.tile_y,
         region,
     )
-    # P1-15: seed numpy global RNG from intent so both splatmap derivation
-    # paths produce identical results across round-trip tests.  Using
-    # np.random.default_rng(seed) is the preferred pattern; the legacy
-    # global-state np.random.seed() is intentionally avoided.
+    # FIX-B14-P1-15: seed numpy RNG deterministically from intent.seed so both
+    # splatmap derivation paths produce identical results across round-trip
+    # tests.  Using np.random.default_rng(seed) is the preferred pattern; the
+    # legacy global-state np.random.seed() is intentionally avoided.
     _pass_rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
     _ = _pass_rng  # available for any stochastic sub-call that needs it
 

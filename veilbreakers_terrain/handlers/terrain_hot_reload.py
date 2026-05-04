@@ -78,11 +78,26 @@ def _rebind_pass_funcs_for_module(module_name: str) -> int:
     return rebound
 
 
-# Modules we will attempt to reload. Missing modules are silently skipped.
+# FIX-B14-P1-31: expanded from 3 modules to cover all biome-related modules.
+# Missing modules are silently skipped via _safe_reload, so additions here
+# are safe even if the module has not been created yet.
 _BIOME_RULE_MODULES = (
     "veilbreakers_terrain.handlers.terrain_ecotone_graph",
     "veilbreakers_terrain.handlers.terrain_materials_v2",
     "veilbreakers_terrain.handlers.terrain_banded",
+    # FIX-B14-P1-31: expanded to all biome *rule-dispatching* modules.
+    # IMPORTANT: never add modules that define dataclasses (e.g. terrain_water_variants,
+    # terrain_semantics) — reloading them creates new class objects, breaking
+    # isinstance() checks in already-imported code.
+    "veilbreakers_terrain.handlers.terrain_foliage_catalog",
+    "veilbreakers_terrain.handlers.terrain_biome_registry",
+    "veilbreakers_terrain.handlers._biome_grammar",
+    "veilbreakers_terrain.handlers.terrain_banded_advanced",
+    "veilbreakers_terrain.handlers.terrain_materials",
+    "veilbreakers_terrain.handlers.procedural_grass",
+    "veilbreakers_terrain.handlers.vegetation_system",
+    "veilbreakers_terrain.handlers.environment_scatter",
+    "veilbreakers_terrain.handlers._scatter_engine",
 )
 
 _MATERIAL_RULE_MODULES = (

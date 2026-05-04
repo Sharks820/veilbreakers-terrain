@@ -185,18 +185,40 @@ def _merge_pass_outputs(
                 f"for it. Check that the pass function calls stack.set('{channel}', ...)."
             )
 
-        # Conflict detection: another pass already wrote this channel in the
-        # same merge sequence.  Newer pass (current) wins; log at WARNING.
+        # FIX-B14-P1-14: consult PassDefinition.overrides before accepting a
+        # secondary write.  If a channel is already populated by an earlier pass
+        # AND this pass did NOT declare the channel in its ``overrides`` tuple,
+        # skip the write and log a warning instead of silently overwriting.
+        # Passes that intentionally overwrite (e.g. erosion → height) must
+        # list the channel in ``overrides``; accidental overwrites are dropped.
+        # "__init__" is constructor initialization, not a real pass — any pass
+        # may freely overwrite a channel seeded by __init__ without overrides.
         existing_writer = target_stack.populated_by_pass.get(channel)
-        if existing_writer is not None and existing_writer != source_result.pass_name:
-            logger.warning(
-                "Channel conflict: channel '%s' was already written by pass '%s'; "
-                "pass '%s' is overwriting it (newer pass wins). "
-                "Check DAG produces_channels declarations to resolve the conflict.",
-                channel,
-                existing_writer,
-                source_result.pass_name,
-            )
+        if (
+            existing_writer is not None
+            and existing_writer != source_result.pass_name
+            and existing_writer != "__init__"
+        ):
+            declared_overrides = set(getattr(definition, "overrides", ()) or ())
+            if channel not in declared_overrides:
+                logger.warning(
+                    "Channel conflict: channel '%s' was already written by pass '%s'; "
+                    "pass '%s' did not declare it in overrides — skipping secondary write. "
+                    "Add overrides=('%s',) to the PassDefinition to allow intentional overwrite.",
+                    channel,
+                    existing_writer,
+                    source_result.pass_name,
+                    channel,
+                )
+                continue  # drop the secondary write
+            else:
+                logger.warning(
+                    "Channel conflict: channel '%s' was already written by pass '%s'; "
+                    "pass '%s' declared overrides — overwriting (intentional).",
+                    channel,
+                    existing_writer,
+                    source_result.pass_name,
+                )
 
         # Prefer numpy .copy() over copy.deepcopy for array channels — 10-100x
         # faster on large heightmaps (deepcopy walks every element via Python).

@@ -2589,6 +2589,7 @@ def auto_assign_terrain_layers(
     moisture_map: Any = None,
     terrain_resolution: int = 0,
     blend_contrast: float = 0.5,
+    stack: Any = None,
 ) -> list[tuple[float, float, float, float]]:
     """Compute per-vertex RGBA splatmap weights from slope, height, and moisture.
 
@@ -2631,7 +2632,41 @@ def auto_assign_terrain_layers(
         terrain_resolution: Grid resolution for moisture mapping. 0 = auto.
         blend_contrast: Sharpness of MicroSplat height-blend transitions [0..1].
             0 = gradual crossfade, 1 = near-binary edge. Default 0.5.
+        stack: Optional pipeline stack object. If provided and
+            ``stack.splatmap_weights_layer`` is not None, per-vertex weights are
+            sampled directly from that authoritative array instead of being
+            derived from slope/height heuristics. This makes Blender preview use
+            the same splatmap data that ships to Unity. (FIX-B14-11)
     """
+    # FIX-B14-11: fast path — if the pipeline stack already contains authoritative
+    # splatmap weights (written by terrain_materials_v2), sample from that array
+    # directly so the Blender preview exactly matches the Unity export instead of
+    # re-deriving weights independently via the slope/height heuristics below.
+    if stack is not None and getattr(stack, "splatmap_weights_layer", None) is not None:
+        try:
+            layer = np.asarray(stack.splatmap_weights_layer)
+            if layer.ndim == 3 and layer.shape[2] >= 1:
+                n_rows, n_cols = layer.shape[:2]
+                cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+                origin_x = float(getattr(stack, "world_origin_x", 0.0))
+                origin_y = float(getattr(stack, "world_origin_y", 0.0))
+                result_fast: list[tuple[float, float, float, float]] = []
+                for vx, vy, _vz in vertices:
+                    col = int((vx - origin_x) / cell_size)
+                    row = int((vy - origin_y) / cell_size)
+                    col = max(0, min(col, n_cols - 1))
+                    row = max(0, min(row, n_rows - 1))
+                    cell = layer[row, col, :]
+                    n = len(cell)
+                    w0 = float(cell[0]) if n > 0 else 0.0
+                    w1 = float(cell[1]) if n > 1 else 0.0
+                    w2 = float(cell[2]) if n > 2 else 0.0
+                    w3 = float(cell[3]) if n > 3 else 0.0
+                    result_fast.append((w0, w1, w2, w3))
+                return result_fast
+        except Exception:  # noqa: BLE001
+            pass  # fall through to slope/height derivation below
+
     num_verts = len(vertices)
     if num_verts == 0:
         return []

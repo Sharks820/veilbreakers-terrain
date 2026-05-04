@@ -170,9 +170,13 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         "pass_generate_low_freq_hmap",
         "biome_channels",
         "terrain_labels",
-        "structural_masks",
         "pass_generate_high_freq_detail",
         "pass_composite_hmap",
+        # B14-9: structural_masks now runs AFTER composite_hmap so cliff_mask,
+        # slope, and curvature are derived from the final composited height, not
+        # the low-freq-only base.  Water/splatmap weights are always computed
+        # downstream and are therefore consistent with the corrected masks.
+        "structural_masks",
         # P1-9: banded_macro runs AFTER composite_hmap so its height output is
         # not overwritten by the composite.  P1-10: banded_advanced refines the
         # banded result with Kuwahara anti-grain smoothing.
@@ -181,6 +185,8 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         validation_pass,
     ]
     if has_scene_read:
+        # Hydrology + erosion operate on the low-freq height before compositing.
+        # Insert them at index 3 (before pass_generate_high_freq_detail).
         pass_sequence[3:3] = ["pass_hydrology", "erosion"]
         composite_idx = pass_sequence.index("pass_composite_hmap") + 1
         for post_erosion in ("structural_masks_post_erosion", "pass_hydrology_post_erosion"):
@@ -404,6 +410,8 @@ class TerrainPassController:
                         requires_channels=tuple(getattr(definition, "requires_channels", ()) or ()),
                         produces_channels=tuple(getattr(definition, "produces_channels", ()) or ()),
                         optional_channels=tuple(getattr(definition, "optional_channels", ()) or ()),
+                        # FIX-B14-P1-13: canonicalise requires_channels_optional from twin class
+                        requires_channels_optional=tuple(getattr(definition, "requires_channels_optional", ()) or ()),
                         overrides=tuple(getattr(definition, "overrides", ()) or ()),
                         requires_features=tuple(getattr(definition, "requires_features", ()) or ()),
                         idempotent=bool(getattr(definition, "idempotent", True)),
