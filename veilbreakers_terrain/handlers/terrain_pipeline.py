@@ -27,8 +27,9 @@ import logging
 import time
 import uuid
 import dataclasses
+import weakref
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .terrain_semantics import (
     BBox,
@@ -47,6 +48,20 @@ from .terrain_semantics import (
 )
 
 _log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level weak registry for hot-reload func rebinding (FIX-B14-23)
+# ---------------------------------------------------------------------------
+# Maps (module_name, attr_name) -> PassDefinition so that after
+# importlib.reload() the hot-reload code can iterate this dict and re-bind
+# PassDefinition.func without re-registering the whole pipeline.
+#
+# WeakValueDictionary is used so that PassDefinitions that are dropped from
+# the PASS_REGISTRY (e.g. test teardown clears the class-level dict) do not
+# accumulate here indefinitely.
+_PASS_MODULE_REGISTRY: "weakref.WeakValueDictionary[Tuple[str, str], PassDefinition]" = (
+    weakref.WeakValueDictionary()
+)
 
 
 class PipelineSubsystemError(RuntimeError):
@@ -462,6 +477,21 @@ class TerrainPassController:
                 raise ValueError(msg)
             _log.warning(msg)
         cls.PASS_REGISTRY[definition.name] = definition
+
+        # Populate the module-level weak registry for hot-reload func rebinding
+        # (FIX-B14-23).  We store (module_name, attr_name) -> PassDefinition so
+        # that after importlib.reload() the hot-reload code can re-bind func
+        # without going through the full registration path.
+        func = definition.func
+        mod = getattr(func, "__module__", None)
+        qual = getattr(func, "__qualname__", None) or getattr(func, "__name__", None)
+        if mod and qual:
+            # Use just the top-level name for attribute lookup after reload
+            attr_name = qual.split(".")[0]
+            try:
+                _PASS_MODULE_REGISTRY[(mod, attr_name)] = definition
+            except TypeError:
+                pass  # unhashable key — skip silently
 
     @classmethod
     def get_pass(cls, pass_name: str) -> PassDefinition:
@@ -1732,6 +1762,7 @@ def register_default_passes(*, strict: bool = False) -> None:
 __all__ = [
     "TerrainPassController",
     "PipelineSubsystemError",
+    "_PASS_MODULE_REGISTRY",
     "build_default_pass_sequence",
     "derive_pass_seed",
     "register_default_passes",

@@ -14,7 +14,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -106,6 +108,19 @@ def run_determinism_check(
 ) -> Dict[str, Any]:
     """Execute the same pipeline ``runs`` times and assert bit-identical outputs.
 
+    .. deprecated::
+        This function replays the pipeline inside the same Python process.
+        NumPy RNG state, C-extension globals (noise, scipy KD-tree), and
+        module-level singletons cannot be detected as leaks across in-process
+        replays — the check is therefore unfalsifiable for production use.
+
+        Use :func:`run_determinism_check_subprocess` instead, which spawns
+        isolated interpreter processes and compares outputs byte-for-byte.
+
+        This function is retained for **unit-test use only**.  Calling it
+        outside a pytest session emits a ``DeprecationWarning`` and attaches
+        a hard ``ValidationIssue`` to the return value.
+
     The controller's current state is used as the baseline. Each run deep-copies
     the baseline and executes ``pass_sequence`` (or the default pipeline). The
     returned dict has keys:
@@ -116,6 +131,16 @@ def run_determinism_check(
         ``mismatches``    : list[(run_index, hash)]
         ``channel_divergences`` : list[(run_index, channel_name)]
     """
+    in_test = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+    if not in_test:
+        warnings.warn(
+            "run_determinism_check() is in-process and cannot detect RNG/global "
+            "state leaks across replay runs. Use run_determinism_check_subprocess() "
+            "for production determinism validation.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     if runs < 2:
         raise ValueError("run_determinism_check requires runs >= 2")
 
@@ -193,6 +218,22 @@ def run_determinism_check(
         mean = sum(durations) / len(durations)
         dur_stdev = (sum((d - mean) ** 2 for d in durations) / len(durations)) ** 0.5
 
+    inprocess_deprecation_issue: Optional[ValidationIssue] = None
+    if not in_test:
+        inprocess_deprecation_issue = ValidationIssue(
+            code="DETERMINISM_INPROCESS_REPLAY",
+            severity="hard",
+            message=(
+                "run_determinism_check() was called outside a pytest session. "
+                "In-process replay cannot detect NumPy RNG / C-extension global leaks. "
+                "Switch to run_determinism_check_subprocess() for production validation."
+            ),
+            remediation=(
+                "Replace run_determinism_check() with run_determinism_check_subprocess() "
+                "in production code paths."
+            ),
+        )
+
     return {
         "deterministic": not mismatches and not full_state_mismatches,
         "runs": run_records,
@@ -206,6 +247,7 @@ def run_determinism_check(
         "avg_duration_s": sum(durations) / len(durations) if durations else 0.0,
         "seed": int(seed),
         "run_count": runs,
+        "inprocess_deprecation_issue": inprocess_deprecation_issue,
     }
 
 
