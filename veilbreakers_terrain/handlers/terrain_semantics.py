@@ -422,6 +422,10 @@ class TerrainMaskStack:
     terrain_ao: Optional[np.ndarray] = None
     # Height/parallax displacement accumulated by quixel_ingest. float32 (H, W).
     terrain_displacement: Optional[np.ndarray] = None
+    # Brucks/wet-rock blended weight for MicroSplat subsurface scatter. float32 (H, W) in [0,1].
+    terrain_brucks_weight: Optional[np.ndarray] = None
+    # Per-cell snow coverage fraction written by material passes. float32 (H, W) in [0,1].
+    snow_coverage: Optional[np.ndarray] = None
     # Navmesh area classification: walkable/unwalkable/jump/climb per cell.
     navmesh_area_id: Optional[np.ndarray] = None
     # Physics collider tag: solid / trigger / nocollide.
@@ -710,6 +714,9 @@ class TerrainMaskStack:
             # Bundle I coastline channels (FIX-14-2, FIX-14-3)
             "tidal_zone_label",
             "wave_energy",
+            # Material weight channels (FIX-B14-12)
+            "terrain_brucks_weight",
+            "snow_coverage",
         ),
     )
 
