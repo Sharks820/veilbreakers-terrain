@@ -1040,6 +1040,45 @@ def pass_materials(
     stack.set("splatmap_weights_layer", new_weights, "materials_v2")
     stack.set("material_weights", new_weights, "materials_v2")
 
+    # FIX-B14-12: expose Brucks rock-boundary weight and snow coverage as
+    # standalone stack channels so downstream scatter/vegetation passes can
+    # consume them without re-deriving them from the full splatmap.
+    # terrain_brucks_weight — per-cell rock-boundary dominance [0..1]:
+    #   max of cliff + scree weights after normalization, proxy for "rock wins".
+    try:
+        cliff_idx = rules.index_of("cliff")
+        _brucks_w = new_weights[..., cliff_idx].copy()
+        try:
+            scree_idx = rules.index_of("scree")
+            _brucks_w = np.maximum(_brucks_w, new_weights[..., scree_idx])
+        except KeyError:
+            pass
+        stack.set("terrain_brucks_weight", _brucks_w.astype(np.float32), "materials_v2")
+    except KeyError:
+        # Rule set has no cliff channel; write a zero field so the channel
+        # contract is always satisfied.
+        stack.set(
+            "terrain_brucks_weight",
+            np.zeros(new_weights.shape[:2], dtype=np.float32),
+            "materials_v2",
+        )
+
+    # snow_coverage — per-cell snow eligibility [0..1] from the snow channel
+    # weight after all normal-z and snow_line_factor gates have been applied.
+    try:
+        snow_idx = rules.index_of("snow")
+        stack.set(
+            "snow_coverage",
+            new_weights[..., snow_idx].astype(np.float32),
+            "materials_v2",
+        )
+    except KeyError:
+        stack.set(
+            "snow_coverage",
+            np.zeros(new_weights.shape[:2], dtype=np.float32),
+            "materials_v2",
+        )
+
     # E-2: ambient_occlusion_bake from curvature concavity proxy
     _curvature = stack.get("curvature")
     if _curvature is not None:
@@ -1099,7 +1138,14 @@ def pass_materials(
         status=status,
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("slope", "height"),
-        produced_channels=("splatmap_weights_layer", "material_weights", "ambient_occlusion_bake", "terrain_displacement"),
+        produced_channels=(
+            "splatmap_weights_layer",
+            "material_weights",
+            "ambient_occlusion_bake",
+            "terrain_displacement",
+            "terrain_brucks_weight",
+            "snow_coverage",
+        ),
         metrics=metrics,
         issues=issues,
         warnings=warnings,
@@ -1107,25 +1153,86 @@ def pass_materials(
 
 
 def register_bundle_b_material_passes() -> None:
-    """Register the Bundle B materials pass on TerrainPassController."""
+    """Register the Bundle B materials passes on TerrainPassController.
+
+    Two passes are registered:
+      1. ``materials_v2`` — default dark-fantasy slope/altitude/wetness rules.
+         Primary writer of ``terrain_brucks_weight`` and ``snow_coverage``.
+      2. ``materials_v2_volcanic`` — caldera/volcanic rule set applied on top of
+         the default pass for volcanic biomes.  Declared as a secondary writer
+         of ``terrain_brucks_weight`` and ``snow_coverage`` via ``overrides``
+         so ChannelOwnershipError does not fire when both passes are registered.
+    """
     from .terrain_pipeline import TerrainPassController
 
+    # FIX-B14-12 primary writer: includes terrain_brucks_weight + snow_coverage.
     TerrainPassController.register_pass(
         PassDefinition(
             name="materials_v2",
             func=pass_materials,
             # Materials are derived from slope + altitude + curvature; wetness
             # is a soft input consumed via stack.get(...) when available.
-            # NOTE: produces_channels overlaps with quixel_ingest — that
+            # NOTE: splatmap_weights_layer overlaps with quixel_ingest — that
             # overlap is intentional (quixel_ingest overrides materials_v2
             # for photoscanned biomes, see terrain_quixel_ingest.py).
             requires_channels=("slope", "height"),
             optional_channels=("curvature", "wetness"),
-            produces_channels=("splatmap_weights_layer", "material_weights", "ambient_occlusion_bake", "terrain_displacement"),
+            produces_channels=(
+                "splatmap_weights_layer",
+                "material_weights",
+                "ambient_occlusion_bake",
+                "terrain_displacement",
+                "terrain_brucks_weight",
+                "snow_coverage",
+            ),
             seed_namespace="materials_v2",
             requires_scene_read=False,
             may_modify_geometry=False,
             description="Bundle B — slope/altitude/wetness-driven splatmap materials.",
+        )
+    )
+
+    # FIX-B14-12 secondary writer: volcanic caldera rule set.
+    # Runs after materials_v2 for tiles/regions tagged as volcanic biomes.
+    # Must declare overrides for every channel that materials_v2 already wrote —
+    # otherwise ChannelOwnershipError fires at register time and the entire
+    # bundle is silently dropped.
+    def _pass_volcanic_materials(
+        state: TerrainPipelineState,
+        region: Optional[BBox],
+    ) -> PassResult:
+        return pass_materials(state, region, rules=caldera_volcanic_rules())
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="materials_v2_volcanic",
+            func=_pass_volcanic_materials,
+            requires_channels=("slope", "height"),
+            optional_channels=("curvature", "wetness"),
+            produces_channels=(
+                "splatmap_weights_layer",
+                "material_weights",
+                "ambient_occlusion_bake",
+                "terrain_displacement",
+                "terrain_brucks_weight",
+                "snow_coverage",
+            ),
+            # FIX-B14-12: declare overrides so ChannelOwnershipError is not raised
+            # when both passes are registered. materials_v2 is the primary writer;
+            # materials_v2_volcanic is the intentional secondary writer for volcanic
+            # biome tiles that replaces the default dark-fantasy weights.
+            overrides=(
+                "splatmap_weights_layer",
+                "material_weights",
+                "ambient_occlusion_bake",
+                "terrain_displacement",
+                "terrain_brucks_weight",
+                "snow_coverage",
+            ),
+            seed_namespace="materials_v2_volcanic",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="Bundle B — caldera/volcanic splatmap materials (secondary writer).",
         )
     )
 
