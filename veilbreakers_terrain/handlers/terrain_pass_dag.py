@@ -43,39 +43,77 @@ def _lightweight_state_copy(state):
     workers cannot observe each other's in-place array mutations through a
     shared dict reference.  Opaque channels (mesh_specs, placements) are
     deepcopy'd — they are small, so the cost is bounded.
+
+    FIX-B14-8: array channels are now written via _bulk_set() so that
+    populated_by_pass provenance is recorded on the new stack for every
+    channel copied from the source.  The original producer name is preserved
+    per-channel; channels not yet populated retain no provenance entry.
+    Dict and opaque channels are written via stack.set() for the same reason.
     """
     import numpy as _np
 
     old_stack = state.mask_stack
     stack_type = type(old_stack)
-    new_stack = copy.copy(old_stack)  # shallow; channels fixed below
+    # Snapshot provenance before shallow-copy so we can restore it accurately.
+    old_provenance = dict(old_stack.populated_by_pass)
+    new_stack = copy.copy(old_stack)  # shallow; channels replaced below
 
-    # Array channels — fast buffer copy
+    # Disable the guard temporarily: we are building a private worker copy,
+    # not a pass writing to the shared controller stack.  Guard is re-enabled
+    # after _bulk_set() re-records provenance through the set() path.
+    object.__setattr__(new_stack, "_guard_active", False)
+
+    # Array channels — fast buffer copy, then re-record via _bulk_set so
+    # populated_by_pass entries are set on the new stack (FIX-B14-8).
+    array_channel_values: dict = {}
     for ch in stack_type._ARRAY_CHANNELS:
         val = getattr(old_stack, ch, None)
         if isinstance(val, _np.ndarray):
-            object.__setattr__(new_stack, ch, val.copy())
+            array_channel_values[ch] = val.copy()
 
-    # Dict channels — rebuild dict, copy ndarray values
+    # Dict channels — rebuild dict, copy ndarray values per entry
+    dict_channel_values: dict = {}
     for ch in stack_type._DICT_CHANNELS:
         d = getattr(old_stack, ch, None)
         if d is not None:
-            object.__setattr__(
-                new_stack,
-                ch,
-                {k: v.copy() if isinstance(v, _np.ndarray) else copy.deepcopy(v)
-                 for k, v in d.items()},
-            )
+            dict_channel_values[ch] = {
+                k: v.copy() if isinstance(v, _np.ndarray) else copy.deepcopy(v)
+                for k, v in d.items()
+            }
 
     # Opaque channels — small structures, deepcopy is bounded and safe
+    opaque_channel_values: dict = {}
     for ch in stack_type._OPAQUE_CHANNELS:
         val = getattr(old_stack, ch, None)
         if val is not None:
-            object.__setattr__(new_stack, ch, copy.deepcopy(val))
+            opaque_channel_values[ch] = copy.deepcopy(val)
 
-    object.__setattr__(new_stack, "populated_by_pass", dict(old_stack.populated_by_pass))
+    # Seed provenance + dirty state before re-enabling the guard so that
+    # _bulk_set() can overwrite the entries written by the shallow copy.
+    object.__setattr__(new_stack, "populated_by_pass", dict(old_provenance))
     object.__setattr__(new_stack, "dirty_channels", set(old_stack.dirty_channels))
     object.__setattr__(new_stack, "content_hash", None)
+
+    # Re-enable the guard before calling _bulk_set so any future direct
+    # attribute writes on new_stack go through the normal warning/error path.
+    object.__setattr__(new_stack, "_guard_active", True)
+
+    # Write array channels through set() so provenance is recorded.
+    # Use the original producer name per channel; fall back to "__copy__"
+    # for channels that have no prior provenance entry (shouldn't happen for
+    # any channel that is populated, but be defensive).
+    for ch, val in array_channel_values.items():
+        producer = old_provenance.get(ch, "__copy__")
+        new_stack.set(ch, val, producer)
+
+    # Dict and opaque channels: write through set() to record provenance.
+    for ch, val in dict_channel_values.items():
+        producer = old_provenance.get(ch, "__copy__")
+        new_stack.set(ch, val, producer)
+
+    for ch, val in opaque_channel_values.items():
+        producer = old_provenance.get(ch, "__copy__")
+        new_stack.set(ch, val, producer)
 
     return dataclasses.replace(
         state,
