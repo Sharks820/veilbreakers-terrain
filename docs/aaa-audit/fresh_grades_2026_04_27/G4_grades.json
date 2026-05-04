@@ -1227,7 +1227,7 @@
   },
   {
     "file": "handlers/terrain_visual_qa.py",
-    "callable": "TerrainVisualQA",
+    "callable": "TerrainDataContractQA",
     "line": 1,
     "type": "class",
     "grade": "B",
@@ -1244,7 +1244,7 @@
   },
   {
     "file": "handlers/terrain_visual_qa.py",
-    "callable": "TerrainVisualQA.REQUIRED_STACK_CHANNELS",
+    "callable": "TerrainDataContractQA.REQUIRED_STACK_CHANNELS",
     "line": 40,
     "type": "method",
     "grade": "A",
@@ -1257,7 +1257,7 @@
   },
   {
     "file": "handlers/terrain_visual_qa.py",
-    "callable": "TerrainVisualQA.run_checks",
+    "callable": "TerrainDataContractQA.run_checks",
     "line": 80,
     "type": "method",
     "grade": "B+",
@@ -1270,7 +1270,7 @@
   },
   {
     "file": "handlers/terrain_visual_qa.py",
-    "callable": "TerrainVisualQA.check_channel_presence",
+    "callable": "TerrainDataContractQA.check_channel_presence",
     "line": 130,
     "type": "method",
     "grade": "B+",
@@ -1283,7 +1283,7 @@
   },
   {
     "file": "handlers/terrain_visual_qa.py",
-    "callable": "TerrainVisualQA.check_channel_ranges",
+    "callable": "TerrainDataContractQA.check_channel_ranges",
     "line": 170,
     "type": "function",
     "grade": "B+",
@@ -1296,7 +1296,7 @@
   },
   {
     "file": "handlers/terrain_visual_qa.py",
-    "callable": "TerrainVisualQA.check_spatial_statistics",
+    "callable": "TerrainDataContractQA.check_spatial_statistics",
     "line": 220,
     "type": "method",
     "grade": "B",

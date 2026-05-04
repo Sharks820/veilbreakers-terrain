@@ -586,8 +586,9 @@ def _check_phantom_channel_writers(stack: Any) -> Dict[str, Any]:
     )
 
 
+# Renamed from VisualQA per FIX-B14-13: this gate checks data contracts, not rendered output.
 def run_checks(stack: Any) -> Dict[str, Any]:
-    """Run Phase 9 visual-QA contract checks on a stack-like object.
+    """Run Phase 9 data-contract checks on a stack-like object.
 
     This is code-level validation only; it does not claim rendered visual
     quality. Blender viewport/render proof remains a separate gate.
