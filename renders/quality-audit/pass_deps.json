@@ -1,0 +1,935 @@
+{
+  "audio_zones": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "audio_reverb_class",
+      "audio_zone_list"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "banded_macro": {
+    "requires": [],
+    "produces": [
+      "height"
+    ],
+    "overrides": [
+      "height"
+    ],
+    "requires_scene_read": false
+  },
+  "bathymetry": {
+    "requires": [
+      "height",
+      "water_surface"
+    ],
+    "produces": [
+      "bathymetry",
+      "water_depth_zone",
+      "water_surface_elevation_m"
+    ],
+    "overrides": [
+      "water_surface_elevation_m"
+    ],
+    "requires_scene_read": false
+  },
+  "biome_channels": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "biome_id",
+      "corruption_map"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "biome_surface_features": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "biome_surface_feature_delta"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "caves": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "cave_candidate",
+      "wet_rock",
+      "cave_height_delta",
+      "cave_wall_texture",
+      "cave_stalactite_length",
+      "cave_stalagmite_length",
+      "cave_depth_hint",
+      "cave_underground_depth",
+      "cave_chambers",
+      "cave_nav_issues_count",
+      "cave_mesh_specs"
+    ],
+    "overrides": [],
+    "requires_scene_read": true
+  },
+  "cliffs": {
+    "requires": [
+      "slope",
+      "height"
+    ],
+    "produces": [
+      "cliff_candidate",
+      "cliff_contour_spline",
+      "cliff_mesh_specs",
+      "talus_boulder_placements",
+      "cliff_mask",
+      "talus_mask",
+      "strata_mask"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "cloud_shadow": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "sun_cloud_shadow",
+      "cloud_shadow"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "coastline": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "tidal",
+      "tidal_zone_label",
+      "wave_energy",
+      "coastline_delta"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "decals": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "decal_density"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "ecotones": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "traversability",
+      "ecotone_blend_weights"
+    ],
+    "overrides": [
+      "traversability"
+    ],
+    "requires_scene_read": false
+  },
+  "emergent_grass": {
+    "requires": [
+      "splatmap_weights_layer"
+    ],
+    "produces": [
+      "grass_density_map"
+    ],
+    "overrides": [
+      "grass_density_map"
+    ],
+    "requires_scene_read": false
+  },
+  "emit_overhang_meshes": {
+    "requires": [],
+    "produces": [],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "emit_particle_systems": {
+    "requires": [],
+    "produces": [],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "erosion": {
+    "requires": [
+      "hmap_low_freq"
+    ],
+    "produces": [
+      "height",
+      "hmap_low_freq",
+      "erosion_amount",
+      "deposition_amount",
+      "wetness",
+      "drainage",
+      "bank_instability",
+      "talus",
+      "pool_deepening_delta",
+      "sediment_accumulation_at_base",
+      "ridge_eroded"
+    ],
+    "overrides": [
+      "height",
+      "hmap_low_freq"
+    ],
+    "requires_scene_read": true
+  },
+  "fog_masks": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "mist"
+    ],
+    "overrides": [
+      "mist"
+    ],
+    "requires_scene_read": false
+  },
+  "framing": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "height"
+    ],
+    "overrides": [
+      "height"
+    ],
+    "requires_scene_read": false
+  },
+  "gameplay_zones": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "gameplay_zone"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "glacial": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "snow_line_factor",
+      "glacial_delta"
+    ],
+    "overrides": [
+      "snow_line_factor"
+    ],
+    "requires_scene_read": false
+  },
+  "god_ray_hints": {
+    "requires": [
+      "height"
+    ],
+    "produces": [],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "horizon_lod": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "lod_bias",
+      "horizon_elevation_angles"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "integrate_deltas": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "height"
+    ],
+    "overrides": [
+      "height"
+    ],
+    "requires_scene_read": false
+  },
+  "karst": {
+    "requires": [
+      "height",
+      "rock_hardness"
+    ],
+    "produces": [
+      "karst_delta"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "macro_color": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "macro_color"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "macro_world": {
+    "requires": [],
+    "produces": [
+      "height",
+      "hmap_low_freq"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "materials_v2": {
+    "requires": [
+      "slope",
+      "height"
+    ],
+    "produces": [
+      "splatmap_weights_layer",
+      "material_weights",
+      "ambient_occlusion_bake",
+      "terrain_displacement",
+      "terrain_brucks_weight",
+      "snow_coverage"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "materials_v2_volcanic": {
+    "requires": [
+      "slope",
+      "height"
+    ],
+    "produces": [
+      "splatmap_weights_layer",
+      "material_weights",
+      "ambient_occlusion_bake",
+      "terrain_displacement",
+      "terrain_brucks_weight",
+      "snow_coverage"
+    ],
+    "overrides": [
+      "splatmap_weights_layer",
+      "material_weights",
+      "ambient_occlusion_bake",
+      "terrain_displacement",
+      "terrain_brucks_weight",
+      "snow_coverage"
+    ],
+    "requires_scene_read": false
+  },
+  "multiscale_breakup": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "roughness_breakup"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "navmesh": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "navmesh_area_id",
+      "traversability"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "pass_atmospheric_volumes": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "atmospheric_volumes"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "pass_banded_advanced": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "height"
+    ],
+    "overrides": [
+      "height"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_composite_hmap": {
+    "requires": [
+      "hmap_low_freq",
+      "hmap_high_freq"
+    ],
+    "produces": [
+      "height"
+    ],
+    "overrides": [
+      "height"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_generate_high_freq_detail": {
+    "requires": [],
+    "produces": [
+      "hmap_high_freq"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "pass_generate_low_freq_hmap": {
+    "requires": [],
+    "produces": [
+      "height",
+      "hmap_low_freq"
+    ],
+    "overrides": [
+      "height",
+      "hmap_low_freq"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_glacial": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "snow_line_factor",
+      "glacial_delta"
+    ],
+    "overrides": [
+      "snow_line_factor",
+      "glacial_delta"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_horizon_lod": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "lod_bias",
+      "horizon_elevation_angles"
+    ],
+    "overrides": [
+      "lod_bias",
+      "horizon_elevation_angles"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_hydrology": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "flow_direction",
+      "flow_accumulation"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "pass_hydrology_post_erosion": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "flow_direction",
+      "flow_accumulation"
+    ],
+    "overrides": [
+      "flow_direction",
+      "flow_accumulation"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_lava_simulation": {
+    "requires": [],
+    "produces": [
+      "lava_depth",
+      "lava_prox",
+      "lava_surface_mask"
+    ],
+    "overrides": [
+      "lava_depth",
+      "lava_prox",
+      "lava_surface_mask"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_morphology": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "morphology_delta"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "pass_navmesh_export": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "navmesh_area_id",
+      "traversability"
+    ],
+    "overrides": [
+      "navmesh_area_id",
+      "traversability"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_procedural_grass": {
+    "requires": [
+      "height",
+      "slope",
+      "drainage",
+      "biome_id"
+    ],
+    "produces": [
+      "grass_density_map",
+      "detail_density",
+      "grass_placement_records"
+    ],
+    "overrides": [
+      "detail_density"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_river_convergence": {
+    "requires": [
+      "flow_accumulation",
+      "flow_direction"
+    ],
+    "produces": [
+      "river_mouth_mask",
+      "confluence_foam",
+      "delta_fan_direction"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "pass_road_network": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "road_sdf_dist",
+      "road_worn_path_delta"
+    ],
+    "overrides": [
+      "road_mask",
+      "height"
+    ],
+    "requires_scene_read": false
+  },
+  "pass_seasonal_water_state": {
+    "requires": [
+      "wetness",
+      "water_surface_mask"
+    ],
+    "produces": [
+      "wetness",
+      "water_surface_mask",
+      "tidal"
+    ],
+    "overrides": [
+      "wetness",
+      "water_surface_mask",
+      "tidal"
+    ],
+    "requires_scene_read": true
+  },
+  "pass_terrain_features": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "terrain_feature_mesh_specs"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "pass_water_depth": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "water_depth_m",
+      "shoreline_blend"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "pass_water_flow_speed": {
+    "requires": [
+      "flow_direction",
+      "flow_accumulation"
+    ],
+    "produces": [
+      "flow_speed"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "prepare_heightmap_raw_u16": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "heightmap_raw_u16"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "prepare_terrain_normals": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "terrain_normals"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "prepare_unity_auxiliary_channels": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "physics_collider_mask",
+      "lightmap_uv_chart_id",
+      "ambient_occlusion_bake"
+    ],
+    "overrides": [
+      "ambient_occlusion_bake"
+    ],
+    "requires_scene_read": false
+  },
+  "quixel_ingest": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "splatmap_weights_layer"
+    ],
+    "overrides": [
+      "splatmap_weights_layer"
+    ],
+    "requires_scene_read": false
+  },
+  "roughness_driver": {
+    "requires": [
+      "height",
+      "roughness_breakup"
+    ],
+    "produces": [
+      "roughness_variation"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "saliency_refine": {
+    "requires": [
+      "height",
+      "saliency_macro"
+    ],
+    "produces": [
+      "saliency_macro"
+    ],
+    "overrides": [
+      "saliency_macro"
+    ],
+    "requires_scene_read": false
+  },
+  "scatter_intelligent": {
+    "requires": [
+      "height",
+      "slope"
+    ],
+    "produces": [
+      "tree_instance_points",
+      "detail_density"
+    ],
+    "overrides": [
+      "detail_density"
+    ],
+    "requires_scene_read": true
+  },
+  "shadow_clipmap": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "shadow_map",
+      "baked_cloud_shadow"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "snow_line": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "snow_line_factor"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "stochastic_shader": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "stochastic_uv_mask"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "stratigraphy": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "rock_hardness",
+      "strata_orientation",
+      "strat_erosion_delta",
+      "unconformity_mask",
+      "intrusion_mask",
+      "albedo_shift_rgb",
+      "strata_cross_section"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "structural_masks": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "slope",
+      "curvature",
+      "concavity",
+      "convexity",
+      "ridge",
+      "basin",
+      "saliency_macro",
+      "hero_exclusion"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "structural_masks_post_erosion": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "slope",
+      "curvature",
+      "concavity",
+      "convexity",
+      "ridge",
+      "basin",
+      "saliency_macro",
+      "hero_exclusion"
+    ],
+    "overrides": [
+      "slope",
+      "curvature",
+      "concavity",
+      "convexity",
+      "ridge",
+      "basin",
+      "saliency_macro",
+      "hero_exclusion"
+    ],
+    "requires_scene_read": false
+  },
+  "structural_masks_post_talus": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "slope",
+      "curvature",
+      "concavity",
+      "convexity",
+      "ridge",
+      "basin",
+      "saliency_macro",
+      "hero_exclusion"
+    ],
+    "overrides": [
+      "slope",
+      "curvature",
+      "concavity",
+      "convexity",
+      "ridge",
+      "basin",
+      "saliency_macro",
+      "hero_exclusion"
+    ],
+    "requires_scene_read": false
+  },
+  "talus": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "height",
+      "talus_displaced"
+    ],
+    "overrides": [
+      "height"
+    ],
+    "requires_scene_read": false
+  },
+  "terrain_labels": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "rock_label",
+      "gravel_label",
+      "water_label",
+      "cliff_label"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "validation_full": {
+    "requires": [
+      "height",
+      "slope"
+    ],
+    "produces": [],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "validation_minimal": {
+    "requires": [
+      "height",
+      "slope"
+    ],
+    "produces": [],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "vegetation_depth": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "detail_density"
+    ],
+    "overrides": [
+      "detail_density"
+    ],
+    "requires_scene_read": true
+  },
+  "water_variants": {
+    "requires": [
+      "height",
+      "slope"
+    ],
+    "produces": [
+      "water_surface",
+      "wetness",
+      "water_surface_mask",
+      "water_surface_elevation_m"
+    ],
+    "overrides": [
+      "wetness"
+    ],
+    "requires_scene_read": true
+  },
+  "waterfall_mist": {
+    "requires": [
+      "mist"
+    ],
+    "produces": [
+      "mist_zone_mask",
+      "wet_surface_decal"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "waterfalls": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "waterfall_lip_candidate",
+      "waterfall_pool_delta",
+      "foam",
+      "mist",
+      "mist_fog_volume",
+      "wet_rock",
+      "waterfall_velocity",
+      "wave_amplitude_per_vertex",
+      "foam_atlas_path",
+      "caustic_atlas_path",
+      "water_depth_atlas_path",
+      "riverbed_caustics",
+      "flow_speed"
+    ],
+    "overrides": [
+      "wet_rock",
+      "flow_speed"
+    ],
+    "requires_scene_read": true
+  },
+  "wildlife_zones": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "wildlife_affinity"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "wind_erosion": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "wind_erosion_delta"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  },
+  "wind_field": {
+    "requires": [
+      "height"
+    ],
+    "produces": [
+      "wind_field"
+    ],
+    "overrides": [],
+    "requires_scene_read": false
+  }
+}

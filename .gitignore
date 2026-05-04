@@ -68,3 +68,7 @@ output/test_rock_*.png
 # Temporary audit reconstruction fragments
 docs/aaa-audit/.master_audit_section*_onward.md
 docs/aaa-audit/temp_reconstruct_*.md
+
+# Dynamic quality audit — channel arrays and renders are large binary artifacts
+renders/quality-audit/channels/
+renders/quality-audit/**/*.png
