@@ -328,6 +328,7 @@ def evaluate_mesh_quality(
     # vertex-index pair for one directed half-edge.  np.unique with
     # return_counts gives valence per unique undirected edge in O(E log E).
     half_edge_rows: list[tuple[int, int]] = []
+    edge_arr = np.empty((0, 2), dtype=np.int64)
     for face in faces:
         n = len(face)
         for i in range(n):

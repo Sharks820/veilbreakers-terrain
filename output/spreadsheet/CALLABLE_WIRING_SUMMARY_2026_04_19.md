@@ -9,7 +9,7 @@ Artifact filename note: `2026_04_19` is the stable first-pass artifact ID retain
 ## Totals
 
 - Live handler callables scanned: `1874`
-- Callables missing from the grade sheet: `124`
+- Callables missing from the grade sheet: `0`
 - Callables without any R9 grade attached via matching CSV row: `670`
 
 Status distribution:

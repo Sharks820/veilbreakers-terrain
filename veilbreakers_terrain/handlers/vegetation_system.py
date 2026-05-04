@@ -31,7 +31,7 @@ import math
 import random
 import warnings
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray

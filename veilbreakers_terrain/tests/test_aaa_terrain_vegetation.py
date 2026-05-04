@@ -752,5 +752,12 @@ class TestTerrainNoiseTypeParam(unittest.TestCase):
                          "Perlin and ridged_multifractal should differ")
 
 
+def test_create_biome_vegetation_template_raises_for_unknown_type():
+    import pytest
+    from veilbreakers_terrain.handlers.vegetation_system import _create_biome_vegetation_template
+    with pytest.raises(ValueError, match="No mesh generator found"):
+        _create_biome_vegetation_template("__nonexistent_type__", None)
+
+
 if __name__ == "__main__":
     unittest.main()

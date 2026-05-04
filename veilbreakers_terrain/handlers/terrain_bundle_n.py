@@ -15,7 +15,6 @@ contract surface, not a pass registrar.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence
 
@@ -106,30 +105,6 @@ def _determinism_runs(options: Mapping[str, Any]) -> int:
 def bundle_n_runtime_requests_determinism(intent: Any) -> bool:
     """Return True when the current intent requests determinism replay."""
     return _determinism_runs(_runtime_options(intent)) >= 2
-
-
-@contextmanager
-def _skip_runtime_hooks(state: TerrainPipelineState):
-    """Temporarily disable Bundle N post-pipeline hooks on replay state."""
-    hints = state.intent.composition_hints
-    runtime = hints.get("bundle_n_runtime")
-    created_runtime = not isinstance(runtime, dict)
-    if created_runtime:
-        runtime = {}
-        hints["bundle_n_runtime"] = runtime
-
-    sentinel = object()
-    previous = runtime.get("skip_post_pipeline_hooks", sentinel)
-    runtime["skip_post_pipeline_hooks"] = True
-    try:
-        yield
-    finally:
-        if previous is sentinel:
-            runtime.pop("skip_post_pipeline_hooks", None)
-        else:
-            runtime["skip_post_pipeline_hooks"] = previous
-        if created_runtime and not runtime:
-            hints.pop("bundle_n_runtime", None)
 
 
 def _attach_issues(result: PassResult, issues: Sequence[ValidationIssue]) -> None:

@@ -953,7 +953,6 @@ def test_tree_prototype_dims_vary_by_species():
     """FIX-B14-15: prototype height/width must reflect per-species median height_scale."""
     from veilbreakers_terrain.handlers.terrain_unity_export import (
         UNITY_SCALE_FACTOR,
-        _TREE_HEIGHT_DEFAULT,
         export_unity_manifest,
     )
 

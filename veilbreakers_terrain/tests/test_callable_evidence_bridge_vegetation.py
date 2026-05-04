@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import builtins
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
@@ -161,18 +161,7 @@ def test_blender_capability_bridge_fails_closed_without_bpy_or_bmesh(
 
 
 def test_lsystem_tree_pipeline_outputs_mesh_wind_impostor_and_gpu_payloads():
-    generate_tree = cast(
-        Callable[[dict[str, object]], JsonDict],
-        getattr(lsys, "generate_lsystem_tree"),
-    )
-    generate_impostor = cast(
-        Callable[[dict[str, object]], JsonDict],
-        getattr(lsys, "generate_billboard_impostor"),
-    )
-    prepare_gpu_export = cast(
-        Callable[[dict[str, object]], JsonDict],
-        getattr(lsys, "prepare_gpu_instancing_export"),
-    )
+    generate_tree = lsys.generate_lsystem_tree
 
     expanded = lsys.expand_lsystem("F", {"F": "F[+F]"}, 2, seed=7)
     assert expanded.count("F") == 4
@@ -223,7 +212,7 @@ def test_lsystem_tree_pipeline_outputs_mesh_wind_impostor_and_gpu_payloads():
         lsys._quad_normal((0, 0, 0), (1, 0, 0), (1, 1, 0)),
         (0.0, 0.0, 1.0),
     )
-    impostor = generate_impostor({"height": 5.0, "width": 2.0, "num_views": 8})
+    impostor = lsys.generate_billboard_impostor({"height": 5.0, "width": 2.0, "num_views": 8})
     assert impostor["impostor_spec"]["total_views"] == 9
     quat = lsys._euler_deg_to_quaternion(0.0, 0.0, 90.0)
     assert math.isclose(sum(v * v for v in quat), 1.0, rel_tol=1e-6)
@@ -232,7 +221,7 @@ def test_lsystem_tree_pipeline_outputs_mesh_wind_impostor_and_gpu_payloads():
         {"oak": 3.0},
     )
     assert math.isclose(radius, 6.0, rel_tol=1e-6)
-    gpu = prepare_gpu_export(
+    gpu = lsys.prepare_gpu_instancing_export(
         {
             "instances": [
                 {
