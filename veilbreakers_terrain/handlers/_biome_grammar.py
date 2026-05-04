@@ -1870,3 +1870,187 @@ def apply_geological_folds(
         result += wave * amplitude * sign * plunge_envelope * strain_factor
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Pipeline pass: biome surface features (wires the 8 orphaned functions above)
+# ---------------------------------------------------------------------------
+
+
+def pass_biome_surface_features(
+    state: "Any",
+    region: "Any",
+) -> "Any":
+    """Apply biome-specific surface micro-features based on composition_hints.
+
+    Routes the 8 orphaned _biome_grammar feature functions into the pipeline
+    (Batch 13 wiring gap). Each function runs only when the biome/climate in
+    composition_hints matches its domain. Height changes are accumulated and
+    stored as ``biome_surface_delta`` for the delta integrator to apply.
+
+    Placement: after pass_glacial, before pass_terrain_features.
+    """
+    import time
+    from .terrain_pipeline import derive_pass_seed
+    from .terrain_semantics import PassResult
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    hints: dict[str, Any] = dict(getattr(state.intent, "composition_hints", {}) or {})
+    biome = str(hints.get("biome") or hints.get("climate") or hints.get("terrain_type") or "")
+    bl = biome.lower()
+
+    height = np.asarray(stack.height, dtype=np.float64)
+    tile_x = getattr(stack, "tile_x", None) or 0
+    tile_y = getattr(stack, "tile_y", None) or 0
+    seed = derive_pass_seed(state.intent.seed, "biome_surface_features", tile_x, tile_y, region)
+
+    # Protected zone mask
+    protected = np.zeros(height.shape, dtype=bool)
+    hero_excl = stack.get("hero_exclusion")
+    if hero_excl is not None:
+        protected |= np.asarray(hero_excl, dtype=np.float64) > 0.0
+
+    region_mask: np.ndarray | None = None
+    if region is not None:
+        r_sl, c_sl = region.to_cell_slice(
+            world_origin_x=stack.world_origin_x,
+            world_origin_y=stack.world_origin_y,
+            cell_size=stack.cell_size,
+            grid_shape=height.shape,
+        )
+        region_mask = np.zeros(height.shape, dtype=bool)
+        region_mask[r_sl, c_sl] = True
+
+    result = height.copy()
+    applied: list[str] = []
+
+    # Periglacial frost heave (tundra / alpine / mountain / frozen)
+    if any(kw in bl for kw in ("tundra", "alpine", "mountain", "frozen", "glacier")):
+        result = apply_periglacial_patterns(result, seed=seed ^ 0xA1, intensity=0.4)
+        applied.append("periglacial")
+
+    # Desert pavement + tafoni honeycomb weathering
+    if any(kw in bl for kw in ("desert", "arid", "volcanic_waste", "barren")):
+        result, pavement_mask = apply_desert_pavement(result, seed=seed ^ 0xA2, intensity=0.5)
+        stack.set(
+            "desert_pavement_mask",
+            np.asarray(pavement_mask, dtype=np.float32),
+            "biome_surface_features",
+        )
+        applied.append("desert_pavement")
+        result = apply_tafoni_weathering(result, seed=seed ^ 0xA3, intensity=0.35)
+        applied.append("tafoni")
+
+    # Fringing reef platform (coastal or explicit sea level hint)
+    if "coastal" in bl or hints.get("sea_level_m") is not None:
+        sea_level = float(hints.get("sea_level_m", 0.0))
+        result = apply_reef_platform(
+            result,
+            sea_level=sea_level,
+            seed=seed ^ 0xA4,
+            cell_size=float(stack.cell_size),
+            stack=stack,
+        )
+        applied.append("reef_platform")
+
+    # Hot spring travertine terraces (volcanic biome or water system flag)
+    water_spec = getattr(state.intent, "water_system_spec", None)
+    has_hot_springs = bool(getattr(water_spec, "hot_springs", False)) or bool(
+        hints.get("hot_springs", False)
+    )
+    if "volcanic" in bl or has_hot_springs:
+        result, _spring_list = apply_hot_spring_features(result, seed=seed ^ 0xA5, num_springs=2)
+        applied.append("hot_spring")
+
+    # Landslide scars + runout fans (mountain / forest / steep biomes)
+    if any(kw in bl for kw in ("mountain", "alpine", "forest", "thornwood", "swamp", "dark_fantasy")):
+        result = apply_landslide_scars(result, seed=seed ^ 0xA6, num_slides=2, scar_depth=0.03)
+        applied.append("landslide_scars")
+
+    # Spring line mask (wet biomes — does not modify height, stores diagnostic mask)
+    if any(kw in bl for kw in ("forest", "swamp", "jungle", "temperate", "thornwood")):
+        spring_mask = compute_spring_line_mask(height, seed=seed ^ 0xA7)
+        stack.set(
+            "spring_line_mask",
+            np.asarray(spring_mask, dtype=np.float32),
+            "biome_surface_features",
+        )
+        applied.append("spring_line")
+
+    # Geological folds (structurally complex biomes)
+    if any(kw in bl for kw in ("mountain", "dark_fantasy", "corrupted", "volcanic")) or bool(
+        hints.get("geological_folds", False)
+    ):
+        result = apply_geological_folds(result, seed=seed ^ 0xA8, num_folds=2, amplitude=0.03)
+        applied.append("geological_folds")
+
+    delta = result - height
+    if applied:
+        if protected.any():
+            delta = np.where(protected, 0.0, delta)
+        if region_mask is not None:
+            delta = np.where(region_mask, delta, 0.0)
+    else:
+        delta = np.zeros_like(height, dtype=np.float64)
+
+    stack.set(
+        "biome_surface_delta",
+        np.asarray(delta, dtype=np.float32),
+        "biome_surface_features",
+    )
+
+    return PassResult(
+        pass_name="biome_surface_features",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=("biome_surface_delta",),
+        metrics={
+            "applied_features": applied,
+            "biome": biome,
+            "total_delta_abs": float(np.abs(delta).sum()),
+            "cells_modified": int(np.count_nonzero(delta)),
+        },
+    )
+
+
+def register_biome_surface_features_pass() -> None:
+    """Register the biome_surface_features pass on TerrainPassController."""
+    from .terrain_pipeline import TerrainPassController
+    from .terrain_semantics import PassDefinition
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="biome_surface_features",
+            func=pass_biome_surface_features,
+            requires_channels=("height",),
+            produces_channels=("biome_surface_delta",),
+            seed_namespace="biome_surface_features",
+            requires_scene_read=False,
+            may_modify_geometry=True,
+            respects_protected_zones=True,
+            protocol_enforced=True,
+            description="Apply biome-specific surface micro-features (periglacial, desert pavement, "
+            "tafoni, reef, hot springs, landslide scars, spring lines, geological folds).",
+        )
+    )
+
+
+__all__ = [
+    "WorldMapSpec",
+    "generate_world_map_spec",
+    "resolve_biome_name",
+    "BIOME_CLIMATE_PARAMS",
+    "BIOME_ALIASES",
+    "apply_periglacial_patterns",
+    "apply_desert_pavement",
+    "compute_spring_line_mask",
+    "apply_landslide_scars",
+    "apply_hot_spring_features",
+    "apply_reef_platform",
+    "apply_tafoni_weathering",
+    "apply_geological_folds",
+    "pass_biome_surface_features",
+    "register_biome_surface_features_pass",
+]

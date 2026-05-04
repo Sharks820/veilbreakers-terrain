@@ -172,6 +172,9 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # C-1: glacial pass runs after morphology, before scatter/materials
             pass_sequence.insert(composite_idx, "pass_glacial")
             composite_idx += 1
+            # Batch-13 wiring: biome surface features after glacial, before feature carving
+            pass_sequence.insert(composite_idx, "biome_surface_features")
+            composite_idx += 1
     if validation_pass == "validation_full":
         insert_at = pass_sequence.index("validation_full")
         for prereq in (
@@ -1716,6 +1719,8 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_biome_channel_pass()
     register_terrain_label_passes()
     register_snow_line_pass()
+    from ._biome_grammar import register_biome_surface_features_pass
+    register_biome_surface_features_pass()
     # macro_color is owned by Bundle K (see terrain_macro_color.pass_macro_color).
     # The orphan ``pass_compute_macro_color`` helper that used to live here was
     # never auto-registered and has been removed (deep-dive guide 2026-04-20).

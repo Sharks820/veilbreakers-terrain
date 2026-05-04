@@ -2120,9 +2120,9 @@ def handle_generate_terrain(params: dict[str, Any]) -> dict[str, Any]:
             controller_params["scene_read"] = controller_scene_read
         if erosion in ("hydraulic", "thermal", "both"):
             controller_params["erosion_profile"] = (
-                "temperate" if erosion == "hydraulic"
-                else "arid" if erosion == "thermal"
-                else "temperate"
+                composition_hints.get("erosion_profile")
+                or composition_hints.get("climate")
+                or ("arid" if erosion == "thermal" else "temperate")
             )
         if params.get("pipeline") is not None:
             controller_params["pipeline"] = list(params.get("pipeline") or [])
@@ -3058,7 +3058,12 @@ def _execute_terrain_pipeline(params: dict[str, Any]) -> dict[str, Any]:
         water_system_spec=water_system_spec,
         quality_profile=quality_profile,
         noise_profile=str(params.get("noise_profile", params.get("terrain_type", "mountains"))),
-        erosion_profile=str(params.get("erosion_profile", "temperate")),
+        erosion_profile=str(
+            params.get("erosion_profile")
+            or composition_hints.get("erosion_profile")
+            or composition_hints.get("climate")
+            or "temperate"
+        ),
         scene_read=scene_read,
         composition_hints=composition_hints,
     )
