@@ -1263,8 +1263,6 @@ def _resolve_terrain_tile_params(params: dict[str, Any]) -> dict[str, Any]:
         tile_size = 256
         resolution = tile_size + 1
     elif tile_size_raw is None:
-        if resolution_raw is None:
-            raise ValueError("resolution is required when tile_size is omitted")
         resolution = int(resolution_raw)
         tile_size = resolution - 1
     elif resolution_raw is None:
