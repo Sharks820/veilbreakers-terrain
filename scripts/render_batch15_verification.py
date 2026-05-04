@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any
 
 import bpy
-import bmesh
 import numpy as np
 from mathutils import Vector
 
