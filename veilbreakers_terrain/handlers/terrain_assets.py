@@ -617,7 +617,7 @@ def _cluster_around(
         n = int(rng.integers(min_per_center, max_per_center + 1))
         for _ in range(n):
             angle = float(rng.uniform(0.0, 2.0 * math.pi))
-            dist = float(rng.uniform(0.0, radius_cells))
+            dist = float(rng.uniform(0.0, 1.0) ** 0.5 * radius_cells)
             dr = int(round(math.sin(angle) * dist))
             dc = int(round(math.cos(angle) * dist))
             rr = max(0, min(h - 1, cr + dr))

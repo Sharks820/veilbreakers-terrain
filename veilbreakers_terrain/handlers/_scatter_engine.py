@@ -1213,21 +1213,22 @@ def cluster_density_map(
 
     np_engine = _np_engine
     rng = np_engine.random.default_rng(seed)
-    xs = np_engine.linspace(0, width / max(cluster_size, 1e-6), resolution)
-    ys = np_engine.linspace(0, depth / max(cluster_size, 1e-6), resolution)
-    xx, yy = np_engine.meshgrid(xs, ys)
 
-    # 4-octave fBm gives stable large/mid/small cluster variation.
-    freq, amp, total = 1.0, 1.0, 0.0
+    # Build a non-periodic cluster density map using successive downsampled
+    # random layers (fBm substitute).  Each octave uses an independent random
+    # field at a coarser resolution, upsampled with nearest-neighbour so there
+    # is no periodic tiling artefact from sin×sin patterns.
     noise = np_engine.zeros((resolution, resolution), dtype=np_engine.float32)
+    freq, amp, total = 1.0, 1.0, 0.0
     for _ in range(4):
-        phase_x = float(rng.uniform(0, 2 * math.pi))
-        phase_y = float(rng.uniform(0, 2 * math.pi))
-        noise += float(amp) * 0.5 * (
-            np_engine.sin(xx * freq * 2 * math.pi + phase_x).astype(np_engine.float32)
-            * np_engine.sin(yy * freq * 2 * math.pi + phase_y).astype(np_engine.float32)
-            + 1.0
-        )
+        oct_res = max(1, int(round(resolution * freq / (width / max(cluster_size, 1e-6)))))
+        oct_res = max(2, min(oct_res, resolution))
+        raw = rng.random((oct_res, oct_res)).astype(np_engine.float32)
+        # Nearest-neighbour upsample to (resolution, resolution)
+        row_idx = (np_engine.arange(resolution) * oct_res // resolution).astype(np_engine.intp)
+        col_idx = (np_engine.arange(resolution) * oct_res // resolution).astype(np_engine.intp)
+        upsampled = raw[np_engine.ix_(row_idx, col_idx)]
+        noise += float(amp) * upsampled
         total += amp
         freq *= 2.0
         amp *= 0.5

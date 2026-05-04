@@ -451,16 +451,49 @@ class ProceduralGrassSystem:
         cell_size_m: float,
         min_spacing_m: float,
     ) -> np.ndarray:
-        """Bucket-sort min-spacing thinning. Vectorised. Approximate."""
+        """3x3-neighbourhood Poisson-disk thinning. Vectorised. Approximate.
+
+        For each candidate point (in arrival order) we check all 8 adjacent
+        grid cells as well as the candidate's own cell.  A point is kept only
+        if no already-accepted point in those 9 cells is within min_spacing_m.
+        This avoids the 50 % over-rejection of the old single-bucket approach.
+        """
         if positions.shape[0] == 0 or min_spacing_m <= 0:
             return positions
         bucket = max(1, int(round(min_spacing_m / cell_size_m)))
-        keys = (positions // bucket)
-        # Hash bucket coords to a single int for unique selection.
-        flat_keys = keys[:, 0].astype(np.int64) * np.int64(2_000_003) + keys[:, 1].astype(np.int64)
-        _, first_idx = np.unique(flat_keys, return_index=True)
-        first_idx.sort()
-        return positions[first_idx]
+        # Map each position to its grid cell.
+        grid_keys = (positions // bucket).astype(np.int64)
+        # We work in cell-space; min_spacing in cell units.
+        min_spacing_cells = min_spacing_m / cell_size_m
+
+        kept_indices: list[int] = []
+        # cell -> list of kept positions (in original coordinate space)
+        occupied: dict[tuple[int, int], list[np.ndarray]] = {}
+
+        for i in range(positions.shape[0]):
+            gx, gy = int(grid_keys[i, 0]), int(grid_keys[i, 1])
+            pos = positions[i]
+            conflict = False
+            # Check 3x3 neighbourhood of grid cells
+            for dx in (-1, 0, 1):
+                if conflict:
+                    break
+                for dy in (-1, 0, 1):
+                    cell = (gx + dx, gy + dy)
+                    for opos in occupied.get(cell, []):
+                        diff = pos - opos
+                        if float(np.dot(diff, diff)) ** 0.5 < min_spacing_cells:
+                            conflict = True
+                            break
+                    if conflict:
+                        break
+            if not conflict:
+                kept_indices.append(i)
+                occupied.setdefault((gx, gy), []).append(pos)
+
+        if not kept_indices:
+            return positions[:0]
+        return positions[np.array(kept_indices, dtype=np.intp)]
 
     # ------------------------------------------------------------------
     def generate_grass_placement(

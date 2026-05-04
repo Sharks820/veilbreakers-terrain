@@ -270,9 +270,13 @@ def generate_world_map_spec(
     # Remap biome_ids through the permutation (vectorised)
     cell_to_biome_arr = np.array(cell_to_biome, dtype=np.int32)
     biome_ids = cell_to_biome_arr[biome_ids]
-    # Reorder chosen and cell_params to match the new biome index ordering
-    # (biome_weights axis 2 aligns with the original sorted order; leave as-is
-    # since downstream splat reads biome_ids for dominant and weights for blend)
+    # Reorder biome_weights axis-2 to match the permuted biome ordering.
+    # biome_weights[..., k] holds the weight for Voronoi cell k; after
+    # cell_to_biome remapping, axis-2 must follow the same permutation so
+    # downstream splat code finds weight[k] == weight for biome k.
+    inv_perm = np.empty(biome_count, dtype=np.int32)
+    inv_perm[cell_to_biome_arr] = np.arange(biome_count, dtype=np.int32)
+    biome_weights = biome_weights[..., inv_perm]
 
     return WorldMapSpec(
         width=width,
@@ -682,7 +686,7 @@ def apply_periglacial_patterns(
     sin_dir = mean_gy / dir_mag
     stripe_freq = 2.0 * math.pi / max(max(h, w) * 0.08, 1.0)
     stripe_angle = np.arctan2(grad_y, grad_x)  # local aspect
-    stripe = np.sin(stripe_angle * (xx * cos_dir + yy * sin_dir) * stripe_freq)
+    stripe = np.sin((xx * cos_dir + yy * sin_dir) * stripe_freq + stripe_angle)
     stripe_weight = frost_heave_scale * intensity * 0.25
     heave = heave + stripe_weight * stripe
 

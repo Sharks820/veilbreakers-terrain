@@ -1724,6 +1724,13 @@ def pass_vegetation_depth(
         target_arr[r_slice, c_slice] = region_out
         merged[key] = target_arr.astype(np.float32)
 
+    # Copy any per-species or unknown keys from existing verbatim so that
+    # keys injected by pass_procedural_grass (e.g. species-specific density
+    # maps) are not silently dropped.
+    for k, v in existing.items():
+        if k not in merged:
+            merged[k] = v
+
     # place_clearings: run when hint is set OR cliff_mask/slope channel present
     clearings: List[Clearing] = []
     if (

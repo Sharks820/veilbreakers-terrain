@@ -884,7 +884,7 @@ def _filter_multipass_scatter_placements(
         if chosen_rule is None:
             continue
 
-        if apply_rule_density and rng.random() > float(chosen_rule.get("density", 1.0)):
+        if (apply_rule_density or "density" in chosen_rule) and rng.random() > float(chosen_rule.get("density", 1.0)):
             continue
 
         placement_local = dict(placement)

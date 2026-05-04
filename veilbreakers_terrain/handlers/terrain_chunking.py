@@ -549,11 +549,17 @@ def build_tile_seam_contract(
         "west": arr[:, 0, ...],
         "east": arr[:, cols - 1, ...],
     }
+    def _corner_as_list(v: Any) -> list:
+        coerced = _coerce_jsonable_edge_samples(v)
+        if not isinstance(coerced, list):
+            coerced = [coerced]
+        return coerced
+
     corners = {
-        "north_west": _coerce_jsonable_edge_samples(arr[0, 0, ...]),
-        "north_east": _coerce_jsonable_edge_samples(arr[0, cols - 1, ...]),
-        "south_west": _coerce_jsonable_edge_samples(arr[rows - 1, 0, ...]),
-        "south_east": _coerce_jsonable_edge_samples(arr[rows - 1, cols - 1, ...]),
+        "north_west": _corner_as_list(arr[0, 0, ...]),
+        "north_east": _corner_as_list(arr[0, cols - 1, ...]),
+        "south_west": _corner_as_list(arr[rows - 1, 0, ...]),
+        "south_east": _corner_as_list(arr[rows - 1, cols - 1, ...]),
     }
 
     return {

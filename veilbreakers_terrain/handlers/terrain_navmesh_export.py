@@ -422,7 +422,7 @@ def _build_navmesh_geometry(
             ]
             if any(a in _BLOCKED for a in areas):
                 continue
-            quad_area = max(set(areas), key=areas.count)
+            quad_area = sorted(set(areas), key=lambda a: (-areas.count(a), a))[0]
             ia = int(vert_idx[r, c])
             ib = int(vert_idx[r, c + 1])
             ic = int(vert_idx[r + 1, c])
