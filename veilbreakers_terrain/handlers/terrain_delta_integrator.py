@@ -44,6 +44,8 @@ _DELTA_CHANNELS: Tuple[str, ...] = (
     "karst_delta",
     "wind_erosion_delta",
     "glacial_delta",
+    # FIX-B14-18: worn-path erosion along road corridors
+    "road_worn_path_delta",
 )
 
 

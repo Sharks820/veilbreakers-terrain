@@ -30,8 +30,9 @@ from .terrain_path_contracts import (
     validate_path_network_contract,
 )
 
+import numpy as np  # required; scipy is optional
+
 try:
-    import numpy as np
     from scipy.spatial import Delaunay
     _SCIPY_AVAILABLE = True
 except ImportError:  # pragma: no cover
@@ -1611,6 +1612,265 @@ def compute_road_network(
         "path_network_contract": path_contract,
         "path_network_contract_issues": path_contract_issues,
     }
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-18: Worn-path erosion application helper
+# ---------------------------------------------------------------------------
+
+
+def _apply_worn_path_erosion(
+    stack,
+    worn_paths: list,
+) -> "np.ndarray":
+    """Apply worn-path height erosion to *stack.height* and return the delta.
+
+    For each worn path spec produced by ``_compute_worn_path_spec``, rasterises
+    the eroded corridor onto the heightmap grid and deepens height by
+    ``erosion_depth_m`` along each segment.  The returned delta array (negative
+    = deepened) is also written to ``stack.road_worn_path_delta``.
+
+    Parameters
+    ----------
+    stack:
+        A ``TerrainMaskStack`` with a valid ``height`` channel.
+    worn_paths:
+        List of worn-path spec dicts as returned by ``_compute_worn_path_spec``
+        — each has ``{"total_length": float, "eroded_segments": list}``.
+
+    Returns
+    -------
+    np.ndarray
+        float64 (H, W) delta array (all values <= 0).  Zero where no road
+        corridor intersects; negative where the path deepens height.
+    """
+    height = np.asarray(stack.get("height"), dtype=np.float64)
+    rows, cols = height.shape
+    cell_size = float(getattr(stack, "cell_size", 1.0))
+    world_origin_x = float(getattr(stack, "world_origin_x", 0.0))
+    world_origin_y = float(getattr(stack, "world_origin_y", 0.0))
+
+    delta = np.zeros_like(height, dtype=np.float64)
+
+    for path_spec in worn_paths:
+        for seg in path_spec.get("eroded_segments", []):
+            start = seg["start"]
+            end = seg["end"]
+            depth = float(seg.get("erosion_depth_m", 0.0))
+            corridor_half_width = float(seg.get("erosion_width_m", 2.0)) * 0.5
+
+            # World-space corridor extent → grid cell range
+            min_wx = min(start[0], end[0]) - corridor_half_width
+            max_wx = max(start[0], end[0]) + corridor_half_width
+            min_wy = min(start[1], end[1]) - corridor_half_width
+            max_wy = max(start[1], end[1]) + corridor_half_width
+
+            # Clamp to grid
+            c0 = max(0, int((min_wx - world_origin_x) / cell_size))
+            c1 = min(cols - 1, int((max_wx - world_origin_x) / cell_size) + 1)
+            r0 = max(0, int((min_wy - world_origin_y) / cell_size))
+            r1 = min(rows - 1, int((max_wy - world_origin_y) / cell_size) + 1)
+
+            # Rasterise: for each cell in the bounding box, check proximity
+            # to the segment centre line (2-D XY only).
+            for ri in range(r0, r1 + 1):
+                wy = world_origin_y + (ri + 0.5) * cell_size
+                for ci in range(c0, c1 + 1):
+                    wx = world_origin_x + (ci + 0.5) * cell_size
+                    cp = _closest_point_on_segment((wx, wy), start, end)
+                    dist = math.sqrt((wx - cp[0]) ** 2 + (wy - cp[1]) ** 2)
+                    if dist <= corridor_half_width:
+                        # Smooth fall-off: full depth at centre, zero at edge
+                        blend = max(0.0, 1.0 - dist / max(corridor_half_width, 1e-6))
+                        delta[ri, ci] = min(delta[ri, ci], -depth * blend)
+
+    # Apply to height
+    new_height = height + delta
+    stack.set("height", new_height, "pass_road_network")
+    stack.set("road_worn_path_delta", delta.astype(np.float32), "pass_road_network")
+    return delta
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-6: DAG pass — road network
+# ---------------------------------------------------------------------------
+
+
+def pass_road_network(
+    state,
+    region,
+) -> "PassResult":
+    """DAG pass: compute road network and apply worn-path erosion.
+
+    Produces
+    --------
+    road_sdf_dist : float32 (H, W) — Euclidean distance transform from road
+        mask in world-metres (cell_size scaled).  Zero inside road corridor.
+    road_segments : list — serialisable road segment dicts (start, end, width,
+        road_type) for downstream consumers.
+    road_worn_path_delta : float32 (H, W) — height delta (<=0) from worn-path
+        corridor erosion.  Consumed by integrate_deltas.
+
+    Consumes
+    --------
+    height : required — used for A* routing and worn-path rasterisation.
+    water_surface_elevation_m : optional — enables bridge detection.
+    water_surface_mask : optional — water avoidance cost map.
+    rock_hardness : optional — additional A* cost layer.
+
+    The pass extracts road waypoints from ``state.intent.composition_hints``
+    (key ``"road_waypoints"``) and falls back to four corner-region waypoints
+    when none are provided — guaranteeing at least a minimal road skeleton for
+    any tile.
+    """
+    import time as _time
+
+    try:
+        from .terrain_semantics import PassResult
+    except ImportError:  # pragma: no cover
+        raise
+
+    t0 = _time.perf_counter()
+    stack = state.mask_stack
+    intent = state.intent
+    composition_hints = dict(getattr(intent, "composition_hints", {}) or {})
+
+    # Extract road waypoints from intent hints or synthesise from tile extent
+    waypoints = list(composition_hints.get("road_waypoints", []) or [])
+    if len(waypoints) < 2:
+        # Synthesise minimal waypoints from tile bounds so the pass always
+        # produces valid channels even when no explicit roads are requested.
+        ox = float(stack.world_origin_x)
+        oy = float(stack.world_origin_y)
+        sz = float(stack.tile_size) * float(stack.cell_size)
+        mid_h = float(stack.height.mean())
+        waypoints = [
+            (ox + sz * 0.25, oy + sz * 0.25, mid_h),
+            (ox + sz * 0.75, oy + sz * 0.75, mid_h),
+        ]
+
+    # Build heightmap for A* routing
+    hmap = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = hmap.shape
+    ox = float(stack.world_origin_x)
+    oy = float(stack.world_origin_y)
+    sz_x = cols * float(stack.cell_size)
+    sz_y = rows * float(stack.cell_size)
+    terrain_bounds = (ox, oy, ox + sz_x, oy + sz_y)
+
+    # Optional channels
+    water_elev = stack.get("water_surface_elevation_m")
+    water_mask = stack.get("water_surface_mask")
+    rock_hardness = stack.get("rock_hardness")
+
+    # Build optional cost_map from rock_hardness (high hardness = high cost)
+    cost_map = None
+    if rock_hardness is not None:
+        cost_map = np.asarray(rock_hardness, dtype=np.float32) * 500.0
+
+    seed = int(getattr(intent, "seed", 42) or 42)
+
+    result = compute_road_network(
+        waypoints,
+        seed=seed,
+        heightmap=hmap,
+        water_mask=water_mask,
+        water_surface_elevation_m=water_elev,
+        cost_map=cost_map,
+        terrain_bounds=terrain_bounds,
+        use_astar=True,
+    )
+
+    # Build road_mask and road_sdf_dist from segments
+    road_mask = np.zeros((rows, cols), dtype=np.uint8)
+    cell_size = float(stack.cell_size)
+
+    segments = result.get("segments", [])
+    for seg_start, seg_end, seg_width, _ in segments:
+        half_w = seg_width * 0.5
+        for ri in range(rows):
+            wy = oy + (ri + 0.5) * cell_size
+            for ci in range(cols):
+                wx = ox + (ci + 0.5) * cell_size
+                cp = _closest_point_on_segment((wx, wy), seg_start, seg_end)
+                dist = math.sqrt((wx - cp[0]) ** 2 + (wy - cp[1]) ** 2)
+                if dist <= half_w:
+                    road_mask[ri, ci] = 1
+
+    # SDF: Euclidean distance transform from road boundary (in world-metres)
+    try:
+        from scipy.ndimage import distance_transform_edt as _edt
+        not_road = road_mask == 0
+        road_sdf_dist = _edt(not_road).astype(np.float32) * cell_size
+    except ImportError:
+        # Fallback: simple large-value fill when scipy is absent
+        road_sdf_dist = np.where(road_mask > 0, 0.0, 1e6).astype(np.float32)
+
+    stack.set("road_mask", road_mask, "pass_road_network")
+    stack.set("road_sdf_dist", road_sdf_dist, "pass_road_network")
+
+    # Store serialisable segment list on the stack
+    segment_dicts = [
+        {"start": list(s), "end": list(e), "width": float(w), "road_type": str(rt)}
+        for s, e, w, rt in segments
+    ]
+    stack.road_segments = segment_dicts
+
+    # FIX-B14-18: apply worn-path erosion and write road_worn_path_delta
+    worn_paths = result.get("worn_paths", [])
+    _apply_worn_path_erosion(stack, worn_paths)
+
+    duration = _time.perf_counter() - t0
+    return PassResult(
+        pass_name="pass_road_network",
+        status="ok",
+        duration_seconds=duration,
+        consumed_channels=("height",),
+        produced_channels=("road_sdf_dist", "road_worn_path_delta"),
+        metrics={
+            "waypoint_count": result.get("waypoint_count", 0),
+            "segment_count": len(segments),
+            "total_length_m": float(result.get("total_length", 0.0)),
+            "bridge_count": len(result.get("bridges", [])),
+            "routing_method": result.get("routing_method", "none"),
+            "worn_path_count": len(worn_paths),
+        },
+    )
+
+
+def register_road_network_pass() -> None:
+    """Register pass_road_network on TerrainPassController.
+
+    Called by terrain_master_registrar as part of bundle registration.
+    Placement: BEFORE vegetation/scatter passes (E) so road_sdf_dist is
+    available when scatter_intelligent queries it.
+    """
+    from .terrain_pipeline import TerrainPassController
+    from .terrain_semantics import PassDefinition
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_road_network",
+            func=pass_road_network,
+            requires_channels=("height",),
+            produces_channels=("road_sdf_dist", "road_worn_path_delta"),
+            optional_channels=(
+                "water_surface_elevation_m",
+                "water_surface_mask",
+                "rock_hardness",
+            ),
+            # road_mask is also written but was previously produced by
+            # handle_generate_road (environment.py). Declaring override so the
+            # DAG duplicate-producer check passes.
+            overrides=("road_mask", "height"),
+            seed_namespace="pass_road_network",
+            requires_scene_read=False,
+            may_modify_geometry=True,
+            respects_protected_zones=False,
+            supports_region_scope=True,
+            description="FIX-B14-6: compute road network DAG pass; produces road_sdf_dist + road_worn_path_delta.",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -184,6 +184,9 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             *(("integrate_deltas",) if has_scene_read else ()),
             *(("talus", "structural_masks_post_talus") if include_talus else ()),
             *(("pass_lava_simulation",) if include_lava else ()),
+            # FIX-B14-6: road network pass runs before materials and scatter so
+            # road_sdf_dist is available to materials_v2 / scatter_intelligent.
+            "pass_road_network",
             "materials_v2",
             *(("emit_overhang_meshes",) if has_scene_read else ()),
             *(("scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read and not skip_scatter else ()),

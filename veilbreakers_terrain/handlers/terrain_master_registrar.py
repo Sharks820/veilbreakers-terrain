@@ -224,6 +224,9 @@ def _register_all_terrain_passes_impl(
         ("P-lava", f"{package_root}.terrain_lava", "register_lava_pass"),
         ("P-talus", f"{package_root}.terrain_talus", "register_talus_pass"),
         ("C", f"{package_root}.terrain_waterfalls", "register_bundle_c_passes"),
+        # FIX-B14-6: road network DAG pass — BEFORE scatter so road_sdf_dist
+        # is available to scatter_intelligent / procedural_grass consumers.
+        ("road-network", f"{package_root}.road_network", "register_road_network_pass"),
         # Material + scatter (consume final height + all candidate masks)
         ("B-materials", f"{package_root}.terrain_materials_v2", "register_bundle_b_material_passes"),
         ("E", f"{package_root}.terrain_assets", "register_bundle_e_passes"),
