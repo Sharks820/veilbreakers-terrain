@@ -566,3 +566,91 @@ def test_unity_export_manifest_lists_splatmap():
         controller.run_pass("materials_v2", checkpoint=False)
     manifest = state.mask_stack.unity_export_manifest()
     assert "splatmap_weights_layer" in manifest["populated_channels"]
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-12: terrain_brucks_weight + snow_coverage channel contracts
+# ---------------------------------------------------------------------------
+
+def test_brucks_snow_weight_written_when_second_pass_runs():
+    """Both material passes write terrain_brucks_weight and snow_coverage.
+
+    Verifies FIX-B14-12:
+    - register_bundle_b_material_passes() must not raise ChannelOwnershipError
+      even though materials_v2 and materials_v2_volcanic both produce the same
+      six channels (the volcanic pass declares overrides for all of them).
+    - After materials_v2 runs, terrain_brucks_weight and snow_coverage are
+      non-None on the stack.
+    - After materials_v2_volcanic also runs, both channels remain non-None
+      (the volcanic pass overwrites them, not drops them).
+    """
+    import tempfile
+    from pathlib import Path
+
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
+        register_bundle_b_material_passes,
+    )
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import ChannelOwnershipError
+
+    # Registration must not raise ChannelOwnershipError
+    try:
+        register_bundle_b_material_passes()
+    except ChannelOwnershipError as exc:  # pragma: no cover
+        pytest.fail(
+            f"register_bundle_b_material_passes() raised ChannelOwnershipError: {exc}"
+        )
+
+    state = _build_state()
+
+    with tempfile.TemporaryDirectory() as td:
+        controller = TerrainPassController(state, checkpoint_dir=Path(td))
+
+        # Run the primary pass
+        result_primary = controller.run_pass("materials_v2", checkpoint=False)
+        assert result_primary.status in ("ok", "warning"), (
+            f"materials_v2 pass returned status={result_primary.status!r}"
+        )
+
+        brucks_after_primary = state.mask_stack.get("terrain_brucks_weight")
+        snow_after_primary = state.mask_stack.get("snow_coverage")
+
+        assert brucks_after_primary is not None, (
+            "terrain_brucks_weight must be written to the stack by materials_v2"
+        )
+        assert snow_after_primary is not None, (
+            "snow_coverage must be written to the stack by materials_v2"
+        )
+        assert brucks_after_primary.shape == state.mask_stack.height.shape, (
+            f"terrain_brucks_weight shape {brucks_after_primary.shape} must match "
+            f"height shape {state.mask_stack.height.shape}"
+        )
+        assert snow_after_primary.shape == state.mask_stack.height.shape, (
+            f"snow_coverage shape {snow_after_primary.shape} must match "
+            f"height shape {state.mask_stack.height.shape}"
+        )
+        # Values must be in [0, 1]
+        assert brucks_after_primary.min() >= 0.0 and brucks_after_primary.max() <= 1.0, (
+            f"terrain_brucks_weight values out of [0,1]: "
+            f"min={brucks_after_primary.min():.4f} max={brucks_after_primary.max():.4f}"
+        )
+        assert snow_after_primary.min() >= 0.0 and snow_after_primary.max() <= 1.0, (
+            f"snow_coverage values out of [0,1]: "
+            f"min={snow_after_primary.min():.4f} max={snow_after_primary.max():.4f}"
+        )
+
+        # Run the secondary volcanic pass — must not raise and must write both channels
+        result_volcanic = controller.run_pass("materials_v2_volcanic", checkpoint=False)
+        assert result_volcanic.status in ("ok", "warning"), (
+            f"materials_v2_volcanic pass returned status={result_volcanic.status!r}"
+        )
+
+        brucks_after_volcanic = state.mask_stack.get("terrain_brucks_weight")
+        snow_after_volcanic = state.mask_stack.get("snow_coverage")
+
+        assert brucks_after_volcanic is not None, (
+            "terrain_brucks_weight must remain non-None after materials_v2_volcanic"
+        )
+        assert snow_after_volcanic is not None, (
+            "snow_coverage must remain non-None after materials_v2_volcanic"
+        )
