@@ -113,10 +113,10 @@ def _length(v: Vec3) -> float:
 
 
 def _normalize(v: Vec3) -> Vec3 | None:
-    l = _length(v)
-    if l < 1e-12:
+    length = _length(v)
+    if length < 1e-12:
         return None
-    return (v[0] / l, v[1] / l, v[2] / l)
+    return (v[0] / length, v[1] / length, v[2] / length)
 
 
 def _face_normal(verts: Sequence[Vec3], face: Face) -> Vec3 | None:

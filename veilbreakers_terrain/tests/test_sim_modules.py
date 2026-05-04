@@ -1,7 +1,6 @@
 """Tests for veilbreakers_terrain.sim: catenary, pbd_cloth, foam."""
 from __future__ import annotations
 
-import math
 import numpy as np
 import pytest
 

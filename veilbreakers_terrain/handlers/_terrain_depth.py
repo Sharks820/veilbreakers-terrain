@@ -48,11 +48,11 @@ _OPENSIMPLEX_MODULE: Any | None = (
 )
 _HAS_OPENSIMPLEX = _OPENSIMPLEX_MODULE is not None
 
-from ..procedural_meshes import (
+from ..procedural_meshes import (  # noqa: E402
     _make_result,
     _merge_meshes,
 )
-from . import _bridge_mesh
+from . import _bridge_mesh  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Type alias (matches procedural_meshes.py)
@@ -702,9 +702,12 @@ def generate_biome_transition_mesh(
             return float(arr.flat[0]) if arr.size else 0.0
         col_f = max(0.0, min(u, 1.0)) * (cols - 1)
         row_f = max(0.0, min(v, 1.0)) * (rows - 1)
-        c0 = int(col_f); c1 = min(c0 + 1, cols - 1)
-        r0 = int(row_f); r1 = min(r0 + 1, rows - 1)
-        cf = col_f - c0; rf = row_f - r0
+        c0 = int(col_f)
+        c1 = min(c0 + 1, cols - 1)
+        r0 = int(row_f)
+        r1 = min(r0 + 1, rows - 1)
+        cf = col_f - c0
+        rf = row_f - r0
         return float(
             arr[r0, c0] * (1 - cf) * (1 - rf)
             + arr[r0, c1] * cf * (1 - rf)

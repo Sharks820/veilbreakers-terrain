@@ -29,7 +29,7 @@ _log = logging.getLogger(__name__)
 #           with an explicit "dtype" field for round-trip fidelity.
 _TERRAIN_LAYER_SCHEMA_VERSION = 3
 
-import numpy as np
+import numpy as np  # noqa: E402
 
 
 def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
@@ -1675,10 +1675,14 @@ def compute_erosion_brush(
 
                     delta -= transfer
                     # Shift transfer to destination cells.
-                    r_s0 = max(0, -dr);    r_s1 = min(rows, rows - dr)
-                    c_s0 = max(0, -dc_off); c_s1 = min(cols, cols - dc_off)
-                    r_d0 = max(0, dr);     c_d0 = max(0, dc_off)
-                    r_d1 = r_d0 + (r_s1 - r_s0); c_d1 = c_d0 + (c_s1 - c_s0)
+                    r_s0 = max(0, -dr)
+                    r_s1 = min(rows, rows - dr)
+                    c_s0 = max(0, -dc_off)
+                    c_s1 = min(cols, cols - dc_off)
+                    r_d0 = max(0, dr)
+                    c_d0 = max(0, dc_off)
+                    r_d1 = r_d0 + (r_s1 - r_s0)
+                    c_d1 = c_d0 + (c_s1 - c_s0)
                     delta[r_d0:r_d1, c_d0:c_d1] += transfer[r_s0:r_s1, c_s0:c_s1]
 
             elif erosion_type == "wind":

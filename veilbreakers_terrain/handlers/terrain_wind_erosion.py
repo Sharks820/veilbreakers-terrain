@@ -375,7 +375,7 @@ def generate_dunes(
         wavelength = 18.0
         for k in range(n_arms):
             arm_angle = wind_dir + k * math.pi / n_arms
-            arm_u = xs * math.cos(arm_angle) + ys * math.sin(arm_angle)
+            xs * math.cos(arm_angle) + ys * math.sin(arm_angle)
             arm_v = -xs * math.sin(arm_angle) + ys * math.cos(arm_angle)
             arm_profile = np.sin(2.0 * math.pi * arm_v / wavelength)
             # Arms radiate from same central peak — weight by proximity to centre

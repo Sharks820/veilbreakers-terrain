@@ -11,7 +11,6 @@ from __future__ import annotations
 import math
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers._scatter_engine import (
     apply_collision_exclusion,

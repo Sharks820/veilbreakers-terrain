@@ -8,7 +8,6 @@ Wave 1 — 9 tests:
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_semantics import (
     TerrainMaskStack,
@@ -24,8 +23,6 @@ from veilbreakers_terrain.handlers.terrain_pipeline import (
 from veilbreakers_terrain.handlers.terrain_materials_v2 import (
     compute_slope_material_weights,
     default_dark_fantasy_rules,
-    MaterialRuleSet,
-    MaterialChannel,
 )
 
 

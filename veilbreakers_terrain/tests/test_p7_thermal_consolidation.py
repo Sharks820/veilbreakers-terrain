@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers._terrain_erosion import (
     apply_thermal_erosion as canonical_thermal,

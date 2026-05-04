@@ -95,22 +95,28 @@ def _build_constraints(
 
     for r in range(R):
         for c in range(C - 1):
-            p_s.append([idx[r, c], idx[r, c + 1]]); r_s.append(dx)
+            p_s.append([idx[r, c], idx[r, c + 1]])
+            r_s.append(dx)
     for r in range(R - 1):
         for c in range(C):
-            p_s.append([idx[r, c], idx[r + 1, c]]); r_s.append(dy)
+            p_s.append([idx[r, c], idx[r + 1, c]])
+            r_s.append(dy)
 
     for r in range(R - 1):
         for c in range(C - 1):
-            p_sh.append([idx[r, c],     idx[r + 1, c + 1]]); r_sh.append(diag)
-            p_sh.append([idx[r, c + 1], idx[r + 1, c]]);     r_sh.append(diag)
+            p_sh.append([idx[r, c],     idx[r + 1, c + 1]])
+            r_sh.append(diag)
+            p_sh.append([idx[r, c + 1], idx[r + 1, c]])
+            r_sh.append(diag)
 
     for r in range(R):
         for c in range(C - 2):
-            p_b.append([idx[r, c], idx[r, c + 2]]); r_b.append(2 * dx)
+            p_b.append([idx[r, c], idx[r, c + 2]])
+            r_b.append(2 * dx)
     for r in range(R - 2):
         for c in range(C):
-            p_b.append([idx[r, c], idx[r + 2, c]]); r_b.append(2 * dy)
+            p_b.append([idx[r, c], idx[r + 2, c]])
+            r_b.append(2 * dy)
 
     return (
         np.array(p_s,  dtype=np.int32), np.array(r_s,  dtype=np.float64),

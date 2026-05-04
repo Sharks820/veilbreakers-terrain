@@ -221,7 +221,7 @@ def detect_basins(height: np.ndarray, min_area: int = 50) -> np.ndarray:
         # 8-neighbour offsets in flat-index space (with boundary guards)
         offsets_r = np.array([-1, -1, -1,  0,  0,  1,  1,  1], dtype=np.int64)
         offsets_c = np.array([-1,  0,  1, -1,  1, -1,  0,  1], dtype=np.int64)
-        flat_offsets = offsets_r * cols + offsets_c  # shape (8,)
+        offsets_r * cols + offsets_c  # shape (8,)
 
         # Iterate in two passes (forward + backward) like Chamfer EDT, but
         # on the height-sorted order — each pass propagates labels downward.

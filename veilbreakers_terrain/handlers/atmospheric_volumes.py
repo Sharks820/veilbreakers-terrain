@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover
     pass
 _NUMPY_AVAILABLE = np is not None
 
-from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState
+from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

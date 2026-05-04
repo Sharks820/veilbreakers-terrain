@@ -62,14 +62,14 @@ def _require_bpy() -> None:
         )
 
 
-from ._scatter_engine import (
+from ._scatter_engine import (  # noqa: E402
     poisson_disk_sample,
     lloyd_relax_points,
     context_scatter,
     generate_breakable_variants,
 )
-from ._terrain_noise import compute_slope_map
-from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP
+from ._terrain_noise import compute_slope_map  # noqa: E402
+from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP  # noqa: E402
 # L-3: generate_billboard_impostor is from the deprecated D-grade L-system pipeline.
 # Import lazily so failures are non-fatal; call sites should migrate to a proper
 # N-view Blender bake via Phase 9C of the 12-phase plan.
@@ -95,8 +95,8 @@ def generate_billboard_impostor(*args: Any, **kwargs: Any) -> Any:
         stacklevel=2,
     )
     return _generate_billboard_impostor_raw(*args, **kwargs)
-from .terrain_semantics import WorldHeightTransform
-from .terrain_scatter_points import ScatterPoint, ScatterPointTable, validate_scatter_point_table
+from .terrain_semantics import WorldHeightTransform  # noqa: E402
+from .terrain_scatter_points import ScatterPoint, ScatterPointTable, validate_scatter_point_table  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -583,7 +583,7 @@ def _collapse_detail_density(detail_dens_raw: Any) -> "np.ndarray | None":
         if not layers:
             return None
         stacked = np.stack(
-            [np.asarray(l, dtype=np.float32) for l in layers], axis=0
+            [np.asarray(layer, dtype=np.float32) for layer in layers], axis=0
         )
         return np.mean(stacked, axis=0)
     # Fallback: treat as raw array
@@ -1672,7 +1672,7 @@ def _create_vegetation_template(
 # (toolkit-side) so vegetation_system (toolkit) can import them without
 # reaching into environment_scatter (terrain). Re-exported here for
 # backward compatibility with intra-terrain callers of this module.
-from .lod_pipeline import (  # noqa: F401  -- intentional re-export
+from .lod_pipeline import (  # noqa: F401,E402  -- intentional re-export
     _BILLBOARD_LOD_VERTEX_THRESHOLD,
     _TREE_VEG_TYPES,
     _setup_billboard_lod,
@@ -2145,12 +2145,18 @@ def _create_grass_card(
         amp_base, amp_mid, amp_tip = 0.0, 0.5, 1.0
         freq_base, freq_mid, freq_tip = 0.5, 0.75, 1.0
 
-        vv0 = bm.verts.new((rx0, ry0, 0.0));    vv0[wind_layer] = (amp_base, freq_base, phase, 0.0)
-        vv1 = bm.verts.new((rx1, ry1, 0.0));    vv1[wind_layer] = (amp_base, freq_base, phase, 0.0)
-        vv2 = bm.verts.new((rx2, ry2, mid_z));  vv2[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
-        vv3 = bm.verts.new((rx3, ry3, mid_z));  vv3[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
-        vv4 = bm.verts.new((rx4, ry4, height)); vv4[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
-        vv5 = bm.verts.new((rx5, ry5, height)); vv5[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
+        vv0 = bm.verts.new((rx0, ry0, 0.0))
+        vv0[wind_layer] = (amp_base, freq_base, phase, 0.0)
+        vv1 = bm.verts.new((rx1, ry1, 0.0))
+        vv1[wind_layer] = (amp_base, freq_base, phase, 0.0)
+        vv2 = bm.verts.new((rx2, ry2, mid_z))
+        vv2[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
+        vv3 = bm.verts.new((rx3, ry3, mid_z))
+        vv3[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
+        vv4 = bm.verts.new((rx4, ry4, height))
+        vv4[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
+        vv5 = bm.verts.new((rx5, ry5, height))
+        vv5[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
 
         # Lower quad (root → mid)
         try:

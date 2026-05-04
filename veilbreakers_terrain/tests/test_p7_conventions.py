@@ -5,7 +5,6 @@ import math
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers._terrain_noise import (
     compute_slope_map,

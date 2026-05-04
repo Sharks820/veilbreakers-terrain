@@ -52,8 +52,8 @@ except ImportError:  # pragma: no cover
 
 _SCIPY_VALIDATION_AVAILABLE: bool = _scipy_validation_available
 
-from .terrain_pipeline import TerrainPassController
-from .terrain_semantics import (
+from .terrain_pipeline import TerrainPassController  # noqa: E402
+from .terrain_semantics import (  # noqa: E402
     BBox,
     PassDefinition,
     PassResult,

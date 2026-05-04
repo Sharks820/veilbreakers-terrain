@@ -404,7 +404,6 @@ def test_optional_channels_run_before_consumer_when_available():
     is still schedulable. scatter_intelligent is the canonical caller.
     """
     from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
-    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
 
     def _noop(state, region):  # pragma: no cover — ordering-only

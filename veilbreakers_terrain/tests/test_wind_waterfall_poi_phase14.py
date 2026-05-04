@@ -264,7 +264,6 @@ class TestWaterfallMistPass:
 
 class TestPoiMaskChannel:
     def test_poi_mask_field_exists(self):
-        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         stack = _make_stack(size=8)
         assert hasattr(stack, "poi_mask")

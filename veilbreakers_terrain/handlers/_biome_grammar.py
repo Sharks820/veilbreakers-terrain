@@ -467,8 +467,10 @@ def _box_filter_2d(
     c0 = cols
     c1 = cols + 2 * r + 1
     # Use broadcasting to compute all box sums simultaneously: O(1) Python
-    R0 = r0[:, None]; R1 = r1[:, None]    # (H, 1)
-    C0 = c0[None, :]; C1 = c1[None, :]   # (1, W)
+    R0 = r0[:, None]
+    R1 = r1[:, None]    # (H, 1)
+    C0 = c0[None, :]
+    C1 = c1[None, :]   # (1, W)
     box_sums = (
         sat_full[R1, C1]
         - sat_full[R0, C1]

@@ -297,4 +297,3 @@ def _fbm_noise(H: int, W: int, octaves: int = 4, seed: int = 0) -> np.ndarray:
     return (result / max(norm, 1e-9)).astype(np.float32)
 
 
-import math  # noqa: E402 — imported here to avoid polluting module namespace above

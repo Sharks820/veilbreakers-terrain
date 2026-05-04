@@ -8,7 +8,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_unity_export import (
     UNITY_SCALE_FACTOR,
@@ -153,7 +152,6 @@ class TestUnityScaleAppliedToTreeInstances:
         stack = _make_minimal_stack()
         # Inject one in-bounds tree at known world position.
         tree_points = np.array([[110.0, 205.0, 50.0, 45.0, 0]], dtype=np.float64)
-        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         import dataclasses
         stack = dataclasses.replace(stack, tree_instance_points=tree_points)
         with tempfile.TemporaryDirectory() as td:

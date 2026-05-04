@@ -3276,8 +3276,10 @@ def generate_sinkhole(
         d_size = rng.uniform(0.15, 0.55)
         d_yaw = rng.uniform(0.0, 2.0 * math.pi)
         d_pitch = rng.uniform(-0.4, 0.4)   # tip toward or away from hole
-        cos_dy = math.cos(d_yaw); sin_dy = math.sin(d_yaw)
-        cos_dp = math.cos(d_pitch); sin_dp = math.sin(d_pitch)
+        cos_dy = math.cos(d_yaw)
+        sin_dy = math.sin(d_yaw)
+        cos_dp = math.cos(d_pitch)
+        sin_dp = math.sin(d_pitch)
         db_start = len(vertices)
         hs = d_size / 2.0
         for ddx, ddy, ddz in [

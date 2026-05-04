@@ -79,8 +79,8 @@ class TerrainTextureLayerStack:
             return np.zeros((1, 1, 0), dtype=np.float32)
         h, w = self.layers[0].weight_map.shape[:2]
         stack = np.stack([
-            l.weight_map if l.weight_map is not None else np.zeros((h, w), dtype=np.float32)
-            for l in self.layers
+            layer.weight_map if layer.weight_map is not None else np.zeros((h, w), dtype=np.float32)
+            for layer in self.layers
         ], axis=-1)
         total = stack.sum(axis=-1, keepdims=True)
         total = np.where(total < 1e-8, 1.0, total)

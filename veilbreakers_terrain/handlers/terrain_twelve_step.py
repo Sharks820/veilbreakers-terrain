@@ -58,15 +58,15 @@ def _distance_transform(mask: np.ndarray) -> np.ndarray:
     distances = np.sqrt(((query[:, None, :] - target[None, :, :]) ** 2).sum(axis=2))
     return distances.min(axis=1).reshape(rows, cols).astype(np.float32)
 
-from ._terrain_world import (
+from ._terrain_world import (  # noqa: E402
     erode_world_heightmap,
     extract_tile,
     generate_world_heightmap,
     validate_tile_seams,
 )
-from .terrain_advanced import compute_flow_map
-from .terrain_semantics import TerrainIntentState, TerrainMaskStack
-from .terrain_world_math import (
+from .terrain_advanced import compute_flow_map  # noqa: E402
+from .terrain_semantics import TerrainIntentState, TerrainMaskStack  # noqa: E402
+from .terrain_world_math import (  # noqa: E402
     TileTransform,
     compute_erosion_params_for_world_range,
 )

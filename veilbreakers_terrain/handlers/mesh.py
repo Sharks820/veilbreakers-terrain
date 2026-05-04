@@ -48,8 +48,8 @@ def _normalize3(v: Vector3) -> Vector3 | None:
     l2 = v[0] ** 2 + v[1] ** 2 + v[2] ** 2
     if l2 < 1e-24:
         return None
-    l = math.sqrt(l2)
-    return (v[0] / l, v[1] / l, v[2] / l)
+    length = math.sqrt(l2)
+    return (v[0] / length, v[1] / length, v[2] / length)
 
 
 # ---------------------------------------------------------------------------

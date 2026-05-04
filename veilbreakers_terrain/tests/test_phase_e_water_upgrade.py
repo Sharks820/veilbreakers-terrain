@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import math
 
 import numpy as np
 import pytest
@@ -53,7 +52,6 @@ class TestFlowDirectionVertexColorRoundTrip:
     def test_round_trip_east_flow(self):
         from veilbreakers_terrain.handlers._water_network import (
             bake_flow_direction_vertex_color,
-            compute_flow_direction_field,
         )
 
         fd = _simple_flow_direction(4, 4)

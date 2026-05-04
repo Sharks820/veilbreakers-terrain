@@ -3,13 +3,10 @@
 REQ-P13-001: Foam vertex alpha baked into water mesh export.
 Formula: (1 - saturate(obstacle_proximity / foam_radius)) * (1 - flow_speed / max_foam_speed)
 """
-import importlib
 import inspect
-import math
 import re
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_waterfalls import (
     FOAM_RADIUS_DEFAULT,

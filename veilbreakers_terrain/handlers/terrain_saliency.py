@@ -50,7 +50,7 @@ from numpy.typing import NDArray
 FloatArray: TypeAlias = NDArray[np.float64]
 Uint8Array: TypeAlias = NDArray[np.uint8]
 
-from .terrain_semantics import (
+from .terrain_semantics import (  # noqa: E402
     BBox,
     PassDefinition,
     PassResult,
@@ -70,7 +70,7 @@ def _load_scipy_ndimage() -> ModuleType | None:
 
 _scipy_ndimage = _load_scipy_ndimage()
 _SCIPY_AVAILABLE: bool = _scipy_ndimage is not None
-from .terrain_math import stack_world_to_cell as _world_to_cell
+from .terrain_math import stack_world_to_cell as _world_to_cell  # noqa: E402
 
 
 def _scipy_map_coordinates_2d(

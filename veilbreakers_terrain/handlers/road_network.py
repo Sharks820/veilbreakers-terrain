@@ -1714,8 +1714,10 @@ def enforce_turn_radius(path: list[Any], min_radius: float = 15.0) -> list[Any]:
         p_next = path[i + 1]
 
         # Incoming and outgoing 2D direction vectors
-        ax = p_cur[0] - p_prev[0]; ay = p_cur[1] - p_prev[1]
-        bx = p_next[0] - p_cur[0]; by = p_next[1] - p_cur[1]
+        ax = p_cur[0] - p_prev[0]
+        ay = p_cur[1] - p_prev[1]
+        bx = p_next[0] - p_cur[0]
+        by = p_next[1] - p_cur[1]
         len_a = math.sqrt(ax * ax + ay * ay)
         len_b = math.sqrt(bx * bx + by * by)
 
@@ -1766,7 +1768,8 @@ def enforce_turn_radius(path: list[Any], min_radius: float = 15.0) -> list[Any]:
         my = (entry[1] + exit_[1]) / 2.0
         mz = (entry[2] + exit_[2]) / 2.0
         # Bisector outward direction (away from the interior of the turn)
-        bsx = -(ax / len_a + bx / len_b); bsy = -(ay / len_a + by / len_b)
+        bsx = -(ax / len_a + bx / len_b)
+        bsy = -(ay / len_a + by / len_b)
         bs_len = math.sqrt(bsx * bsx + bsy * bsy)
         if bs_len > 1e-6:
             push = min_radius * (1.0 - math.cos(half_angle))
