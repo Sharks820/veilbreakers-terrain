@@ -19,6 +19,8 @@ import math
 import random
 from typing import Any
 
+from .terrain_rng import derive_pass_seed  # noqa: F401 — re-exported for scatter callers
+
 try:
     import numpy as _np_engine
 except ImportError:

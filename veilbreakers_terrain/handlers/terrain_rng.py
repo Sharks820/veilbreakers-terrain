@@ -41,3 +41,33 @@ def tile_rng(world_origin_x: float, world_origin_y: float,
     # parallel tile generation — no production callers yet; referenced by tests only.
     """Convenience: make a per-tile RNG from world origin + root seed."""
     return make_rng(int(world_origin_x * 1000), int(world_origin_y * 1000), root_seed)
+
+def derive_pass_seed(seed: int, pass_name: str,
+                     tile_x: float = 0.0, tile_y: float = 0.0,
+                     region: str = "") -> int:
+    """Derive a deterministic integer seed for a named pass on a specific tile.
+
+    Combines the root seed, pass name, tile coordinates, and optional region
+    via SHA-256 to produce a uint32 seed. This ensures that each (tile, pass)
+    pair gets an independent seed while remaining fully reproducible.
+
+    Parameters
+    ----------
+    seed : int
+        Root world seed.
+    pass_name : str
+        Name of the terrain pass (e.g. "scatter", "erosion", "vegetation").
+    tile_x, tile_y : float
+        World-space tile origin coordinates.
+    region : str
+        Optional region/biome identifier for additional seed separation.
+
+    Returns
+    -------
+    int
+        A uint32 integer suitable for use with random.Random() or as the
+        sole argument to np.random.default_rng().
+    """
+    raw = f"{seed}:{pass_name}:{int(tile_x * 1000)}:{int(tile_y * 1000)}:{region}"
+    digest = hashlib.sha256(raw.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big")
