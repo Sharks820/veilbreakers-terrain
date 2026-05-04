@@ -150,7 +150,8 @@ def test_export_manifest_hard_validation_raises_by_default(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         with pytest.raises(ValueError, match="FAKE_VALIDATION_FAILURE"):
             mod.export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
-        assert (Path(td) / "manifest.json").exists()
+        # FIX-B14-17: atomic write — neither file is written on validation failure.
+        assert not (Path(td) / "manifest.json").exists()
         assert not (Path(td) / "unity_import_descriptor.json").exists()
 
 
@@ -910,3 +911,148 @@ def test_export_manifest_writes_supplemental_mesh_specs_for_unity_bridge():
         "z": expected_first_vertex[2],
     }
     assert payload["mesh_specs"][1]["uvs"][2] == {"x": 1.0, "y": 1.0}
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-14 — vertex attribute contract enforced on supplemental meshes
+# ---------------------------------------------------------------------------
+
+def test_export_supplemental_meshes_include_normals_tangents_uv1():
+    """FIX-B14-14: every supplemental mesh spec must carry normals, tangents, uv0, uv1."""
+    from veilbreakers_terrain.handlers.terrain_unity_export import _supplemental_mesh_specs_json
+
+    stack = _make_stack()
+    stack.set("cliff_mesh_specs", [
+        {
+            "mesh_id": "cliff_000",
+            "mesh_type": "cliff_overhang",
+            "material_hint": "wet_cliff",
+            "tier": "hero",
+            "vertices": [(1.0, 2.0, 3.0), (4.0, 2.0, 3.0), (4.0, 5.0, 3.0)],
+            "faces": [(0, 1, 2)],
+        }
+    ], "test")
+
+    payload = _supplemental_mesh_specs_json(stack)
+
+    assert len(payload["mesh_specs"]) == 1
+    spec = payload["mesh_specs"][0]
+    # Contract-canonical names from §33 addendum (REQUIRED_VERTEX_ATTRIBUTES)
+    assert "normal" in spec, "normal key must be present for Unity PBR"
+    assert "tangent" in spec, "tangent key must be present (MikkTSpace)"
+    assert "uv0" in spec, "uv0 key must be present"
+    assert "uv1" in spec, "uv1 key must be present (lightmap UVs)"
+    assert "color" in spec, "color key must be present (per-vertex color stream)"
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-15 — per-prototype height derived from instance data
+# ---------------------------------------------------------------------------
+
+def test_tree_prototype_dims_vary_by_species():
+    """FIX-B14-15: prototype height/width must reflect per-species median height_scale."""
+    from veilbreakers_terrain.handlers.terrain_unity_export import (
+        UNITY_SCALE_FACTOR,
+        _TREE_HEIGHT_DEFAULT,
+        export_unity_manifest,
+    )
+
+    stack = _make_stack()
+    # Two species: prototype_id=0 with height_scale=5.0, prototype_id=1 with height_scale=20.0
+    # Columns: x, y, z, yaw, prototype_id, scale_x, height_scale
+    stack.set("tree_instance_points", np.array(
+        [
+            [101.0, 201.0, 12.0, 0.0, 0.0, 1.0, 5.0],
+            [102.0, 202.0, 12.0, 0.0, 0.0, 1.0, 5.0],
+            [103.0, 203.0, 12.0, 0.0, 1.0, 1.0, 20.0],
+        ],
+        dtype=np.float64,
+    ), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+
+    protos = {p["prototype_id"]: p for p in manifest["tree_prototype_list"]}
+    assert len(protos) == 2
+
+    # Prototype 0: median height_scale = 5.0
+    assert protos[0]["height"] == pytest.approx(5.0 * UNITY_SCALE_FACTOR)
+    assert protos[0]["width"] == pytest.approx(5.0 * 0.5 * UNITY_SCALE_FACTOR)
+
+    # Prototype 1: median height_scale = 20.0
+    assert protos[1]["height"] == pytest.approx(20.0 * UNITY_SCALE_FACTOR)
+    assert protos[1]["width"] == pytest.approx(20.0 * 0.5 * UNITY_SCALE_FACTOR)
+
+    # The two prototypes must have different heights (not both _TREE_HEIGHT_DEFAULT)
+    assert protos[0]["height"] != protos[1]["height"]
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-16 — vertex_color absent from per-instance JSON output
+# ---------------------------------------------------------------------------
+
+def test_tree_instance_vertex_color_absent_from_per_instance_json():
+    """FIX-B14-16: per-instance tree JSON must not contain vertex_color."""
+    from veilbreakers_terrain.handlers.terrain_unity_export import _tree_instances_json
+
+    stack = _make_stack()
+    stack.set("tree_instance_points", np.array(
+        [[101.0, 201.0, 12.0, 0.0, 0.0]],
+        dtype=np.float64,
+    ), "test")
+
+    payload = _tree_instances_json(stack)
+
+    assert len(payload["trees"]) == 1
+    tree = payload["trees"][0]
+    assert "vertex_color" not in tree, (
+        "vertex_color must not appear in per-instance JSON output "
+        "(FIX-B14-16: deferred to per-prototype baked vertex stream)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-17 — atomic write: both files written or neither
+# ---------------------------------------------------------------------------
+
+def test_export_manifest_atomic_writes_both_or_neither(monkeypatch):
+    """FIX-B14-17: on validation failure, neither manifest.json nor
+    unity_import_descriptor.json must exist on disk (no partial bundle)."""
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
+
+    stack = _make_unity_valid_stack()
+
+    def _fake_validate(contract, files):
+        del contract, files
+        return [
+            ValidationIssue(
+                code="ATOMIC_TEST_FAILURE",
+                severity="hard",
+                affected_feature="heightmap.raw",
+                message="forced hard failure for atomic-write test",
+            )
+        ]
+
+    monkeypatch.setattr(mod, "validate_bit_depth_contract", _fake_validate)
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        with pytest.raises(ValueError, match="ATOMIC_TEST_FAILURE"):
+            mod.export_unity_manifest(stack, td_path, strict_unity_resolution=False)
+
+        # Neither file must exist — atomic write means no partial bundle.
+        assert not (td_path / "manifest.json").exists(), (
+            "manifest.json must not be written when validation fails (atomic write)"
+        )
+        assert not (td_path / "unity_import_descriptor.json").exists(), (
+            "unity_import_descriptor.json must not be written when validation fails"
+        )
+
+    # On success, both files must exist.
+    stack2 = _make_unity_valid_stack()
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        manifest = mod.export_unity_manifest(stack2, td_path, strict_unity_resolution=False)
+        assert (td_path / "manifest.json").exists()
+        assert (td_path / "unity_import_descriptor.json").exists()
+        assert manifest["validation_status"] == "passed"
