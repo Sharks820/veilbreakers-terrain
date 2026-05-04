@@ -954,6 +954,34 @@ class TerrainMaskStack:
         # Any mutation invalidates cached hash
         self.content_hash = None
 
+    def _bulk_set(
+        self,
+        channel_values: Dict[str, Any],
+        pass_name: str,
+    ) -> None:
+        """Write multiple channels in one call, validating and recording provenance for each.
+
+        This is a performance-optimised batch alternative to calling ``set()``
+        per channel in tight loops (e.g. the parallel merge and lightweight-copy
+        code paths).  All channels are written through the normal ``set()``
+        path — dtype/shape validation, provenance recording, and dirty-flag
+        management are all preserved.
+
+        Parameters
+        ----------
+        channel_values:
+            Mapping of channel name → value.  Each entry is forwarded to
+            ``self.set(channel, value, pass_name)``.  Dict-valued and opaque
+            channels are accepted just as ``set()`` accepts them.
+        pass_name:
+            Producer name recorded in ``populated_by_pass`` for every channel
+            in the batch.  Pass ``"__copy__"`` when replicating an existing
+            stack (e.g. lightweight_state_copy) and ``"__merge__"`` when
+            merging worker results back into the shared controller state.
+        """
+        for channel, value in channel_values.items():
+            self.set(channel, value, pass_name)
+
     def mark_dirty(self, channel: str) -> None:
         self.dirty_channels.add(channel)
         self.content_hash = None

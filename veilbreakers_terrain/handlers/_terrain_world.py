@@ -975,11 +975,49 @@ def pass_macro_world(
         stack.set("hmap_low_freq", stack.height, "macro_world")
 
     # -------------------------------------------------------------------------
+    # FIX-B14-9: Height rescale — applied FIRST, before any channel derivation.
+    #
+    # If ``target_height_range_m`` is provided in composition_hints, rescale
+    # the heightmap so its full range matches the requested value.  This MUST
+    # run before the continental bias and before any downstream channel
+    # derivation (cliff_mask, water_surface_elevation_m, splatmap weights) so
+    # that all those channels are derived from already-rescaled heights.
+    #
+    # Without this ordering guarantee a caller that sets a target vertical
+    # range would get cliff thresholds, water elevations, and splatmap weights
+    # computed against the unscaled (raw noise) heights, then have the height
+    # silently rescaled under them — invalidating every height-dependent mask.
+    # -------------------------------------------------------------------------
+    hints = (intent.composition_hints if intent is not None else {}) or {}
+    _target_range_m = hints.get("target_height_range_m")
+    if _target_range_m is not None:
+        _target_range_m = float(_target_range_m)
+        if _target_range_m > 0.0:
+            _raw = np.asarray(stack.height, dtype=np.float64)
+            _raw_min = float(_raw.min())
+            _raw_max = float(_raw.max())
+            _raw_range = _raw_max - _raw_min
+            if _raw_range > 1e-9:
+                # Rescale: preserve minimum, scale range to target.
+                _rescaled = (_raw - _raw_min) / _raw_range * _target_range_m + _raw_min
+                _rescaled = _rescaled.astype(np.float32)
+                stack.set("height", _rescaled, "macro_world")
+                stack.set("hmap_low_freq", _rescaled, "macro_world")
+                issues.append(ValidationIssue(
+                    code="MACRO_HEIGHT_RESCALED",
+                    severity="info",
+                    message=(
+                        f"Height rescaled: raw_range={_raw_range:.2f}m → "
+                        f"target_range={_target_range_m:.2f}m."
+                    ),
+                ))
+
+    # -------------------------------------------------------------------------
     # Continental plate elevation bias (tectonic-scale macro feature)
     # -------------------------------------------------------------------------
     # Read authoring hints from composition_hints.  All keys are optional —
     # when absent the bias is zero and the heightmap is left unchanged.
-    hints = (intent.composition_hints if intent is not None else {}) or {}
+    # NOTE: ``hints`` is already bound above in the FIX-B14-9 rescale block.
     continent_cx_norm = float(hints.get("continent_center_x", 0.5))
     continent_cy_norm = float(hints.get("continent_center_y", 0.5))
     continent_radius_norm = float(hints.get("continent_radius", 0.5))
