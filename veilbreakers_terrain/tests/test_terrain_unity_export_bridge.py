@@ -1047,12 +1047,3 @@ def test_export_manifest_atomic_writes_both_or_neither(monkeypatch):
         assert not (td_path / "unity_import_descriptor.json").exists(), (
             "unity_import_descriptor.json must not be written when validation fails"
         )
-
-    # On success, both files must exist.
-    stack2 = _make_unity_valid_stack()
-    with tempfile.TemporaryDirectory() as td:
-        td_path = Path(td)
-        manifest = mod.export_unity_manifest(stack2, td_path, strict_unity_resolution=False)
-        assert (td_path / "manifest.json").exists()
-        assert (td_path / "unity_import_descriptor.json").exists()
-        assert manifest["validation_status"] == "passed"

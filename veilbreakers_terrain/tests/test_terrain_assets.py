@@ -229,10 +229,8 @@ def test_water_exclusion_mask_merges_authoritative_water_channels() -> None:
     stack.set("water_depth_m", depth, "test")
     surface_mask = np.zeros_like(height)
     surface_mask[2, 2] = 1.0
+    surface_mask[3, 3] = 1.0  # W-1: legacy water_surface no longer read; use water_surface_mask
     stack.set("water_surface_mask", surface_mask, "test")
-    legacy = height.copy()
-    legacy[3, 3] = 11.0
-    stack.set("water_surface", legacy, "test")
 
     water = _water_exclusion_mask(stack, height)
 

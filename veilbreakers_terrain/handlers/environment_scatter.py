@@ -3008,10 +3008,13 @@ def _scatter_pass(
             return True
         return False
 
+    from .terrain_biome_registry import BIOME_ALIASES as _BIOME_ALIASES
+    _canonical_biome = _BIOME_ALIASES.get(biome, biome)
+
     for _idx, _spec in enumerate(_catalog_species_specs):
         if _spec.category not in _target_categories:
             continue
-        if _spec.biome_mask and biome not in _spec.biome_mask:
+        if _spec.biome_mask and _canonical_biome not in _spec.biome_mask:
             continue
         _sid = _spec.species_id
         _spec_row = _SPECIES_CONSTRAINTS.get(_sid, {})

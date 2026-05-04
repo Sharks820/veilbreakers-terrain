@@ -1754,6 +1754,8 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_snow_line_pass()
     from ._biome_grammar import register_biome_surface_features_pass
     register_biome_surface_features_pass()
+    # pass_seasonal_water_state registers AFTER Bundle O/I in terrain_master_registrar
+    # so that water_variants and coastline own water_surface_mask/tidal first.
     # macro_color is owned by Bundle K (see terrain_macro_color.pass_macro_color).
     # The orphan ``pass_compute_macro_color`` helper that used to live here was
     # never auto-registered and has been removed (deep-dive guide 2026-04-20).

@@ -392,15 +392,15 @@ def test_visual_diff_identical_stacks_reports_no_change():
 
 
 def test_visual_diff_detects_height_change():
+    import copy
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_visual_diff import compute_visual_diff
-    from veilbreakers_terrain.handlers.terrain_live_preview import _clone_stack_for_diff
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
         controller.run_pass("macro_world", checkpoint=False)
-        snap_before = _clone_stack_for_diff(state.mask_stack)
+        snap_before = copy.deepcopy(state.mask_stack)
         state.mask_stack.height[5:10, 5:10] += 50.0
 
     diff = compute_visual_diff(snap_before, state.mask_stack)
@@ -409,15 +409,15 @@ def test_visual_diff_detects_height_change():
 
 
 def test_generate_diff_overlay_shape_and_colors():
+    import copy
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_visual_diff import generate_diff_overlay
-    from veilbreakers_terrain.handlers.terrain_live_preview import _clone_stack_for_diff
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
         controller.run_pass("macro_world", checkpoint=False)
-        snap = _clone_stack_for_diff(state.mask_stack)
+        snap = copy.deepcopy(state.mask_stack)
         state.mask_stack.height[5:10, 5:10] += 30.0
 
     overlay = generate_diff_overlay(snap, state.mask_stack)

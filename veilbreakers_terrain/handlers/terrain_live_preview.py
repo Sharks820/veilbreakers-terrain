@@ -199,7 +199,14 @@ class LivePreviewSession:
         }
 
     def diff_stacks(self, stack_before: Any) -> Dict[str, Any]:
-        """Convenience: diff a held-aside snapshot against current state."""
+        """Convenience: diff a held-aside snapshot against current state.
+
+        Accepts either a ``StackSnapshot`` (hash-based, returned by
+        ``snapshot_stack()``) or a full ``TerrainMaskStack`` copy.
+        """
+        if isinstance(stack_before, StackSnapshot):
+            changed = stack_before.changed_channels(self.state.mask_stack)
+            return {"changed_channels": changed, "total_changed_cells": len(changed)}
         return compute_visual_diff(stack_before, self.state.mask_stack)
 
     def snapshot_stack(self) -> StackSnapshot:

@@ -166,27 +166,15 @@ def test_live_preview_diff_snapshot_and_render_thumbnail(
     stack = _stack()
     session = live_preview.LivePreviewSession(TerrainPassController(_state(stack)))
 
-    def fake_compute_visual_diff(
-        before: TerrainMaskStack, after: TerrainMaskStack
-    ) -> dict[str, float]:
-        return {
-            "before_height_sum": float(before.height.sum()),
-            "after_height_sum": float(after.height.sum()),
-        }
-
-    monkeypatch.setattr(
-        live_preview,
-        "compute_visual_diff",
-        fake_compute_visual_diff,
-    )
-
     snapshot = session.snapshot_stack()
     stack.height[0, 0] = 99.0
     diff = session.diff_stacks(snapshot)
 
     assert snapshot is not stack
-    assert snapshot.height[0, 0] != stack.height[0, 0]
-    assert diff["before_height_sum"] != diff["after_height_sum"]
+    # StackSnapshot stores hashes only — channel data not accessible directly.
+    # Verify the hash-based diff correctly detected the height change.
+    assert "height" in diff["changed_channels"]
+    assert diff["total_changed_cells"] >= 1
 
     fake_matplotlib = _FakeMatplotlib("matplotlib")
     fake_pyplot = _FakePyplot("matplotlib.pyplot")

@@ -241,6 +241,11 @@ def _register_all_terrain_passes_impl(
         ("L-atmospheric-volumes", f"{package_root}.atmospheric_volumes", "register_atmospheric_volumes_pass"),
         ("N", f"{package_root}.terrain_bundle_n", "register_bundle_n_passes"),
         ("O", f"{package_root}.terrain_bundle_o", "register_bundle_o_passes"),
+        # Seasonal water mutation — secondary writer of water_surface_mask/tidal/wetness.
+        # MUST register after Bundle O (water_variants) and Bundle I (coastline) so
+        # those passes own the channels first and pass_seasonal_water_state can use
+        # overrides=(...) to declare intentional secondary writes.
+        ("O-seasonal-water", f"{package_root}.terrain_water_variants", "register_pass_seasonal_water_state"),
     ]
 
     # Track pass names seen so far to detect duplicates across bundles.

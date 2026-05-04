@@ -819,13 +819,14 @@ def species_ids_by_category(category: str) -> Tuple[str, ...]:
 def species_for_biome(biome: str) -> Tuple[SpeciesSpec, ...]:
     """Return every species whose ``biome_mask`` admits ``biome``.
 
-    An empty biome_mask would mean "no biome", so we treat ``_ALL_BIOMES``
-    matches as universal; to express "all biomes" we set ``_ALL_BIOMES``
-    explicitly at catalog authoring time.
+    Resolves legacy aliases (e.g. ``"forest"`` → ``"thornwood_forest"``) via
+    ``terrain_biome_registry.BIOME_ALIASES`` so callers using old names still work.
     """
+    from .terrain_biome_registry import BIOME_ALIASES
+    canonical = BIOME_ALIASES.get(biome, biome)
     return tuple(
         spec for spec in FOLIAGE_SPECIES_CATALOG.values()
-        if biome in spec.biome_mask
+        if canonical in spec.biome_mask
     )
 
 

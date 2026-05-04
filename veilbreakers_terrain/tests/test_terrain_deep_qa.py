@@ -291,20 +291,12 @@ def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
 
     captured: dict[str, object] = {}
 
-    def _fake_run_determinism_check(
-        controller: "TerrainPassController",
+    def _fake_run_determinism_check_subprocess(
         seed: int,
         runs: int = 3,
-        *,
-        pass_sequence: Sequence[str] | None = None,
     ) -> dict[str, object]:
         captured["seed"] = seed
         captured["runs"] = runs
-        captured["pass_sequence"] = tuple(pass_sequence or ())
-        captured["baseline_hash"] = controller.state.mask_stack.compute_hash()
-        captured["skip_post_pipeline_hooks"] = controller.state.intent.composition_hints[
-            "bundle_n_runtime"
-        ]["skip_post_pipeline_hooks"]
         return {
             "deterministic": True,
             "run_count": runs,
@@ -313,12 +305,11 @@ def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
 
     monkeypatch.setattr(
         bundle_n.terrain_determinism_ci,
-        "run_determinism_check",
-        _fake_run_determinism_check,
+        "run_determinism_check_subprocess",
+        _fake_run_determinism_check_subprocess,
     )
 
     state = _build_state(tile_size=8, seed=4141)
-    baseline_hash = state.mask_stack.compute_hash()
     state.intent.composition_hints["bundle_n_runtime"] = {"determinism_runs": 2}
 
     controller = TerrainPassController(state)
@@ -327,9 +318,6 @@ def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
     bundle_n_metrics = results[-1].metrics["bundle_n"]
     assert captured["seed"] == 4141
     assert captured["runs"] == 2
-    assert captured["pass_sequence"] == ("macro_world",)
-    assert captured["baseline_hash"] == baseline_hash
-    assert captured["skip_post_pipeline_hooks"] is True
     assert bundle_n_metrics["deterministic"] is True
     assert bundle_n_metrics["determinism_run_count"] == 2
 

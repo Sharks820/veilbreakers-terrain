@@ -883,9 +883,10 @@ class TestScatterChannelConsumers:
 
         from veilbreakers_terrain.handlers.environment_scatter import _resolve_scatter_context_maps
 
+        # W-1: water_surface_mask is canonical binary; legacy water_surface removed.
         stack = SimpleNamespace(
             wetness=np.array([[0.2, 0.1], [0.0, 0.0]], dtype=np.float32),
-            water_surface=np.array([[0.0, 0.8], [0.0, 0.0]], dtype=np.float32),
+            water_surface_mask=np.array([[0.0, 1.0], [0.0, 0.0]], dtype=np.float32),
             flow_accumulation=np.array([[0.0, 0.0], [0.0, 20.0]], dtype=np.float32),
             disturbance_patch_mask=None,
             erosion_amount=None,
@@ -902,7 +903,7 @@ class TestScatterChannelConsumers:
         assert disturbance_map is None
         assert water_map is not None
         assert water_map[0, 0] == approx(0.2, abs=1e-6)
-        assert water_map[0, 1] == approx(0.8, abs=1e-6)
+        assert water_map[0, 1] == approx(1.0, abs=1e-6)  # water_surface_mask=1.0 wins over wetness=0.1
         assert water_map[1, 1] == approx(1.0, abs=1e-6)
 
     def test_resolve_scatter_context_maps_combines_disturbance_layers(self):

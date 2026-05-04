@@ -135,7 +135,7 @@ class TestFoliageCatalogCoverage:
 
         assert forest_species
         assert swamp_species
-        assert all("forest" in spec.biome_mask for spec in forest_species)
+        assert all("thornwood_forest" in spec.biome_mask or "deep_forest" in spec.biome_mask for spec in forest_species)
         assert any(spec.species_id == "grass_lush" for spec in swamp_species)
 
     def test_derive_species_constraints_normalizes_catalog_ranges(self):
