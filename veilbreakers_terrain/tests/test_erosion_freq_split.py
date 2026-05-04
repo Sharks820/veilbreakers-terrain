@@ -474,6 +474,106 @@ class TestPassFunctionBehavior:
         assert low_freq is not None
         np.testing.assert_allclose(low_freq[0, :], 7.0)
 
+    def test_pass_erosion_runs_exactly_n_iterations(self, monkeypatch):
+        """FIX-B14-10: pass_erosion must run exactly hydraulic_erosion_iterations
+        droplets — no hidden x25 multiplier.
+
+        Uses a 1024x1024 tile so tile_scale==1.0 and the profile value passes
+        through the scaling logic unchanged. Requesting 10 iterations must
+        result in exactly 10 calls, never 250 (the old x25 over-application).
+        """
+        from types import SimpleNamespace
+
+        import veilbreakers_terrain.handlers._terrain_world as world_mod
+        from veilbreakers_terrain.handlers.terrain_quality_profiles import (
+            TerrainQualityProfile,
+            load_quality_profile,
+        )
+        from veilbreakers_terrain.handlers.terrain_semantics import (
+            ErosionStrategy,
+        )
+
+        REQUESTED_ITERATIONS = 10
+
+        # Build a 1024x1024 state so tile_scale == 1.0 and no downscaling occurs.
+        tile_size = 1024
+        stack = _make_minimal_stack(tile_size=tile_size)
+        intent = _make_intent(quality_profile="mobile")
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainPipelineState
+        state = TerrainPipelineState(intent=intent, mask_stack=stack)
+        state.mask_stack.set(
+            "hmap_low_freq",
+            np.ones((tile_size, tile_size), dtype=np.float32) * 50.0,
+            "test",
+        )
+
+        # Patch load_quality_profile to return a profile with exactly 10
+        # hydraulic_erosion_iterations so the test is self-contained and fast.
+        from veilbreakers_terrain.handlers import terrain_quality_profiles as qp_mod
+
+        _real_load = qp_mod.load_quality_profile
+
+        def fake_load_quality_profile(name: str):
+            profile = _real_load(name)
+            from dataclasses import replace as dc_replace
+            return dc_replace(profile, hydraulic_erosion_iterations=REQUESTED_ITERATIONS)
+
+        monkeypatch.setattr(world_mod, "load_quality_profile", fake_load_quality_profile, raising=False)
+        # Also patch within the terrain_quality_profiles module in case it's
+        # imported directly inside pass_erosion via a local import.
+        import importlib
+        import veilbreakers_terrain.handlers.terrain_quality_profiles as _qp
+        monkeypatch.setattr(_qp, "load_quality_profile", fake_load_quality_profile)
+
+        hydraulic_call_iterations: list[int] = []
+
+        def fake_analytical(height, cfg, seed, cell_size):
+            return SimpleNamespace(
+                height_delta=np.zeros_like(height, dtype=np.float32),
+                ridge_map=np.zeros_like(height, dtype=np.float32),
+            )
+
+        def fake_hydraulic(height, iterations, seed, hero_exclusion, erodibility_map):
+            hydraulic_call_iterations.append(int(iterations))
+            zeros = np.zeros_like(height, dtype=np.float32)
+            return SimpleNamespace(
+                height=np.asarray(height, dtype=np.float32),
+                erosion_amount=zeros,
+                deposition_amount=zeros,
+                wetness=zeros,
+                drainage=zeros,
+                bank_instability=zeros,
+                sediment_accumulation_at_base=zeros,
+                pool_deepening_delta=zeros,
+            )
+
+        def fake_thermal(height, iterations, talus_angle, cell_size):
+            return SimpleNamespace(
+                height=np.asarray(height, dtype=np.float32),
+                talus=np.zeros_like(height, dtype=np.float32),
+            )
+
+        monkeypatch.setattr(world_mod, "apply_analytical_erosion", fake_analytical)
+        monkeypatch.setattr(world_mod, "apply_hydraulic_erosion_masks", fake_hydraulic)
+        monkeypatch.setattr(world_mod, "apply_thermal_erosion_masks", fake_thermal)
+        monkeypatch.setattr(
+            world_mod,
+            "compute_stream_power_erosion",
+            lambda height, **_kwargs: np.asarray(height, dtype=np.float32),
+        )
+
+        result = world_mod.pass_erosion(state, None)
+
+        assert result.status == "ok", f"pass_erosion failed: {result}"
+        assert len(hydraulic_call_iterations) == 1, (
+            "apply_hydraulic_erosion_masks should be called exactly once per pass_erosion invocation"
+        )
+        actual = hydraulic_call_iterations[0]
+        assert actual == REQUESTED_ITERATIONS, (
+            f"FIX-B14-10: expected exactly {REQUESTED_ITERATIONS} hydraulic iterations, "
+            f"got {actual}. If this is 250 the x25 multiplier was re-introduced."
+        )
+
     def test_constants_declared(self):
         from veilbreakers_terrain.handlers._terrain_world import (
             LOW_FREQ_OCTAVES,
