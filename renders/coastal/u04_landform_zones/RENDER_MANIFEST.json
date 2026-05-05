@@ -1,0 +1,34 @@
+{
+  "unit_id": "u04_landform_zones",
+  "out_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u04_landform_zones",
+  "engine": "BLENDER_EEVEE_NEXT",
+  "resolution": [
+    1600,
+    900
+  ],
+  "samples": 32,
+  "ok": false,
+  "renders": [
+    {
+      "camera": "VB_CORRECT_COASTAL_FULL_NODE_CAMERA",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u04_landform_zones\\vb_correct_coastal_full_node_camera.png",
+      "byte_size": 498694,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_SHORE_CAMERA",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u04_landform_zones\\vb_correct_coastal_shore_camera.png",
+      "byte_size": 29901,
+      "nonblack_ratio": 1.0,
+      "ok": false
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_PLAYER_CAMERA",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u04_landform_zones\\vb_correct_coastal_player_camera.png",
+      "byte_size": 121995,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    }
+  ]
+}
