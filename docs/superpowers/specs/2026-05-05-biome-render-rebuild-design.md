@@ -759,35 +759,64 @@ Unity export contract (free ultrathink stack):
 
 ### 7.2 — Pilot Acceptance Gate (Q11: C, A- minimum / A target)
 
+Acceptance criteria are grouped by category. **All criteria in all categories must pass for the gate to promote that biome to template phase.** "Seam pop" defined: any visible height discontinuity, color discontinuity, foliage instance break, or flow-direction reversal at a chunk edge that exceeds the edge-weld tolerance (1e-3m for heights, 0.05m for water_surface_z, ±2% for feature thread positions per Section 6.3).
+
 **Mountain pilot pass criteria:**
-- ✓ Peak relief ≥1000m visible in iso renders of peak chunks
+
+*Geometric (heightmap correctness):*
+- ✓ Peak relief ≥ 1000m measured as `max(z) − min(z)` within the bounds of the highest chunk OR across any 3-chunk-radius window centered on a hero peak (whichever is larger)
 - ✓ Banded cliff strata visible on ≥4 chunks (stratification working)
-- ✓ River network traverses ≥3 chunks without seam pop
-- ✓ Trees vertical-trunk on all slopes (no diagonal foliage)
-- ✓ 0 props inside tree footprints
-- ✓ 95%+ nonblack frames per camera
-- ✓ Reference-photo plausibility check against Carpathian + Scottish Highlands sample set
-- ✓ Visibly out-classes current mountain renders side-by-side
-- ✓ Honest grade ≥ A- against 42-item HDRP contract
+- ✓ River network traverses ≥3 chunks without seam pop (per definition above)
+
+*Visual quality (foliage + materials):*
+- ✓ Trees vertical-trunk on all slopes — manual inspection on ≥10 sample chunks, zero diagonal foliage instances
+- ✓ 0 props inside tree footprints — `tree_footprint_mask` exclusion verification across all 64 chunks
+- ✓ Visibly out-classes current mountain renders in side-by-side QA review
+- ✓ Reference-photo plausibility check against **Carpathian foothills** sample set (Tatry / Bieszczady, matching Section 3.1 lock)
 - ✓ Player-experience cameras (3rd-person, 1st-person, crouched) read correctly
-- ✓ Character proxy at human scale validates terrain feature scale
-- ✓ <60 min full biome bake on RTX 4060 Ti
+- ✓ Character proxy at human scale validates terrain feature scale (1.78m silhouette feels small against mountain peaks)
+
+*Technical performance:*
+- ✓ 95%+ nonblack frames per camera
+- ✓ <60 min full biome bake on RTX 4060 Ti (Taichi heightmap + foliage scatter + chunk slicing combined)
 - ✓ Each chunk opens in Blender in <10s
-- ✓ Unity Editor loads chunks, edge-weld assertions pass
+
+*Contract compliance:*
+- ✓ Honest grade ≥ A- against 42-item HDRP contract (Appendix A)
+- ✓ Unity Editor loads chunks, all edge-weld assertions pass (no failures in fail-fast logging)
+- ✓ Quixel Megascans ground materials integrated and tuned for mountain biome
+- ✓ ≥3 lighting iteration loops completed with documented changes per loop
+- ✓ ≥30 hand-authored decal variants placed procedurally
 
 **Grassland pilot pass criteria:**
-- ✓ 4 visible grass classes (sparse/cropped/meadow/lush) within a single chunk
-- ✓ Density variation visible across ≥6 chunks
-- ✓ L-Py blade variants render as botanical, not as straight triangles
-- ✓ Tussock-vs-sward distinction visible (raised mounds with bare gaps + smooth mat)
-- ✓ River traverses ≥4 chunks; pond appears in ≥1 chunk
-- ✓ Trees vertical-trunk; 0 props inside trees
-- ✓ 95%+ nonblack frames
-- ✓ Visibly out-classes current grassland renders
-- ✓ Reference-photo plausibility against European pasture sample set
-- ✓ Same A- minimum + Quixel + iteration + decal + perspective + scale criteria as mountain
 
-Plus 2-4 reference-comparison iterations per biome before promotion to template phase.
+*Geometric (heightmap correctness):*
+- ✓ Rolling-terrain character: max slope <30° on >85% of chunk surface area; no peak >120m above local baseline
+- ✓ River traverses ≥4 chunks without seam pop; pond appears in ≥1 chunk
+
+*Visual quality (foliage + materials):*
+- ✓ 4 visible grass classes (sparse/cropped/meadow/lush) within a single chunk where the field demands it
+- ✓ Density variation visible across ≥6 chunks
+- ✓ L-Py blade variants render as botanical (multi-segment, naturally curved), not as straight triangles
+- ✓ Tussock-vs-sward distinction visible: raised mounds with bare gaps (Big Bluestem, Switchgrass) coexisting with smooth interlocked mat (Buffalo Grass, Bluegrass)
+- ✓ Trees vertical-trunk on all slopes; 0 props inside tree footprints
+- ✓ Visibly out-classes current grassland renders
+- ✓ Reference-photo plausibility check against **Yorkshire Dales / Welsh borderlands** sample set (matching Section 3.1 lock)
+- ✓ Player-experience cameras read correctly; character proxy at scale
+
+*Technical performance:*
+- ✓ 95%+ nonblack frames per camera
+- ✓ <45 min full biome bake on RTX 4060 Ti (faster than mountain due to less erosion compute)
+- ✓ Each chunk opens in Blender in <10s
+
+*Contract compliance:*
+- ✓ Honest grade ≥ A- against 42-item HDRP contract
+- ✓ Unity Editor loads chunks, all edge-weld assertions pass
+- ✓ Quixel Megascans ground materials integrated and tuned for grassland biome
+- ✓ ≥3 lighting iteration loops completed with documented changes per loop
+- ✓ ≥30 hand-authored decal variants placed procedurally
+
+Plus 2-4 reference-comparison iterations per biome before promotion to template phase. Each iteration is a documented change set; "iteration" is not informal tweaking.
 
 ### 7.3 — Estimated Timeline
 
@@ -827,16 +856,20 @@ Week 4     Unity export contract (free ultrathink stack)
            - meta.json + navmesh hints + probe placement + audio zones
            - Edge-weld assertions in Unity loader
            
-Week 5-6   Pilot bake + render + Quixel integration
-           - Mountain biome: full 64-chunk bake + render (overnight)
-           - Grassland biome: full 64-chunk bake + render (overnight)
-           - 8×8 composite grids generated
-           - Quixel Megascans materials tuned per biome
-           - ≥30 decals authored per biome
+Week 5     Pilot bake (sequential, 2 overnights)
+           - Mountain biome: full 64-chunk bake + render (overnight 1)
+           - Grassland biome: full 64-chunk bake + render (overnight 2)
+           - 8×8 composite grids generated for both biomes
            - Reference-photo comparison set assembled
-           - Lighting iteration loop 1
-           
-Week 7     Lighting iteration loops 2-3 + hero art pass
+           - Quixel Megascans materials initial integration
+
+Week 6     Lighting iteration loop 1 (per biome) + decal authoring
+           - Lighting iteration 1: mountain + grassland (loop ends with re-bake
+             of affected chunks if probe placement changes)
+           - ≥30 hand-authored decals per biome placed procedurally
+           - Quixel materials tuning iteration 1
+
+Week 7     Lighting iteration loops 2 + 3 + hero art pass
            - Per-biome reflection/light probe bake refinement
            - Hand-tuned hero camera shots
            - Atmospheric haze tuning
