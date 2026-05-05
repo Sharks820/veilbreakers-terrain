@@ -1,0 +1,68 @@
+{
+  "unit_id": "m1_mountain_workbench",
+  "out_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench",
+  "engine": "BLENDER_WORKBENCH",
+  "resolution": [
+    1600,
+    900
+  ],
+  "ok": true,
+  "renders": [
+    {
+      "camera": "VB_MOUNTAIN_FULL_NODE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench\\vb_mountain_full_node.png",
+      "byte_size": 2063130,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_MOUNTAIN_VALLEY",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench\\vb_mountain_valley.png",
+      "byte_size": 1685390,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_MOUNTAIN_RIDGE_CLOSE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench\\vb_mountain_ridge_close.png",
+      "byte_size": 1258965,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_MOUNTAIN_FOREST_OBLIQUE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench\\vb_mountain_forest_oblique.png",
+      "byte_size": 1720356,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_MOUNTAIN_TOPDOWN_ORTHO",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench\\vb_mountain_topdown_ortho.png",
+      "byte_size": 2150857,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_MOUNTAIN_SNOWCAP_CLOSE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench\\vb_mountain_snowcap_close.png",
+      "byte_size": 1475033,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_MOUNTAIN_ALONGSHORE_PAN",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench\\vb_mountain_alongshore_pan.png",
+      "byte_size": 1631163,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_MOUNTAIN_DRONE_HIGH",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest_workbench\\vb_mountain_drone_high.png",
+      "byte_size": 2507013,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    }
+  ]
+}
