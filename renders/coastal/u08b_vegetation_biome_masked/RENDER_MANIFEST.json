@@ -1,0 +1,69 @@
+{
+  "unit_id": "u08b_vegetation_biome_masked",
+  "out_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked",
+  "engine": "BLENDER_EEVEE_NEXT",
+  "resolution": [
+    1600,
+    900
+  ],
+  "samples": 32,
+  "ok": true,
+  "renders": [
+    {
+      "camera": "VB_CORRECT_COASTAL_FULL_NODE_CAMERA",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked\\vb_correct_coastal_full_node_camera.png",
+      "byte_size": 1540421,
+      "nonblack_ratio": 0.43654305555555556,
+      "ok": true
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_PLAYER_CAMERA",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked\\vb_correct_coastal_player_camera.png",
+      "byte_size": 1178420,
+      "nonblack_ratio": 0.28743680555555556,
+      "ok": true
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_SHORE_CAMERA",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked\\vb_correct_coastal_shore_camera.png",
+      "byte_size": 813322,
+      "nonblack_ratio": 0.06369861111111111,
+      "ok": true
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_SHORE_OBLIQUE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked\\vb_correct_coastal_shore_oblique.png",
+      "byte_size": 987458,
+      "nonblack_ratio": 0.17476875,
+      "ok": true
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_TOPDOWN_ORTHO",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked\\vb_correct_coastal_topdown_ortho.png",
+      "byte_size": 1533503,
+      "nonblack_ratio": 0.4003,
+      "ok": true
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_BLUFF_CLOSE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked\\vb_correct_coastal_bluff_close.png",
+      "byte_size": 1217262,
+      "nonblack_ratio": 0.3001965277777778,
+      "ok": true
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_ALONGSHORE_PAN",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked\\vb_correct_coastal_alongshore_pan.png",
+      "byte_size": 739481,
+      "nonblack_ratio": 0.03686875,
+      "ok": true
+    },
+    {
+      "camera": "VB_CORRECT_COASTAL_DRONE_HIGH",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\u08b_vegetation_biome_masked\\vb_correct_coastal_drone_high.png",
+      "byte_size": 941492,
+      "nonblack_ratio": 0.15459861111111112,
+      "ok": true
+    }
+  ]
+}
