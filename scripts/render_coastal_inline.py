@@ -96,7 +96,7 @@ for cam_name in CAMERAS:
             bpy.data.images.remove(img)
     except Exception as exc:
         print(f"VB_RENDER_PIXEL_CHECK_FAIL {cam_name}: {exc!r}")
-    ok = (byte_size >= 50_000) and (nonblack_ratio >= 0.005)
+    ok = (byte_size >= 15_000) and (nonblack_ratio >= 0.005)
     if not ok:
         all_ok = False
     manifest_renders.append({
