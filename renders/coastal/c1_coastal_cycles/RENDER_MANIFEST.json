@@ -1,5 +1,5 @@
 {
-  "unit_id": "c1_coastal_cycles",
+  "unit_id": "coastal_final",
   "out_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles",
   "engine": "CYCLES",
   "resolution": [
@@ -7,63 +7,79 @@
     900
   ],
   "samples": 32,
-  "ok": true,
+  "ok": false,
   "renders": [
     {
       "camera": "VB_CORRECT_COASTAL_FULL_NODE_CAMERA",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles\\vb_coastal_full_node_camera.png",
-      "byte_size": 1864661,
-      "nonblack_ratio": 0.8096659722222223,
-      "ok": true
+      "byte_size": 1894405,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9999993055555556,
+      "mean_pixel": 190.66771626725108,
+      "ok": false
     },
     {
       "camera": "VB_CORRECT_COASTAL_PLAYER_CAMERA",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles\\vb_coastal_player_camera.png",
-      "byte_size": 1751354,
-      "nonblack_ratio": 0.9998423611111111,
-      "ok": true
+      "byte_size": 1367893,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9602104166666666,
+      "mean_pixel": 211.61576845607806,
+      "ok": false
     },
     {
       "camera": "VB_CORRECT_COASTAL_SHORE_CAMERA",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles\\vb_coastal_shore_camera.png",
-      "byte_size": 1400276,
-      "nonblack_ratio": 0.7156416666666666,
-      "ok": true
+      "byte_size": 1722703,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.949325,
+      "mean_pixel": 126.71671380178675,
+      "ok": false
     },
     {
       "camera": "VB_CORRECT_COASTAL_SHORE_OBLIQUE",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles\\vb_coastal_shore_oblique.png",
-      "byte_size": 1539260,
-      "nonblack_ratio": 0.9714215277777778,
-      "ok": true
+      "byte_size": 1710773,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9938465277777778,
+      "mean_pixel": 190.6956320151317,
+      "ok": false
     },
     {
       "camera": "VB_CORRECT_COASTAL_TOPDOWN_ORTHO",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles\\vb_coastal_topdown_ortho.png",
-      "byte_size": 1899639,
+      "byte_size": 2203466,
       "nonblack_ratio": 1.0,
-      "ok": true
+      "bright_ratio": 1.0,
+      "mean_pixel": 160.66201072170017,
+      "ok": false
     },
     {
       "camera": "VB_CORRECT_COASTAL_BLUFF_CLOSE",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles\\vb_coastal_bluff_close.png",
-      "byte_size": 1737300,
-      "nonblack_ratio": 0.9999138888888889,
-      "ok": true
+      "byte_size": 1571520,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9189555555555555,
+      "mean_pixel": 185.6077552771475,
+      "ok": false
     },
     {
       "camera": "VB_CORRECT_COASTAL_ALONGSHORE_PAN",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles\\vb_coastal_alongshore_pan.png",
-      "byte_size": 1433666,
-      "nonblack_ratio": 0.9707180555555556,
-      "ok": true
+      "byte_size": 1619453,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9924361111111111,
+      "mean_pixel": 199.32668418278018,
+      "ok": false
     },
     {
       "camera": "VB_CORRECT_COASTAL_DRONE_HIGH",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\c1_coastal_cycles\\vb_coastal_drone_high.png",
-      "byte_size": 1339105,
-      "nonblack_ratio": 0.9974222222222222,
-      "ok": true
+      "byte_size": 1623689,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9999729166666667,
+      "mean_pixel": 189.65644842147717,
+      "ok": false
     }
   ]
 }

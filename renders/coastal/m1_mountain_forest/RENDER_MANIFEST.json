@@ -1,5 +1,5 @@
 {
-  "unit_id": "m1_mountain_forest",
+  "unit_id": "mountain_final",
   "out_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest",
   "engine": "CYCLES",
   "resolution": [
@@ -7,63 +7,79 @@
     900
   ],
   "samples": 32,
-  "ok": true,
+  "ok": false,
   "renders": [
     {
       "camera": "VB_MOUNTAIN_FULL_NODE",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest\\vb_mountain_full_node.png",
-      "byte_size": 1000876,
-      "nonblack_ratio": 0.1601548611111111,
-      "ok": true
+      "byte_size": 1889043,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 1.0,
+      "mean_pixel": 212.4092835368882,
+      "ok": false
     },
     {
       "camera": "VB_MOUNTAIN_VALLEY",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest\\vb_mountain_valley.png",
-      "byte_size": 1162634,
-      "nonblack_ratio": 0.5593340277777777,
-      "ok": true
+      "byte_size": 1737655,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9957479166666666,
+      "mean_pixel": 205.223145252538,
+      "ok": false
     },
     {
       "camera": "VB_MOUNTAIN_RIDGE_CLOSE",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest\\vb_mountain_ridge_close.png",
-      "byte_size": 1145381,
-      "nonblack_ratio": 0.9994847222222222,
-      "ok": true
+      "byte_size": 1014094,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 1.0,
+      "mean_pixel": 244.97943247098783,
+      "ok": false
     },
     {
       "camera": "VB_MOUNTAIN_FOREST_OBLIQUE",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest\\vb_mountain_forest_oblique.png",
-      "byte_size": 1179098,
-      "nonblack_ratio": 0.4442291666666667,
-      "ok": true
+      "byte_size": 1704803,
+      "nonblack_ratio": 0.9999972222222222,
+      "bright_ratio": 0.9934569444444444,
+      "mean_pixel": 204.40970388473173,
+      "ok": false
     },
     {
       "camera": "VB_MOUNTAIN_TOPDOWN_ORTHO",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest\\vb_mountain_topdown_ortho.png",
-      "byte_size": 1133042,
-      "nonblack_ratio": 0.22942083333333332,
-      "ok": true
+      "byte_size": 2156752,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9999840277777777,
+      "mean_pixel": 178.60300304913991,
+      "ok": false
     },
     {
       "camera": "VB_MOUNTAIN_SNOWCAP_CLOSE",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest\\vb_mountain_snowcap_close.png",
-      "byte_size": 1201958,
-      "nonblack_ratio": 0.8271430555555556,
-      "ok": true
+      "byte_size": 1419090,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9994263888888889,
+      "mean_pixel": 224.93780935358765,
+      "ok": false
     },
     {
       "camera": "VB_MOUNTAIN_ALONGSHORE_PAN",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest\\vb_mountain_alongshore_pan.png",
-      "byte_size": 1180309,
-      "nonblack_ratio": 0.81186875,
-      "ok": true
+      "byte_size": 1641471,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9996833333333334,
+      "mean_pixel": 211.6634439877317,
+      "ok": false
     },
     {
       "camera": "VB_MOUNTAIN_DRONE_HIGH",
       "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\m1_mountain_forest\\vb_mountain_drone_high.png",
-      "byte_size": 1162868,
-      "nonblack_ratio": 0.10266041666666667,
-      "ok": true
+      "byte_size": 2239643,
+      "nonblack_ratio": 1.0,
+      "bright_ratio": 0.9999534722222222,
+      "mean_pixel": 187.89700972238137,
+      "ok": false
     }
   ]
 }
