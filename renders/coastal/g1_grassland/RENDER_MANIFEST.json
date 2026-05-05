@@ -1,0 +1,69 @@
+{
+  "unit_id": "g1_grassland",
+  "out_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland",
+  "engine": "CYCLES",
+  "resolution": [
+    1600,
+    900
+  ],
+  "samples": 32,
+  "ok": true,
+  "renders": [
+    {
+      "camera": "VB_GRASSLAND_FULL_NODE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland\\vb_grassland_full_node.png",
+      "byte_size": 24027,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_GRASSLAND_VALLEY",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland\\vb_grassland_valley.png",
+      "byte_size": 44745,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_GRASSLAND_HILLTOP_CLOSE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland\\vb_grassland_hilltop_close.png",
+      "byte_size": 55166,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_GRASSLAND_RIVER_OBLIQUE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland\\vb_grassland_river_oblique.png",
+      "byte_size": 23745,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_GRASSLAND_TOPDOWN_ORTHO",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland\\vb_grassland_topdown_ortho.png",
+      "byte_size": 22065,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_GRASSLAND_GRASS_CLOSE",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland\\vb_grassland_grass_close.png",
+      "byte_size": 39224,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_GRASSLAND_PAN_LONG",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland\\vb_grassland_pan_long.png",
+      "byte_size": 28172,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    },
+    {
+      "camera": "VB_GRASSLAND_DRONE_HIGH",
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\renders\\coastal\\g1_grassland\\vb_grassland_drone_high.png",
+      "byte_size": 23326,
+      "nonblack_ratio": 1.0,
+      "ok": true
+    }
+  ]
+}
