@@ -24,17 +24,20 @@ EXPECTED_UV_CHANNELS = 2
 
 
 def _clear_scene() -> None:
+    """Remove every object from the active Blender scene."""
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete()
 
 
 def _height_at(row: int, col: int) -> float:
+    """Return the synthetic heightmap value at ``(row, col)``."""
     x = col / float(GRID_SIZE - 1)
     y = row / float(GRID_SIZE - 1)
     return 1.25 * math.sin(x * math.pi) * math.cos(y * math.pi * 0.5)
 
 
 def _build_chunk_mesh() -> tuple[bpy.types.Object, int, int]:
+    """Build a synthetic chunk mesh; return ``(obj, vertex_count, uv_channels)``."""
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int]] = []
 
@@ -102,6 +105,7 @@ def _build_chunk_mesh() -> tuple[bpy.types.Object, int, int]:
 
 
 def _export_glb(path: Path) -> None:
+    """Export the active selection to ``path`` as a GLB with UVs and tangents."""
     bpy.ops.export_scene.gltf(
         filepath=str(path),
         export_format="GLB",
@@ -119,6 +123,7 @@ def _export_glb(path: Path) -> None:
 
 
 def _import_glb(path: Path) -> bpy.types.Object:
+    """Re-import the GLB at ``path`` and return the single mesh object loaded."""
     _clear_scene()
     bpy.ops.import_scene.gltf(
         filepath=str(path),
@@ -134,6 +139,7 @@ def _import_glb(path: Path) -> bpy.types.Object:
 
 
 def main() -> int:
+    """Run the build/export/import sanity round-trip and assert vertex/UV parity."""
     if "--" in sys.argv:
         args = sys.argv[sys.argv.index("--") + 1 :]
     else:
@@ -146,6 +152,7 @@ def main() -> int:
 
     _clear_scene()
     _obj, expected_vertices, expected_uv_channels = _build_chunk_mesh()
+    glb_path.parent.mkdir(parents=True, exist_ok=True)
     _export_glb(glb_path)
     imported = _import_glb(glb_path)
 

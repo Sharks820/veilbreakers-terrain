@@ -238,7 +238,7 @@ These fixes block as-written implementation. Multiple personas independently cor
 - **Edit**: Expand PR #14 acceptance to:
   - `(a) DELETE both rng-version (terrain_rng.py:45) AND old pipeline-version (terrain_pipeline.py:269)`
   - `(b) PROMOTE the new chunks/chunk_seed.py API (per §8.4) as the single source of truth — co-lands with PR #15.5 (B5-D1 promoted to Block 1)`
-  - `(c) audit all callers (1 production at _scatter_engine.py:22 + ~109 production sites per §9.1 RNG_SITES_47.txt + 80 test sites)`
+  - `(c) audit all callers (1 production at _scatter_engine.py:22 + 100 production sites per §9.1 RNG_SITES.txt + 79 test sites)`
   - `(d) for each, migrate to canonical signature: derive_pass_seed(biome_seed_or_chunk_seed, "namespace", tile_x=int, tile_y=int, region=(x0,y0,x1,y1) | None)`
   - `(e) confirm tile coords are int (not float); convert any float callers to int(tile_x) at call site`
   - `(f) confirm region callers use tuple, not str; convert any str-region callers to BBox tuple`
@@ -376,7 +376,7 @@ Themes:
 - GPU runner provisioning (per Fix 1.10 path choice)
 - Secrets management baseline (per Fix 1.12)
 - Fork-PR isolation (per Fix 1.12)
-- Generate `.staging/RNG_SITES_47.txt` ground-truth file (per RNG-sites scan agent)
+- Generate `.staging/RNG_SITES.txt` ground-truth file (per RNG-sites scan agent)
 - Visual success criteria for B5-U PRs (golden_scenario column per design-lens)
 - B5-U5 split into Editor/Player render-state PRs
 - §11.11.2 manual review reviewer/criteria expansion
@@ -738,21 +738,22 @@ Acceptance gates:
 
 ## §9 Deep codebase scans
 
-### §9.1 RNG sites enumeration (RNG_SITES_47.txt)
+### §9.1 RNG sites enumeration (RNG_SITES.txt)
 
-**Output**: `docs/superpowers/specs/.staging/RNG_SITES_47.txt`
+**Output**: `docs/superpowers/specs/.staging/RNG_SITES.txt`
 
 **MAJOR DISCOVERY: spec memory item is materially wrong.**
 
-§11.10 #2 says "real value: 47 handlers + 11 tests = 58 production sites + 1 hash() hazard". **Actual count is ~109 production handler sites + 80 tests = ~189.** The "47/58" figure looks like a stale Batch-9-era count never updated as `terrain_caves.py` grew to 22 sites and `terrain_features.py` to 14.
+§11.10 #2 says "real value: 47 handlers + 11 tests = 58 production sites + 1 hash() hazard". **Actual count is 100 production handler sites + 79 tests = 179** (per `RNG_SITES.txt` ground truth). The "47/58" figure looks like a stale Batch-9-era count never updated as `terrain_caves.py` grew to 22 sites and `terrain_features.py` to 14.
 
 **This invalidates PR #18's effort estimate (currently L)** — actual scope is 2× larger than documented. Effort must scale to XL or split across 2 PRs.
 
-**Counts (TSV-verified against grep on disk)**:
-- Production handler sites: **109 RNG-creation calls + 2 hash-hazards = 111 entries**
-  - `random.Random(...)`: 35 sites
-  - `np.random.default_rng(...)`: 76 sites (incl. 2 in `sim/`)
-- Test sites: **80** (kept as-is)
+**Counts (TSV-verified against grep on disk; canonical per `RNG_SITES.txt`)**:
+- Production handler sites: **100 RNG-creation calls + 2 hash-hazards = 102 entries**
+  - `random.Random(...)`: 35 sites in handlers/
+  - `np.random.default_rng(...)`: 63 sites in handlers/
+  - `sim/` modules (foam.py, pbd_cloth.py): 2 sites
+- Test sites: **79** (np.random.default_rng + random.Random across tests/)
 - Module-level `random.seed(...)`: **0** (clean ✓)
 - `np.random.seed(...)` legacy: 1 in `tests/test_coverage_gaps.py:427` (test-only, low priority)
 - **Hash hazards: 2 (NOT 1 as spec claims)**:
@@ -910,7 +911,7 @@ Three Opus verifiers dispatched in parallel after Round-0 synthesis (V1=validity
 - §0 finding #6: `UNITY_SCALE_FACTOR = 0.85` at line 31, NOT 44
 - §8.4: subprocess gate at `terrain_determinism_ci.py:265` (not 307); NO `DeprecationWarning` exists in file
 - §8.4: test path needs `veilbreakers_terrain/` prefix
-- §9.1: RNG count is **100 production + 79 tests = 179** per RNG_SITES_47.txt ground-truth (guide overstates 109+80=189)
+- §9.1: RNG count is **100 production + 79 tests = 179** per RNG_SITES.txt ground-truth (guide overstates 109+80=189)
 - §9.1 hash hazards: actual at `terrain_cliffs.py:2368` (not 2397), `:1228, :1467` (not 1502), `:2620` (not 2650), `terrain_caves.py:3894` (not 3889)
 - §9.2: `terrain_water_variants.py:879` for `water_surface_mask` write; actual writes at **691, 864, 875, 907**
 
@@ -1227,8 +1228,8 @@ This was prose; now subsumed under Fix 1.0 as the single global cite-refresh pre
 
 #### Fix 4.2 — 4096m → 512m subchunk introduction (P1)
 - **Source**: §8.5 4-8× too large for streaming
-- **Edit**: Keep `chunk_x, chunk_y` as biome unit. Introduce `subchunk_x, subchunk_y` (16×16 per 4096m biome) as Addressable streaming unit. `edges.json` operates at subchunk grid (257-vertex edge arrays per 512m subchunk). LOD0 = 513×513 = 263,169 verts (within Unity's 2³² index buffer per submesh).
-- **Verify**: Single chunk bake produces 256 subchunks; each importable as separate Addressable.
+- **Edit**: Keep `chunk_x, chunk_y` as biome unit. Introduce `subchunk_x, subchunk_y` (8×8 per 4096m biome) as Addressable streaming unit. `edges.json` operates at subchunk grid (257-vertex edge arrays per 512m subchunk). LOD0 = 513×513 = 263,169 verts (within Unity's 2³² index buffer per submesh).
+- **Verify**: Single chunk bake produces 64 subchunks; each importable as separate Addressable.
 
 #### Fix 4.3 — corruption_map orphan write
 - **Source**: CHANNEL_GRAPH P0 #1
@@ -1266,7 +1267,7 @@ This was prose; now subsumed under Fix 1.0 as the single global cite-refresh pre
 - **Verify**: Spec §3.4 channels = code-exposed channels.
 
 #### Fix 4.10 — 3 dead-RNG sites cleanup
-- **Source**: §9.1 RNG_SITES_47.txt
+- **Source**: §9.1 RNG_SITES.txt
 - **Edit**: Delete `_ = rng` / `_ = np.random.default_rng(...)` at `terrain_features.py:2168`, `terrain_waterfalls.py:2280`, `terrain_materials_v2.py:1046-1047`.
 - **Verify**: `Grep "_ = .*random"` returns 0.
 
@@ -1429,7 +1430,7 @@ Every Phase 0/1/4 fix that introduces a cite has been re-checked against `CODEX1
 | Fix 1.19 | PR #62 `terrain_pipeline.py:1386-1392` | ❌ | Same as Fix 0.6: `pass_water_depth` at `:1275-1330` with skip at `:1303-1312`. Fix 1.19 + Fix 0.6 are the SAME issue — MERGED in §16.5. |
 | Fix 1.20 | `vegetation_system.py:685` (lod_meshes) | ❌ (line 685 is `_competition_blocked` body) | `lod_meshes` in `vegetation_system.py` at **`:1561, :1600`** (NOT `:685`, NOT `:1284`). In `procedural_grass.py` at **`:685`** (single site). Re-cite three PRs (#43/#56/B5-A4) to these sites. |
 | Fix 4.5 | `environment.py:6265-6266` | ❌ | `_build_road_mask_and_sdf` at **`:4630-4689`**. Lines `:6265-6266` are unrelated mesh-update code. PR #23 scope must address `:4630-4689`. |
-| Fix 4.10 | dead-RNG sites | partially valid | `terrain_features.py:2168` (`_ = rng`); `terrain_waterfalls.py:2280` (`_ = np.random.default_rng(...)`); `terrain_materials_v2.py:1046-1047` (`_ = _pass_rng`). Verified by RNG_SITES_47.txt categorization. |
+| Fix 4.10 | dead-RNG sites | partially valid | `terrain_features.py:2168` (`_ = rng`); `terrain_waterfalls.py:2280` (`_ = np.random.default_rng(...)`); `terrain_materials_v2.py:1046-1047` (`_ = _pass_rng`). Verified by RNG_SITES.txt categorization. |
 | Fix 4.12 | hash hazards in `terrain_cliffs.py` (2 + 2 enumeration) | partial | hash hazard at **`:2368`** (NOT `:2397`); enumeration `cliff_idx * 37` at **`:2620`** (NOT `:2650`); enumeration `cave_i ^ 0xDEADBEEF` at **`terrain_caves.py:3894`** (NOT `:3889`). The claimed `:1502` sum-of-ord hazard does NOT exist on `main` — DROP that case. PR #15 scope: 3 sites total (1 hash + 2 enumeration). |
 | Fix 4.15-4.21 | various (Unity-side) | ⚠️NF (no main cite to anchor) | Non-surgical PRs (NET-NEW Unity-side code). No cite refresh needed; mark as feat-not-fix. |
 
@@ -1547,7 +1548,7 @@ Codex 2's smoketest catalogued **35 Unity-side bugs (U-001 through U-035)** agai
 
 #### CONTRADICTION 3: RNG count (109/189 vs 100/179)
 - **§9.1 prose said**: 109 production + 80 tests = 189.
-- **§9.1 ground-truth TSV `RNG_SITES_47.txt` said**: 100 production + 79 tests = 179.
+- **§9.1 ground-truth TSV `RNG_SITES.txt` said**: 100 production + 79 tests = 179.
 - **V1 said**: 100/179 per ground-truth.
 - **Round-3 winner**: 100 production + 79 tests = 179 (ground-truth TSV is canonical).
 - **Action**: Update Fix 4.11 from "109 handlers + 80 tests = 189" → "100 handlers + 79 tests = 179". Update Fix 1.4(d) from "~109 production sites + 80 tests" → "100 production + 79 tests = 179". Update §11.10 memory item #2.

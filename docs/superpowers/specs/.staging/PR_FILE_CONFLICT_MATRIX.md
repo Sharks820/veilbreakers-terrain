@@ -451,7 +451,7 @@ Every single PR row in §11 v3 has the wrong path prefix. This is a global doc-r
 - **#B5-U4** — bake-side normal G-flip option in `_pack_tangent_space_normal_rgba` (line 288 on main)
 
 **Corrected dep chain for B5-C2**:
-```
+```text
 #5b → #12 → #13 → #20 → #48 → B5-U4
 (canonical) (atomic) (NaN/Inf) (compat shim) (consolidate) (normal flip option)
 ```
@@ -484,7 +484,7 @@ For every PR in §11 v3, this table lists the files it touches per the spec. (Ed
 | 15 | 1 | E: `terrain_cliffs.py` |
 | 16 | 2 | E: `terrain_master_registrar.py`; E: `terrain_stratigraphy.py` |
 | 17 | 2 | E: `terrain_morphology.py` |
-| 18 | 2 | E: 47 handlers (full list in `RNG_SITES_47.txt`) + 11 tests |
+| 18 | 2 | E: 100 handlers (full list in `RNG_SITES.txt`) + 79 tests |
 | 19 | 2 | E: `_water_network.py`, `_terrain_erosion.py` |
 | 20 | 2 | E: `terrain_unity_export.py`; C: `_compat.py` |
 | 21 | 2 | E: 16+ pass declarations (`climate_zone`, `forest_mask`, `canopy_density`, `pass_road_network`, `quixel_ingest`, `waterfalls`, etc.) |
@@ -577,7 +577,7 @@ For every PR in §11 v3, this table lists the files it touches per the spec. (Ed
 
 1. **Add §11.0.3 path-prefix preface** stating all `handlers/`, `providers/`, `tests/`, `chunks/`, `unity_project/` shorthand expand to `veilbreakers_terrain/handlers/`, `veilbreakers_terrain/providers/`, `veilbreakers_terrain/tests/`, `veilbreakers_terrain/chunks/`, `unity_plugin/` respectively.
 2. **Re-anchor 22 surgical-PR line cites against `main` HEAD** (not against the in-flight branch). Spec was drafted on a worktree containing speculative refactors that haven't landed; line numbers drift by 5-1600 lines for many PRs.
-3. **Resolve 6 P0 cite errors** (table 7) before any implementer can act:
+3. **Resolve 8 P0 cite errors** (table 7) before any implementer can act:
    - PR #14 (`terrain_rng.py:45` doesn't exist on main)
    - PR #16 (`terrain_master_registrar.py` lacks `register_stratigraphy_pass`/`wind_erosion`)
    - PR #23 (`environment.py:6265-6266` road_mask cite untraceable)

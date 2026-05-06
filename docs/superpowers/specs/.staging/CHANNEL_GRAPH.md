@@ -227,7 +227,7 @@ There are too many to enumerate exhaustively — spec is intentionally narrow on
 
 | Channel | Reader file:line | Note |
 |---------|-------------------|------|
-| `water_surface_elevation` (no `_m`) | coastline.py:1242 references this stub local; renamed to canonical in same file. Not actually orphan in stack — it's a local variable name. **Skip.** |
+| `water_surface_elevation` (no `_m`) | coastline.py:1242 | References this stub local; renamed to canonical in same file. Not actually orphan in stack — it's a local variable name. **Skip.** |
 | `forest_mask` | environment.py / environment_scatter.py reads (5 sites) | ❌ No `stack.set("forest_mask",…)` in production. Possibly populated only via attribute path or only inside specific test fixtures. |
 | `cliff_label` / `water_label` / `rock_label` / `gravel_label` | terrain_materials_v2.py:811-814; procedural_grass.py:337 | ⚠️ Validator stamps zeros; no generator stamps real values. **Effectively broken.** Issue #27. |
 | `water_depth` | (3 reads in `_water_network_ext`) | ⚠️ Spec §3.4 name; only `water_depth_m` is written. Vocabulary mismatch. |

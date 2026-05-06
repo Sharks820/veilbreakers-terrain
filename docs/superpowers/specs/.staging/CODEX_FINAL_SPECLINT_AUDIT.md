@@ -13,7 +13,7 @@ Spec lint verdict: FAIL. The document is close enough to parse, but not structur
 | Task | Verdict | Issues |
 |---|---|---|
 | 1. Block-numbering integrity | FAIL | Unexpected `§11.1.0` at line 1713; it appears before parent `§11.1` at line 1723. Expected sections `§11.0` through `§11.12` otherwise exist in requested order. |
-| 2. Markdown table syntax | FAIL | Block 2 table starting line 1756 has 7 columns, but line 1767 has 8 columns and line 1771 has 8 columns. Cause: unescaped inline command pipes (`| grep -n ...`) inside table cells. |
+| 2. Markdown table syntax | FAIL | Block 2 table starting line 1756 has 7 columns, but line 1767 has 8 columns and line 1771 has 8 columns. Cause: unescaped inline command pipes (`\| grep -n ...`) inside table cells. |
 | 3. Heading hierarchy | PASS | No heading-level jumps outside fenced code blocks. `#` inside the line 2525-2539 code fence was ignored correctly. |
 | 4. Internal cross-references | FAIL | Unresolved section refs: `§A.1` line 1620; `§B.8` line 2285; `§B.9` line 2286; `§B.10` lines 2287 and 2301. Unresolved PR row refs: `PR #5` line 1630, bare PR list `#5` line 2265, and `PR #5` line 2820. `PR #5a` and `PR #5b` rows exist; `PR #5` does not. |
 | 5. No duplicate PR numbers | FAIL | Duplicate PR row id `6` at lines 1737 and 1809; duplicate `7` at lines 1739 and 1810; duplicate `10` at lines 1742 and 1811. Struck moved rows still reserve the numbers. |

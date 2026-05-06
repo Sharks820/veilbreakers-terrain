@@ -66,6 +66,7 @@
 - `visual_testing_readiness.yml`: blender + libegl1, artifact-shape only
 
 **Required new lanes:**
+
 | PR | Lane | Tooling | Runtime | Cost |
 |----|------|---------|---------|------|
 | (Block 1) | bake-venv (ubuntu) | conda 3.10 + Taichi-CUDA + rasterio + Pillow≥10.4 + numpy 1.26 | 12-18min cold, 3-5min cached | HIGH (first GPU need) |
@@ -112,7 +113,7 @@
 13. `meta.json` keys missing in `VbTerrainTileMetadata`: `version_hash`, `character_spawn_safe_pos`, `addressable_deps`, `neighbor_prefetch_hints`, `memory_budget_mb`, `audio_zones`, `navmesh_hints`, `seed`, foliage `is_landmark`, water `basin_id/segment_id`
 14. Unknown-key warning only fires on descriptor — raw manifest sidecars (audio/decals/water JSON) blob-attached without schema validation
 
-**Memory correction**: `VbTerrainTileMetadata` is **25 fields**, NOT 3-field stub.
+**Memory correction**: `VbTerrainTileMetadata` is **28 fields**, NOT 3-field stub.
 
 ### B.5 End-to-end determinism — **CLOSE** (4 PRs to byte-identical)
 
@@ -295,7 +296,7 @@ Plus the 04-27 implementation guide pin needs **SUPERSEDED-BY** banner pointing 
 
 **New §11 structure (5 blocks instead of 4):**
 
-```
+```text
 §11.0    Preface — v3 vs v2 deltas, cumulative wave 1-5 verification table (276 reported, 263 verified open, 234 unique mapped to PRs)
 §11.0.1  Source-of-truth pin (this file at .staging/WAVE_1_5_RAW_FINDINGS.md)
 §11.0.2  C-1 contradiction resolution (biome_seed vs chunk_seed)

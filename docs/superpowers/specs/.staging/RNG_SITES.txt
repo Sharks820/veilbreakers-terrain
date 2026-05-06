@@ -1,4 +1,4 @@
-# RNG_SITES_47.txt — Authoritative ground-truth enumeration of every random.Random() and np.random.default_rng() call-site
+# RNG_SITES.txt — Authoritative ground-truth enumeration of every random.Random() and np.random.default_rng() call-site
 # Generated: 2026-05-06
 # Source: Grep across veilbreakers_terrain/handlers/, veilbreakers_terrain/sim/, veilbreakers_terrain/tests/
 #
