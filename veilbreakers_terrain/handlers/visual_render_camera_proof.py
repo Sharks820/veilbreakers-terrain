@@ -11,12 +11,15 @@ Repo command key: ``visual_render_camera_proof`` (registered via
 Plan reference:
     docs/plans/2026-05-04-001-feat-coastal-aaa-perfection-plan.md, U1.
 
-Failure modes (loud, never silent):
-    * ``CameraNotFoundError`` — a requested camera name does not exist.
+Failure modes:
+    * ``CameraNotFoundError`` — a requested camera name does not exist;
+      raised before any render runs (loud, fail-fast).
     * ``RenderProofFailedError`` — render produced a near-black PNG, an
       undersized file, or no file at all (the silent ``--background`` +
-      empty-filepath gotcha).
-    * ``OSError`` — output directory not writeable.
+      empty-filepath gotcha). Captured per-camera and surfaced via
+      ``manifest.ok=False`` and ``result['errors']`` so the rest of the
+      render batch can complete and the manifest is still written.
+    * ``OSError`` — output directory not writeable; raised before render.
 """
 
 from __future__ import annotations
@@ -98,29 +101,24 @@ class RenderProofManifest:
 def compute_nonblack_ratio(png_path: str | os.PathLike[str]) -> float:
     """Return fraction of pixels in ``png_path`` that are not pure black.
 
-    Uses Pillow. A pixel is "non-black" when its R, G, or B channel exceeds
-    8/255. This catches the all-zero buffer that Blender produces when
-    ``filepath`` is empty under ``--background``.
+    Uses Pillow + NumPy. A pixel is "non-black" when its luminance
+    channel exceeds ``8/255``. This catches the all-zero buffer that
+    Blender produces when ``filepath`` is empty under ``--background``.
+
+    The pixel array is captured into a NumPy array *before* the
+    ``with Image.open(...)`` block exits — per Pillow's docs, the
+    ``Image`` is no longer usable after the context manager exits, so
+    ``im.size`` must not be accessed afterwards.
     """
     from PIL import Image  # imported lazily so unit tests can mock
+    import numpy as np  # noqa: PLC0415
 
     with Image.open(png_path) as im:
-        rgb = im.convert("RGB")
-        # tobytes is fast and avoids per-pixel Python loops
-        data = rgb.tobytes()
-    if not data:
-        return 0.0
-    width, height = im.size  # type: ignore[union-attr]
-    total = width * height
-    if total <= 0:
-        return 0.0
-    nonblack = 0
+        arr = np.asarray(im.convert("L"))
     threshold = 8
-    # bytes are R,G,B,R,G,B,...
-    for i in range(0, len(data), 3):
-        if data[i] > threshold or data[i + 1] > threshold or data[i + 2] > threshold:
-            nonblack += 1
-    return nonblack / total
+    nonblack = int(np.count_nonzero(arr > threshold))
+    total = int(arr.size)
+    return nonblack / total if total else 0.0
 
 
 def assert_render_proof(
@@ -186,17 +184,21 @@ def render_camera_proof(
     """
     if not cameras:
         raise ValueError("cameras must be a non-empty list of camera names")
-    if isinstance(resolution, list):
-        resolution = (int(resolution[0]), int(resolution[1]))
     if len(resolution) != 2:
         raise ValueError(f"resolution must be (width, height); got {resolution!r}")
+    if isinstance(resolution, list):
+        resolution = (int(resolution[0]), int(resolution[1]))
 
     out_path = Path(out_dir).resolve()
     out_path.mkdir(parents=True, exist_ok=True)
-    # Pre-flight write check so we fail before render, not after.
+    # Pre-flight write check so we fail before render, not after. Use
+    # try/finally so a Windows AV / antivirus / OS interruption between
+    # write and unlink doesn't leave a stray ``.write_check`` artifact.
     test_marker = out_path / ".write_check"
-    test_marker.write_text("ok")
-    test_marker.unlink()
+    try:
+        test_marker.write_text("ok")
+    finally:
+        test_marker.unlink(missing_ok=True)
 
     import bpy  # type: ignore[import-not-found]  # noqa: PLC0415
 
@@ -260,13 +262,18 @@ def render_camera_proof(
         # Geometry-Nodes file paths break on backslashes.
         scene.render.filepath = png_path.as_posix()
         logger.info("rendering camera=%s -> %s", cam_name, png_path)
-        bpy.ops.render.render(write_still=True)
 
         proof = RenderProof(
             camera=cam_name, path=str(png_path),
             byte_size=0, nonblack_ratio=0.0, ok=False,
         )
         try:
+            # ``bpy.ops.render.render`` raises RuntimeError on poll failures
+            # (no camera, GPU init failure) and TypeError on edge cases. Keep
+            # it inside the try so the manifest is written even when render
+            # itself fails; the per-camera failure is recorded and the loop
+            # continues to subsequent cameras.
+            bpy.ops.render.render(write_still=True)
             byte_size, nonblack_ratio = assert_render_proof(
                 png_path,
                 nonblack_threshold=nonblack_threshold,
@@ -275,7 +282,7 @@ def render_camera_proof(
             proof.byte_size = byte_size
             proof.nonblack_ratio = nonblack_ratio
             proof.ok = True
-        except RenderProofFailedError as exc:
+        except (RenderProofFailedError, RuntimeError) as exc:
             proof.error = str(exc)
             proof.ok = False
             manifest.ok = False
@@ -284,7 +291,8 @@ def render_camera_proof(
 
     manifest_path = build_manifest_path(out_path)
     manifest_path.write_text(
-        json.dumps(manifest.to_dict(), indent=2, sort_keys=False)
+        json.dumps(manifest.to_dict(), indent=2, sort_keys=False) + "\n",
+        encoding="utf-8",
     )
 
     return {
