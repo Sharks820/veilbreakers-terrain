@@ -1606,7 +1606,128 @@ After the v1.0 spec was committed to PR #25, six adversarial review agents were 
 
 ---
 
-## 11. Pre-Pilot Cleanup Runway (consolidated PR sequence)
+## 11. Pre-Pilot Cleanup Runway v2 (post 11-Opus + verifier-wave consolidation)
+
+### 11.0 — Strategic Reordering vs v1.0
+
+v1.0's §11 listed 20 PRs in roughly chronological order. Wave 2 (11 Opus combers) + wave 3 verifier reshape priorities along three axes:
+
+1. **Performance moves up.** Performance audit found pipeline cannot hit <60 min/biome bake target without 5–10× speedup. Three single-PR hot spots (deepcopy mask_stack, `road_network` SDF, `bytes += scanline`) outweigh several v1.0 cosmetic items.
+2. **Orphan-passes is the highest-ROI single PR.** 7 passes (cliffs, caves, coastline, karst, wind_erosion, stratigraphy + 2 unwired water passes) are registered via bundles but absent from `build_default_pass_sequence`. Wiring them in unlocks **35 audited features at one stroke**.
+3. **DAG cycle now blocks pilot.** `_toposort_passes` does not consult `overrides=` and 6 channels (all on `height`) form dual-cycles. v1.0 had this as background; it is now Day-0.
+
+PR runway grows from 20 → **27 PRs**, runway 3-5 days → **5-7 days**, but ROI per PR is now ranked by audit impact rather than module proximity.
+
+### 11.0.1 — Verification Status (verifier-wave findings)
+
+24 of 25 high-impact findings spot-checked at file:line: **all 24 VERIFIED OPEN**, 1 FALSE_POS (gradient axis convention is correct as written in `_terrain_noise.py:1529`). No findings RESOLVED in code since reporting. The `7 ORPHAN PASSES` finding overlaps with the `dead code: 17 registered-but-inert passes` finding — same root cause, single fix in `terrain_pipeline.py:169-261`.
+
+### 11.1 — IMMEDIATE BLOCKERS (Day 0–1, before any pilot code)
+
+| # | Title | Files (file:line) | Risk | Why now / Depends |
+|---|---|---|---|---|
+| 1 | gitignore + LFS hygiene | `.gitignore` (add `output/chunks/`, `renders/pilot/`, `*.blend1`, `output/aaa_node_v3/`) | LOW | Dirty worktree on first pilot run otherwise |
+| 2 | pyproject.toml runtime deps | `pyproject.toml:8` add `taichi>=1.7,<2.0`, `rasterio>=1.4`, `PyYAML>=6.0`, bump `Pillow>=10.4` (CVE-2023-50447); add `[bake]` + `[providers]` extras; pin `pyright==1.1.408`; cap `numpy<2.0` on Blender lane | MED | Imports fail at first pilot run otherwise. Depends on #1 |
+| 3 | Topo-sort overrides=-aware | `handlers/terrain_pipeline.py:1449-1510` — when B's `overrides` contains channel `c` and A produces `c`, suppress edge `A→B` for `c` only. Add 6 dual-cycle regression tests | MED | Pipeline currently raises cycle error when full registry is loaded. PR #4 cannot land without this. No deps |
+| 4 | Wire 7 orphan passes into `build_default_pass_sequence` | `handlers/terrain_pipeline.py:169-261` insert: `cliffs` after `structural_masks`; `caves` after `pass_terrain_features`; `coastline` after `bathymetry`; `karst`, `wind_erosion`, `stratigraphy` after `pass_morphology`; ensure `pass_water_flow_speed` + `pass_river_convergence` follow `pass_hydrology` | HIGH | **Single highest-ROI PR — unblocks 35 audited features.** Depends on #3 |
+| 5 | W-1 atomic migration | `handlers/terrain_water_variants.py:781,878` (drop legacy `water_surface` write); 4 consumers (`terrain_unity_export.py:2266-2278`, `terrain_navmesh_export.py:201,329`, plus 2 others); `tests/test_callable_orphan_contracts.py:283,290`; 12 legacy water_surface test refs | HIGH | Dual-semantics bug = active production bug. Depends on #3 |
+| 6 | align_to_normal default False | `handlers/terrain_advanced.py:2652` change `True` → `False` | LOW | Removes diagonal-tree class of bugs. No deps |
+| 7 | chunk_world_size default 512m | `handlers/terrain_chunking.py:100` change `64.0` → `512.0` (audit 12 callers) | MED | Spec §1 mandates 512m chunks. No deps |
+| 8 | Wire `_lightweight_state_copy` (kill deepcopy) | `handlers/terrain_pipeline.py:940,956` replace `copy.deepcopy(self.state.mask_stack)` with channel-shallow + height-COW copy | HIGH | Saves 30s + 4GB per run; without this, perf target unreachable. No deps |
+| 9 | Vectorize `road_network` SDF | `handlers/road_network.py:1808-1817` replace triple loop with `scipy.ndimage.distance_transform_edt` rasterized at segment polyline | MED | ~1000× speedup; unblocks roads in pilot. No deps |
+| 10 | `bytes += scanlines` fix | `handlers/terrain_shadow_clipmap_bake.py:317-322` use `io.BytesIO()` + `write` | LOW | 64GB → 64MB churn. No deps |
+| 11 | `_safe_filename` for path-injection in providers | `providers/meshy_provider.py:216`, `providers/hunyuan3d2_provider.py:274`, `handlers/asset_generation.py:699,706` | MED | Security audit P0 — unsanitized `species_id` writes outside dest_dir. No deps |
+| 12 | Atomic shadow-dir write for Unity export bundle | `handlers/terrain_unity_export.py` (write to `*.tmp/` then `os.replace`) | MED | Avoids half-written bundle on crash. Depends on #5 |
+
+**Block 1: 12 PRs, ~1.5 days. After Block 1 the pipeline runs cleanly and sequence covers 35 previously-orphan features.**
+
+### 11.2 — PRE-WEEK-2 (foundation + determinism)
+
+| # | Title | Files | Risk |
+|---|---|---|---|
+| 13 | Wire `register_stratigraphy_pass` in master_registrar | `handlers/terrain_master_registrar.py` (insert in Bundle I after wind_erosion); add `register_stratigraphy_pass` in `terrain_stratigraphy.py` (currently zero `register_*` functions) | MED |
+| 14 | Apply morphology_delta to height | `handlers/terrain_morphology.py:459-465` after `stack.set("morphology_delta", ...)` add `stack.set("height", height + delta, "pass_morphology")`; declare `overrides=("height",)` | MED |
+| 15 | Determinism: 46 sites `random.Random(seed+offset)` → `derive_pass_seed` + fix PYTHONHASHSEED | grep `random.Random(.*seed.*[+^])` migrate; tighten `_FORBIDDEN_RNG_CALLS` to include `random.choices/choice/randint/shuffle`; replace `hash(cliff.cliff_id)` (`terrain_cliffs.py:2397`) with `derive_pass_seed("cliffs", cliff_id)`; set `PYTHONHASHSEED=0` in CI | HIGH |
+| 16 | Numba/Taichi-jit `priority_flood_d8` + `_erode` | `handlers/_water_network.py:580-664` (Numba-jit; pure-py fallback); `handlers/_terrain_erosion.py:308-487` (E-1, E-3 P0 — Taichi kernel; clamp particle re-injection at boundary); `--no-numba` switch for golden test | HIGH |
+| 17 | unity_export `_compat` shim | preserve `terrain_unity_export.py` import surface for 14 test imports; deprecate after pilot | LOW |
+| 18 | Pass DAG: declare missing `requires_channels` and `overrides=` | 16+ passes incl. `climate_zone`, `forest_mask`, `canopy_density`; `pass_road_network` overrides road_mask + height; quixel_ingest overrides `macro_color`, `roughness_variation`, `terrain_normals`, `terrain_displacement`, `terrain_ao` (currently only declares `splatmap_weights_layer`); waterfalls overrides particle_emitter_specs | MED |
+| 19 | Test infra: 4 importlib script-loader landmines + 12 legacy water_surface deletions + `@pytest.mark.slow` for big-allocation tests + `pytest-xdist` | MED |
+| 20 | DAG-escape road_mask write closure | `handlers/environment.py:6265-6266` — wrap in registered pass or remove (Blender-only legacy) | MED |
+
+**Block 2: 8 PRs, ~1 day. Foundation is clean; determinism stable.**
+
+### 11.3 — SCOPE / BOUNDARIES (parallel to pilot Week 1–2)
+
+| # | Title | Files | Notes |
+|---|---|---|---|
+| 21 | Relocate `procedural_meshes.py` (22,816 LOC) | move → `veilbreakers_assets` sibling; add 4-symbol shim layer in `veilbreakers_terrain/_compat/procedural_meshes.py` for active callers (`_mesh_bridge.py:26`, `_terrain_depth.py:51`, `environment.py:229`, `_bridge_mesh.py:15`) | scope contamination per memory pin |
+| 22 | Relocate animation modules (~3K LOC) | `animation_environment.py`, `animation_gaits.py`, `sim/foam.py`, `sim/cloth.py` → `veilbreakers_animation` sibling | NEW contamination beyond procedural_meshes |
+| 23 | Extract `terrain_core.py` (50 lines) | `PassDefinition`, `derive_pass_seed`, `TerrainPassController` Protocol → break 8 circular imports | foundation; blocks tests/ refactor |
+| 24 | Split `terrain_semantics.py` (82 importers) | `_types.py` (dataclasses) + `_semantics.py` (logic) | run after #23 |
+| 25 | Split `environment.py` (8651 LOC) at 5 seams | terrain / water / roads / export / validation | run after #22 |
+| 26 | Split `terrain_features.py` at 9 `generate_*` seams | one file per feature (canyons, waterfalls, cliffs, swamps, arches, geysers, sinkholes, floating rocks, ice/lava) | parallel to others |
+
+**Block 3: 6 PRs, ~2 days, parallelizable with pilot Week 1.**
+
+### 11.4 — ZERO-RISK DELETES (single PR, locked file list)
+
+| # | Title | Files | Reclaim |
+|---|---|---|---|
+| 27 | Locked-list deletes | `scripts/deprecated/*` (6 files); `terrain_scatter_altitude_safety.py`; `terrain_legacy_bug_fixes.py`; `asset_generation.py` (after replace 1 import); `vegetation_system.py` (already de-wired); 47 deprecated scripts from Sonnet wave-1; 5 MB stale audit docs (V2-V5_2026_04_19, deep_dive_2026_04_16/17, R11/R12, m3_verification, manual_review_batches CSVs); 935 MB `output/visual_nodes/*` (8 .blend); ~280 MB `output/aaa_node_v*/scene_v*`; 120 MB `*.blend1` from LFS | **5,746 LOC + ~1.3 GB** |
+
+**Block 4: 1 PR, ~2 hours. Zero-risk after #2 (deps in pyproject) and #5 (consumers off legacy water_surface).**
+
+### 11.5 — ARCHITECTURAL DECISIONS NEW FROM WAVE 2
+
+These require explicit design decisions before implementation, not just PRs:
+
+1. **Three-interpreter split**: Add `requires_blender: bool` to `PassDefinition`. CI venv runs pure-Python passes; bake-venv (conda) runs L-Py / Taichi / GPU; Blender bundled-Python runs scene-read passes. CI runs all three over IPC.
+2. **Taichi + Cycles GPU MUST be separate processes**: CUDA driver-context corruption otherwise. Cycles bake is its own subprocess with its own CUDA init.
+3. **L-Py has NO PyPI wheel — conda-only**: bake-venv must be conda-managed. Document install procedure in `docs/INSTALL_BAKE_VENV.md`.
+4. **Quixel materials: blend in linear space NOT sRGB**: P0-A4-5 from MASTER 04-27. `terrain_quixel_ingest.py:619` already calls `_srgb_to_linear` on albedo; verify roughness/normal paths also linearize.
+5. **HistogramPreservingBlend HLSL must implement Heitz/Neyret Eq.8/11**: P0-A4-2 — current shader violates; rewrite required for AAA-bar parity.
+6. **Stochastic shader contrast knob currently ignored**: B15-P1-19 (`terrain_banded_advanced.py:542` hardcodes `variant="classic"`); thread `intent.stochastic_variant` through.
+7. **procedural_meshes scope decision**: relocate (4 active callers) — recorded as PR #21 with shim layer; deletion deferred to v1.1 ship.
+
+### 11.6 — TEST INFRASTRUCTURE GATES
+
+- `@pytest.mark.slow` on tests >2 GB allocation; CI skips by default
+- Coverage-gate test: fails when a new `handlers/*.py` has no companion `tests/test_*.py`
+- Golden scenarios SHA contract test (frozen array of 32 hashes)
+- `pytest-xdist` enabled in CI for `--numprocesses=auto`
+- `PYTHONHASHSEED=0` in CI workflow (ties to PR #15)
+- Replace in-process determinism check with subprocess (P0-I1 still open per memory)
+- Add `import pyright; assert pyright.__version__ == "1.1.408"` smoke at session start
+
+### 11.7 — TOTAL UPDATED RUNWAY METRICS
+
+```
+PR count:        27 (was 20)
+Risk profile:    5 HIGH / 12 MED / 10 LOW
+Disk reclaimed:  ~1.3 GB (~50 MB git proper, ~1.25 GB LFS)
+LOC removed:     5,746 (zero-risk) + ~26K relocated (procedural_meshes + animation)
+Wall-clock:      5–7 focused days (was 3–5)
+Critical path:
+  Block 1 must land sequentially: #1 → #2 → #3 → #4 → #5; #6-#12 parallelize after #3
+  Block 2 may start once Block 1's #3, #4, #5 are merged
+  Block 3 may run parallel to pilot Week 1; do NOT block pilot start on #21-#26
+  Block 4 (#27) lands last, after #5 and #2
+```
+
+### 11.8 — OPEN P0 ITEMS NOT ADDRESSED BY PILOT (defer with explicit notice)
+
+These audited P0s survive into v1 ship per design §10 deferrals:
+
+- **Per-playthrough seed model** — DECLARED fixed-world; v2 if procedural-replay requested
+- **Day/night cycle** — separate spec post-pilot (per §12.1)
+- **Some perf items** if time-boxed: triplanar UV pinstripes, parallel-merge setattr bypass, mask cache OOM (smoothed by `_lightweight_state_copy` but not solved)
+- **Pyright-strict reductions**: 977 baseline → 297 `Any` annotations remaining; v1.1 sweep
+- **Audit theatre**: in-process determinism CI (P0-I1) — fix scheduled but not in pilot scope
+- **L-1/L-3 deprecated billboard-impostor pipeline**: silent ImportError preserved in `environment_scatter.py:78`; replace with N-view Blender bake in pilot Week 2
+- **Climate always "temperate"**: per memory; biome grammar features 8/8 still unused; v1.1
+- **Foliage attachment in Unity**: per memory; pilot adds attach pass; v1 ship validates
+
+### 11.9 — DEPRECATED v1.0 §11 (kept below for diff continuity, superseded by v2)
 
 The repo is **NOT clean enough to start the pilot today.** Three audit agents independently surfaced the same blockers. This is the locked-order PR sequence that must land before pilot Week 1 begins. All PRs target `main`.
 
