@@ -1618,12 +1618,12 @@ After the v1.0 spec was committed to PR #25, six adversarial review agents were 
 | Total reported findings (Waves 1-5) | 178 | 276 |
 | Verified open after Wave-3 forensic re-check | 174 | 263 |
 | Unique items mapped to PRs (after dedup) | 132 | 234 |
-| PR count | 27 | 86 |
+| PR count | 27 | 90 |
 | Block count | 4 | 5 |
 | Effort (focused, single-engineer days) | 5–7 | 11–14 (or 7–8 with Block 5 parallelized to a Unity engineer) |
 | Critical-path length | 5 PRs (#1→#2→#3→#4→#5) | 6 PRs (#1→#2→#3→#4→#5b→#11) |
-| Cuts surfaced (§11.7) | 0 (all "tagged ✅") | 7 (HDRP-F shadergraph, 5 Unity BLOCKING gaps, GPU-only perf, asset-budget 5-PR sequence, AA ceiling, tree-imposters/shrubs not net-new, procedural_meshes relocation) |
-| Open deferrals (§11.8) | 8 | 11 |
+| Cuts surfaced (§11.7) | 0 (all "tagged ✅") | 9 (HDRP-F shadergraph, 5 Unity BLOCKING gaps, GPU-only perf, asset-budget 5-PR sequence, AA ceiling, tree-imposters/shrubs not net-new, procedural_meshes relocation, VbChunkLoader/Streamer architecture decision, GPU runner provisioning 3-paths) |
+| Open deferrals (§11.8) | 8 | 12 |
 
 The headline deltas: (1) cite corrections to 4 v2 PRs against V3 forensic line-cite ground truth; (2) Block 5 added — Unity-side parity + cross-PR coherence + asset-budget hardening + single-chunk re-bake + test infra + deps + doc rot; (3) Issue #27 fix architecture rewritten (generator-stamping per pass, terrain_labels = validator); (4) ~58 production RNG sites (was over-claimed 127); (5) HDRP shader graph stack honest grade F (~10%); (6) `VbTerrainTileMetadata` is 29 fields, not 3-field stub; (7) coverage already 72% (was claimed 40%); (8) `_terrain_world.py:861-869` cite WRONG → real biome collapse at `environment.py:2031`.
 
@@ -1684,7 +1684,7 @@ Per Codex 1 cite audit (`docs/superpowers/specs/.staging/CODEX1_CITE_AUDIT.tsv`)
 
 **Acceptance**: 0 cite errors when running static check `git show main:<cited_file> | sed -n 'NL,NLp'` against every cite. CI gate added: `scripts/verify_pr_cites.py` walks §11 PR rows and confirms every cite resolves.
 
-**Effort**: M (write the verification script + walk all 86 PR rows + commit corrected rows).
+**Effort**: M (write the verification script + walk all ~90 PR rows + commit corrected rows).
 
 ### 11.1 Block 1 — Immediate blockers (~3 days, 15 PRs)
 
@@ -1709,9 +1709,9 @@ Pipeline-can-run + perf gate + security baseline. All Block-1 PRs land sequentia
 | 13 | sec(data-quality): NaN/Inf sanitization on Unity-export channels (NOT a security PR) | `handlers/terrain_unity_export.py` various pack-points | • All exported channels sanitized: NaN→0, Inf→clamp(±max_value)<br>• Reframed `fix(data-quality)` per V4 referee — these are correctness, not exploit, vectors<br>• Test: synthetic NaN-poisoned stack produces clean output | `pytest tests/test_unity_export_nan_inf_safe.py` | M | #12 |
 | 14 | fix(rng): single-source `derive_pass_seed` via chunk_seed module re-export | `chunks/chunk_seed.py` (NEW; co-with #15.5); `handlers/terrain_rng.py` (transition shim that re-exports from chunks/chunk_seed); `handlers/terrain_pipeline.py` (delete duplicate definition; verify line on `main` — current canonical is `:208`) | • (a) Recognize the duplicate-`derive_pass_seed` claim is stale (only existed on a now-discarded spec-branch state; on `main`, `terrain_rng.py` is 43 lines and contains only `make_rng`/`tile_rng`, while `terrain_pipeline.py:208` is the only `derive_pass_seed` definition; per Codex 1 TSV row 14, `terrain_rng.py:45` is OUT_OF_FILE).<br>• (b) PROMOTE the new `chunks/chunk_seed.py` BLAKE2b API as the single source of truth (co-lands with PR #15.5).<br>• (c) Update `handlers/terrain_rng.py` to import + re-export from `chunks/chunk_seed` (transition shim).<br>• (d) Migrate the 100 production + 79 tests RNG sites per ground truth (NOT 47/58 in stale memory).<br>• Only one `derive_pass_seed` in repo (in `chunks/chunk_seed.py`); `git grep -n "def derive_pass_seed"` returns 1 line | `pytest tests/test_derive_pass_seed_unique.py` | S | #15.5 |
 | 15 | fix(determinism): replace `hash(cliff_id)` PYTHONHASHSEED hazard | `handlers/terrain_cliffs.py:2397` (`hash(cliff.cliff_id) & 0x7FFFFFFF` → `derive_pass_seed("cliffs", cliff_id)`) | • Bare `hash(...)` replaced<br>• Same byte-output across 3 PYTHONHASHSEED values | `pytest tests/test_determinism_hash_seed.py::test_cliff_id_seed` | S | #14 |
-| 15.5 | feat(chunks): `chunks/chunk_seed.py` module API (promoted from B5-D1 to break PR #18 ↔ B5-D1 cycle) | new `chunks/chunk_seed.py` (NEW) | • BLAKE2b two-tier API per §8.4 of CE Fixes Guide<br>• `biome_seed(biome, version) → int`<br>• `chunk_seed(biome, x, y, version) → int`<br>• Module is API-only here; migration of 100 prod + 79 test sites lands in PR #18 | `pytest tests/test_chunk_seed_module.py` | M | #14 |
+| 15.5 | feat(chunks): `chunks/chunk_seed.py` module API (promoted from B5-D1 to break PR #18 ↔ B5-D1 cycle; lands first as API-only, then PR #14 migrates) | new `chunks/chunk_seed.py` (NEW) | • BLAKE2b two-tier API per §8.4 of CE Fixes Guide<br>• `biome_seed(biome, version) → int`<br>• `chunk_seed(biome, x, y, version) → int`<br>• Module is API-only here; migration of 100 prod + 79 test sites lands in PR #18 | `pytest tests/test_chunk_seed_module.py` | M | none |
 
-**Block 1 totals: 16 PRs, ~3 focused days. Critical path: #1 → #2 → #3 → {#4, #5a→#5b}; #6-#11 + #14-#15.5 parallelize after #3.** After Block 1: pipeline runs cleanly, 8 orphan passes execute, W-1 dual-semantics extinct, deepcopy eliminated, security baseline, and chunk_seed module API ready for Block 2 RNG migration.
+**Block 1 totals: 17 PRs, ~3 focused days. Critical path: #1 → #2 → #3 → {#4, #5a→#5b}; #6-#11 + #14-#15.5 parallelize after #3.** After Block 1: pipeline runs cleanly, 8 orphan passes execute, W-1 dual-semantics extinct, deepcopy eliminated, security baseline, and chunk_seed module API ready for Block 2 RNG migration.
 
 ### 11.2 Block 2 — AAA-parity + long-tail correctness (~3 days parallel, 22 PRs)
 
@@ -1832,7 +1832,7 @@ The bake-side PRs in Blocks 1-4 do **NOT** fix any of these. Block 5 is required
 | B5-D3 | feat(chunks): watershed-downstream invalidator | extends `chunks/cache_invalidator.py` | • When heightmap edited at chunk (i,j), compute D8 downstream chunk set from cached `flow_direction`<br>• Invalidates `water.json` + `flow_map.png` on those chunks<br>• Test: edit headwaters chunk → all downstream chunks invalidated | `pytest tests/test_watershed_invalidator.py` | M | B5-D2 |
 | B5-D4 | feat(chunks): `chunks/chunk_baker.py` + single-chunk CLI | new `chunks/chunk_baker.py`; CLI `python -m veilbreakers_terrain.bake --biome mountain --chunk 4,4 --reuse-merged-field` | • Halo-aware re-bake (5px halo for foliage exclusion)<br>• CLI works on 1 chunk in <9 min on RTX 4060 Ti<br>• Outputs identical to full-biome slice for the same chunk | Manual: full-biome bake, single-chunk re-bake → byte-identical for unchanged chunks | L | B5-D3 |
 
-#### 11.5.4 Test infrastructure (7 PRs)
+#### 11.5.4 Test infrastructure (7 PRs core; B5-CI1 conditional)
 
 | PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
 |------|-------|-------------------|------------|------------|--------|------|
@@ -1872,7 +1872,7 @@ The bake-side PRs in Blocks 1-4 do **NOT** fix any of these. Block 5 is required
 | B5-DOC3 | docs(spec-fix): remove 3 nonexistent build script citations from spec body | spec body lines 7 + 27 (currently cite `coastal_build_v3d_vegetation_v2.py`, `mountain_build_v1_full.py`, `grassland_full_build.py` — verified deleted by V3 forensic) | • Lines 7 and 27 reference superseded scripts as historical context only<br>• `CODEBASE_STRUCTURE.md` refreshed post-providers/, post-Batch14 export-wiring, post-`terrain_texture_layer_stack.py` | Manual: review spec body cites | S | none |
 | B5-DOC4 | docs(refresh): commit dirty-tree docs (already modified, not committed) | `docs/BLENDER_AGENT_USAGE_GUIDE.md`, `docs/TERRAIN_CALLABLE_USAGE_GUARDRAIL.md` (per `git status`); add chunk-aware sections to BLENDER guide; add chunk-pass wiring contract to GUARDRAIL | • Both files committed<br>• Chunk-aware sections present<br>• Chunk-pass wiring contract documented | Manual: review docs | S | #4 |
 
-**Block 5 totals: 25 PRs (14 + 5 + 4 + 7 + 4 + 2 + 4 = 40 line items, 25 PR groups by ownership). With a Unity engineer in parallel, ~3–5 calendar days. Without, +2 weeks for B5-U1 alone.**
+**Block 5 totals: 26 PR groups (14 + 6 + 4 + 8 + 4 + 4 + 4 = 44 line items, 26 PR groups by ownership; 3 conditional — B5-CI1 / B5-DEP4 / B5-DEP5 land only if §11.7 #3 / honesty register #9 picks Path 2 or Path 3). With a Unity engineer in parallel, ~3–5 calendar days. Without, +2 weeks for B5-U1 alone.**
 
 ### 11.6 Cross-PR dependency graph
 
@@ -1941,7 +1941,7 @@ The bake-side PRs in Blocks 1-4 do **NOT** fix any of these. Block 5 is required
 B5-U1(HDRP shaders OR MicroSplat)─┬─B5-U2(WaterSurface)
                                    ├─B5-U3(holes.png)
                                    └─B5-U4(normal Y-flip)─B5-U5(edges.json)
-B5-D1(chunk_seed)─B5-D2(cache invalidator)─B5-D3(watershed)─B5-D4(chunk_baker)
+#15.5(chunk_seed)─B5-D2(cache invalidator)─B5-D3(watershed)─B5-D4(chunk_baker)
 B5-T1(goldens)─B5-T7(fast-lane)
 #2(CVEs+extras split — absorbed B5-DEP1)─B5-DEP2(lockfile)─B5-DEP3(SHA-pin)
 B5-DOC1(archive)─B5-DOC2(04-27 banner)
@@ -1976,7 +1976,7 @@ These are **not deferrals** — they are explicit cuts where the spec was over-c
 
 4. **Asset budget `enforce_budget()` exists but v6 controller bypass means the live 1024² stack does not enforce — single fix won't reach all artifacts; PR #36 + B5-A1 + B5-A2 + B5-A3 + B5-A4 are 5-PR sequence (NOT 1).** `build_terrain_aaa_node_v6.py:187-287` directly invokes `pass_cliffs`, `pass_waterfalls`, `pass_materials` — bypasses `TerrainPassController.run_pipeline()` at `terrain_pipeline.py:983-991`. The 32×32 stub through controller is theatre (writes `validation_full_present: true` to `BUILD_SUMMARY.json` but skips real budget checks).
 
-5. **AA ceiling for v1 pilot.** Even with all 86 PRs landed, v1 ships at AAA-implementable bar but **not at every-shipped-AAA-feature-equivalent**. Examples: raytraced GI, RT reflections, foliage trampling/persistence, in-engine cinematics, accessibility tier, console quality tiers (per Appendix E.3 V2-WORTHY items deferred). v1 grade target: A- minimum / A stretch on 42-item HDRP contract; v2 grade target: A+ with raytrace pipeline.
+5. **AA ceiling for v1 pilot.** Even with all ~90 PRs landed, v1 ships at AAA-implementable bar but **not at every-shipped-AAA-feature-equivalent**. Examples: raytraced GI, RT reflections, foliage trampling/persistence, in-engine cinematics, accessibility tier, console quality tiers (per Appendix E.3 V2-WORTHY items deferred). v1 grade target: A- minimum / A stretch on 42-item HDRP contract; v2 grade target: A+ with raytrace pipeline.
 
 6. **Tree imposters (LOD3) and midground shrubs (Layer 4) are NOT net-new AAA gaps.** v2 PRs #16 + #17 attempted to fix them; CUT in v3 (per V4 referee). Tree imposters already in spec §4.8 LOD3 (line 366); midground shrubs already in spec §4.4 Layer 4 (line 320). **Real net-new = 2 items** (parent-child scatter rules — PR #27; artist override layer — PR #28).
 
