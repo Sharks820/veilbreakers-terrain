@@ -62,7 +62,7 @@ Two-stage pipeline: **Bake** (offline, Python + Blender + Taichi) produces deter
 │  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐       │
 │  │ DEM (SRTM│ → │ Heightmap│ → │ Erosion  │ → │ Mask     │       │
 │  │ 30m) +   │   │ hybrid   │   │ (Taichi  │   │ channels │       │
-│  │ procedur │   │ 4m grid  │   │ hyd+therm│   │ (50+)    │       │
+│  │ procedur │   │ 2m grid  │   │ hyd+therm│   │ (50+)    │       │
 │  │ overlay  │   │ upscale  │   │ +flow+   │   │          │       │
 │  │          │   │          │   │ strat)   │   │          │       │
 │  └──────────┘   └──────────┘   └──────────┘   └──────────┘       │
