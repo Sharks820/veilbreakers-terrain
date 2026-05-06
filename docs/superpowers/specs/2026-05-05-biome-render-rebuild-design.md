@@ -1606,185 +1606,573 @@ After the v1.0 spec was committed to PR #25, six adversarial review agents were 
 
 ---
 
-## 11. Pre-Pilot Cleanup Runway v2 (post 11-Opus + verifier-wave consolidation)
+## 11. Implementation runway — PR plan v3
 
-### 11.0 — Strategic Reordering vs v1.0
+### 11.0 Preface — v3 vs v2 deltas
 
-v1.0's §11 listed 20 PRs in roughly chronological order. Wave 2 (11 Opus combers) + wave 3 verifier reshape priorities along three axes:
+§11 v2 (commit `6cee216`, 27 PRs) merged Wave 1-3 findings into a 4-block runway. **§11 v3** consolidates Wave 1-5 (10 reports across cross-PR coherence, CI impact, HDRP shader, Unity-side parity, end-to-end determinism, asset budget, single-chunk re-bake, test infra, doc rot, dependency CVEs). All Wave-3 verifier-discovered cite errors in v2 PRs are corrected here against the V3-forensic ground truth at `.staging/WAVE_1_5_RAW_FINDINGS.md` §A.1.
 
-1. **Performance moves up.** Performance audit found pipeline cannot hit <60 min/biome bake target without 5–10× speedup. Three single-PR hot spots (deepcopy mask_stack, `road_network` SDF, `bytes += scanline`) outweigh several v1.0 cosmetic items.
-2. **Orphan-passes is the highest-ROI single PR.** 7 passes (cliffs, caves, coastline, karst, wind_erosion, stratigraphy + 2 unwired water passes) are registered via bundles but absent from `build_default_pass_sequence`. Wiring them in unlocks **35 audited features at one stroke**.
-3. **DAG cycle now blocks pilot.** `_toposort_passes` does not consult `overrides=` and 6 channels (all on `height`) form dual-cycles. v1.0 had this as background; it is now Day-0.
+| Dimension | v2 | v3 |
+|---|---|---|
+| Total reported findings (Waves 1-5) | 178 | 276 |
+| Verified open after Wave-3 forensic re-check | 174 | 263 |
+| Unique items mapped to PRs (after dedup) | 132 | 234 |
+| PR count | 27 | ~85 |
+| Block count | 4 | 5 |
+| Effort (focused, single-engineer days) | 5–7 | 11–14 (or 7–8 with Block 5 parallelized to a Unity engineer) |
+| Critical-path length | 5 PRs (#1→#2→#3→#4→#5) | 6 PRs (#1→#2→#3→#4→#5b→#11) |
+| Cuts surfaced (§11.7) | 0 (all "tagged ✅") | 5 (HDRP-F, MicroSplat fallback, 5 BLOCKING Unity gaps, GPU-only perf, AA ceiling) |
+| Open deferrals (§11.8) | 8 | 11 |
 
-PR runway grows from 20 → **27 PRs**, runway 3-5 days → **5-7 days**, but ROI per PR is now ranked by audit impact rather than module proximity.
+The headline deltas: (1) cite corrections to 4 v2 PRs against V3 forensic line-cite ground truth; (2) Block 5 added — Unity-side parity + cross-PR coherence + asset-budget hardening + single-chunk re-bake + test infra + deps + doc rot; (3) Issue #27 fix architecture rewritten (generator-stamping per pass, terrain_labels = validator); (4) ~58 production RNG sites (was over-claimed 127); (5) HDRP shader graph stack honest grade F (~10%); (6) `VbTerrainTileMetadata` is 25 fields, not 3-field stub; (7) coverage already 72% (was claimed 40%); (8) `_terrain_world.py:861-869` cite WRONG → real biome collapse at `environment.py:2031`.
 
-### 11.0.1 — Verification Status (verifier-wave findings)
+### 11.0.1 Source of truth
 
-24 of 25 high-impact findings spot-checked at file:line: **all 24 VERIFIED OPEN**, 1 FALSE_POS (gradient axis convention is correct as written in `_terrain_noise.py:1529`). No findings RESOLVED in code since reporting. The `7 ORPHAN PASSES` finding overlaps with the `dead code: 17 registered-but-inert passes` finding — same root cause, single fix in `terrain_pipeline.py:169-261`.
-
-### 11.1 — IMMEDIATE BLOCKERS (Day 0–1, before any pilot code)
-
-| # | Title | Files (file:line) | Risk | Why now / Depends |
-|---|---|---|---|---|
-| 1 | gitignore + LFS hygiene | `.gitignore` (add `output/chunks/`, `renders/pilot/`, `*.blend1`, `output/aaa_node_v3/`) | LOW | Dirty worktree on first pilot run otherwise |
-| 2 | pyproject.toml runtime deps | `pyproject.toml:8` add `taichi>=1.7,<2.0`, `rasterio>=1.4`, `PyYAML>=6.0`, bump `Pillow>=10.4` (CVE-2023-50447); add `[bake]` + `[providers]` extras; pin `pyright==1.1.408`; cap `numpy<2.0` on Blender lane | MED | Imports fail at first pilot run otherwise. Depends on #1 |
-| 3 | Topo-sort overrides=-aware | `handlers/terrain_pipeline.py:1449-1510` — when B's `overrides` contains channel `c` and A produces `c`, suppress edge `A→B` for `c` only. Add 6 dual-cycle regression tests | MED | Pipeline currently raises cycle error when full registry is loaded. PR #4 cannot land without this. No deps |
-| 4 | Wire 7 orphan passes into `build_default_pass_sequence` | `handlers/terrain_pipeline.py:169-261` insert: `cliffs` after `structural_masks`; `caves` after `pass_terrain_features`; `coastline` after `bathymetry`; `karst`, `wind_erosion`, `stratigraphy` after `pass_morphology`; ensure `pass_water_flow_speed` + `pass_river_convergence` follow `pass_hydrology` | HIGH | **Single highest-ROI PR — unblocks 35 audited features.** Depends on #3 |
-| 5 | W-1 atomic migration | `handlers/terrain_water_variants.py:781,878` (drop legacy `water_surface` write); 4 consumers (`terrain_unity_export.py:2266-2278`, `terrain_navmesh_export.py:201,329`, plus 2 others); `tests/test_callable_orphan_contracts.py:283,290`; 12 legacy water_surface test refs | HIGH | Dual-semantics bug = active production bug. Depends on #3 |
-| 6 | align_to_normal default False | `handlers/terrain_advanced.py:2652` change `True` → `False` | LOW | Removes diagonal-tree class of bugs. No deps |
-| 7 | chunk_world_size default 512m | `handlers/terrain_chunking.py:100` change `64.0` → `512.0` (audit 12 callers) | MED | Spec §1 mandates 512m chunks. No deps |
-| 8 | Wire `_lightweight_state_copy` (kill deepcopy) | `handlers/terrain_pipeline.py:940,956` replace `copy.deepcopy(self.state.mask_stack)` with channel-shallow + height-COW copy | HIGH | Saves 30s + 4GB per run; without this, perf target unreachable. No deps |
-| 9 | Vectorize `road_network` SDF | `handlers/road_network.py:1808-1817` replace triple loop with `scipy.ndimage.distance_transform_edt` rasterized at segment polyline | MED | ~1000× speedup; unblocks roads in pilot. No deps |
-| 10 | `bytes += scanlines` fix | `handlers/terrain_shadow_clipmap_bake.py:317-322` use `io.BytesIO()` + `write` | LOW | 64GB → 64MB churn. No deps |
-| 11 | `_safe_filename` for path-injection in providers | `providers/meshy_provider.py:216`, `providers/hunyuan3d2_provider.py:274`, `handlers/asset_generation.py:699,706` | MED | Security audit P0 — unsanitized `species_id` writes outside dest_dir. No deps |
-| 12 | Atomic shadow-dir write for Unity export bundle | `handlers/terrain_unity_export.py` (write to `*.tmp/` then `os.replace`) | MED | Avoids half-written bundle on crash. Depends on #5 |
-
-**Block 1: 12 PRs, ~1.5 days. After Block 1 the pipeline runs cleanly and sequence covers 35 previously-orphan features.**
-
-### 11.2 — PRE-WEEK-2 (foundation + determinism)
-
-| # | Title | Files | Risk |
-|---|---|---|---|
-| 13 | Wire `register_stratigraphy_pass` in master_registrar | `handlers/terrain_master_registrar.py` (insert in Bundle I after wind_erosion); add `register_stratigraphy_pass` in `terrain_stratigraphy.py` (currently zero `register_*` functions) | MED |
-| 14 | Apply morphology_delta to height | `handlers/terrain_morphology.py:459-465` after `stack.set("morphology_delta", ...)` add `stack.set("height", height + delta, "pass_morphology")`; declare `overrides=("height",)` | MED |
-| 15 | Determinism: 46 sites `random.Random(seed+offset)` → `derive_pass_seed` + fix PYTHONHASHSEED | grep `random.Random(.*seed.*[+^])` migrate; tighten `_FORBIDDEN_RNG_CALLS` to include `random.choices/choice/randint/shuffle`; replace `hash(cliff.cliff_id)` (`terrain_cliffs.py:2397`) with `derive_pass_seed("cliffs", cliff_id)`; set `PYTHONHASHSEED=0` in CI | HIGH |
-| 16 | Numba/Taichi-jit `priority_flood_d8` + `_erode` | `handlers/_water_network.py:580-664` (Numba-jit; pure-py fallback); `handlers/_terrain_erosion.py:308-487` (E-1, E-3 P0 — Taichi kernel; clamp particle re-injection at boundary); `--no-numba` switch for golden test | HIGH |
-| 17 | unity_export `_compat` shim | preserve `terrain_unity_export.py` import surface for 14 test imports; deprecate after pilot | LOW |
-| 18 | Pass DAG: declare missing `requires_channels` and `overrides=` | 16+ passes incl. `climate_zone`, `forest_mask`, `canopy_density`; `pass_road_network` overrides road_mask + height; quixel_ingest overrides `macro_color`, `roughness_variation`, `terrain_normals`, `terrain_displacement`, `terrain_ao` (currently only declares `splatmap_weights_layer`); waterfalls overrides particle_emitter_specs | MED |
-| 19 | Test infra: 4 importlib script-loader landmines + 12 legacy water_surface deletions + `@pytest.mark.slow` for big-allocation tests + `pytest-xdist` | MED |
-| 20 | DAG-escape road_mask write closure | `handlers/environment.py:6265-6266` — wrap in registered pass or remove (Blender-only legacy) | MED |
-
-**Block 2: 8 PRs, ~1 day. Foundation is clean; determinism stable.**
-
-### 11.3 — SCOPE / BOUNDARIES (parallel to pilot Week 1–2)
-
-| # | Title | Files | Notes |
-|---|---|---|---|
-| 21 | Relocate `procedural_meshes.py` (22,816 LOC) | move → `veilbreakers_assets` sibling; add 4-symbol shim layer in `veilbreakers_terrain/_compat/procedural_meshes.py` for active callers (`_mesh_bridge.py:26`, `_terrain_depth.py:51`, `environment.py:229`, `_bridge_mesh.py:15`) | scope contamination per memory pin |
-| 22 | Relocate animation modules (~3K LOC) | `animation_environment.py`, `animation_gaits.py`, `sim/foam.py`, `sim/cloth.py` → `veilbreakers_animation` sibling | NEW contamination beyond procedural_meshes |
-| 23 | Extract `terrain_core.py` (50 lines) | `PassDefinition`, `derive_pass_seed`, `TerrainPassController` Protocol → break 8 circular imports | foundation; blocks tests/ refactor |
-| 24 | Split `terrain_semantics.py` (82 importers) | `_types.py` (dataclasses) + `_semantics.py` (logic) | run after #23 |
-| 25 | Split `environment.py` (8651 LOC) at 5 seams | terrain / water / roads / export / validation | run after #22 |
-| 26 | Split `terrain_features.py` at 9 `generate_*` seams | one file per feature (canyons, waterfalls, cliffs, swamps, arches, geysers, sinkholes, floating rocks, ice/lava) | parallel to others |
-
-**Block 3: 6 PRs, ~2 days, parallelizable with pilot Week 1.**
-
-### 11.4 — ZERO-RISK DELETES (single PR, locked file list)
-
-| # | Title | Files | Reclaim |
-|---|---|---|---|
-| 27 | Locked-list deletes | `scripts/deprecated/*` (6 files); `terrain_scatter_altitude_safety.py`; `terrain_legacy_bug_fixes.py`; `asset_generation.py` (after replace 1 import); `vegetation_system.py` (already de-wired); 47 deprecated scripts from Sonnet wave-1; 5 MB stale audit docs (V2-V5_2026_04_19, deep_dive_2026_04_16/17, R11/R12, m3_verification, manual_review_batches CSVs); 935 MB `output/visual_nodes/*` (8 .blend); ~280 MB `output/aaa_node_v*/scene_v*`; 120 MB `*.blend1` from LFS | **5,746 LOC + ~1.3 GB** |
-
-**Block 4: 1 PR, ~2 hours. Zero-risk after #2 (deps in pyproject) and #5 (consumers off legacy water_surface).**
-
-### 11.5 — ARCHITECTURAL DECISIONS NEW FROM WAVE 2
-
-These require explicit design decisions before implementation, not just PRs:
-
-1. **Three-interpreter split**: Add `requires_blender: bool` to `PassDefinition`. CI venv runs pure-Python passes; bake-venv (conda) runs L-Py / Taichi / GPU; Blender bundled-Python runs scene-read passes. CI runs all three over IPC.
-2. **Taichi + Cycles GPU MUST be separate processes**: CUDA driver-context corruption otherwise. Cycles bake is its own subprocess with its own CUDA init.
-3. **L-Py has NO PyPI wheel — conda-only**: bake-venv must be conda-managed. Document install procedure in `docs/INSTALL_BAKE_VENV.md`.
-4. **Quixel materials: blend in linear space NOT sRGB**: P0-A4-5 from MASTER 04-27. `terrain_quixel_ingest.py:619` already calls `_srgb_to_linear` on albedo; verify roughness/normal paths also linearize.
-5. **HistogramPreservingBlend HLSL must implement Heitz/Neyret Eq.8/11**: P0-A4-2 — current shader violates; rewrite required for AAA-bar parity.
-6. **Stochastic shader contrast knob currently ignored**: B15-P1-19 (`terrain_banded_advanced.py:542` hardcodes `variant="classic"`); thread `intent.stochastic_variant` through.
-7. **procedural_meshes scope decision**: relocate (4 active callers) — recorded as PR #21 with shim layer; deletion deferred to v1.1 ship.
-
-### 11.6 — TEST INFRASTRUCTURE GATES
-
-- `@pytest.mark.slow` on tests >2 GB allocation; CI skips by default
-- Coverage-gate test: fails when a new `handlers/*.py` has no companion `tests/test_*.py`
-- Golden scenarios SHA contract test (frozen array of 32 hashes)
-- `pytest-xdist` enabled in CI for `--numprocesses=auto`
-- `PYTHONHASHSEED=0` in CI workflow (ties to PR #15)
-- Replace in-process determinism check with subprocess (P0-I1 still open per memory)
-- Add `import pyright; assert pyright.__version__ == "1.1.408"` smoke at session start
-
-### 11.7 — TOTAL UPDATED RUNWAY METRICS
+Every PR row below is sourced from a single-source-of-truth findings package at:
 
 ```
-PR count:        27 (was 20)
-Risk profile:    5 HIGH / 12 MED / 10 LOW
-Disk reclaimed:  ~1.3 GB (~50 MB git proper, ~1.25 GB LFS)
-LOC removed:     5,746 (zero-risk) + ~26K relocated (procedural_meshes + animation)
-Wall-clock:      5–7 focused days (was 3–5)
-Critical path:
-  Block 1 must land sequentially: #1 → #2 → #3 → #4 → #5; #6-#12 parallelize after #3
-  Block 2 may start once Block 1's #3, #4, #5 are merged
-  Block 3 may run parallel to pilot Week 1; do NOT block pilot start on #21-#26
-  Block 4 (#27) lands last, after #5 and #2
+docs/superpowers/specs/.staging/WAVE_1_5_RAW_FINDINGS.md
 ```
 
-### 11.8 — OPEN P0 ITEMS NOT ADDRESSED BY PILOT (defer with explicit notice)
+That file is the ground truth across 5 sweep waves (3 Opus deep-dives + 3 Sonnet code clutter audits + 11-Opus orphan-pass comb + verifier-3 forensic line-cite re-check + verifier-4 referee + 10 wave-5 reports). Every claim in §11.1-§11.5 has a file:line cite or explicit "verified-false" annotation. The verifier protocol is defined in §11.11.
 
-These audited P0s survive into v1 ship per design §10 deferrals:
+### 11.0.2 C-1 contradiction resolution
 
-- **Per-playthrough seed model** — DECLARED fixed-world; v2 if procedural-replay requested
-- **Day/night cycle** — separate spec post-pilot (per §12.1)
-- **Some perf items** if time-boxed: triplanar UV pinstripes, parallel-merge setattr bypass, mask cache OOM (smoothed by `_lightweight_state_copy` but not solved)
-- **Pyright-strict reductions**: 977 baseline → 297 `Any` annotations remaining; v1.1 sweep
-- **Audit theatre**: in-process determinism CI (P0-I1) — fix scheduled but not in pilot scope
-- **L-1/L-3 deprecated billboard-impostor pipeline**: silent ImportError preserved in `environment_scatter.py:78`; replace with N-view Blender bake in pilot Week 2
-- **Climate always "temperate"**: per memory; biome grammar features 8/8 still unused; v1.1
-- **Foliage attachment in Unity**: per memory; pilot adds attach pass; v1 ship validates
-
-### 11.9 — DEPRECATED v1.0 §11 (kept below for diff continuity, superseded by v2)
-
-The repo is **NOT clean enough to start the pilot today.** Three audit agents independently surfaced the same blockers. This is the locked-order PR sequence that must land before pilot Week 1 begins. All PRs target `main`.
-
-### 11.1 — IMMEDIATE (must land before any pilot code)
-
-| # | PR title | Files | Risk | Why now |
-|---|---|---|---|---|
-| 1 | `chore: gitignore output/chunks, renders/pilot, *.blend1, output/aaa_node_v3` | `.gitignore` | LOW | First pilot bake produces ~7000 files per biome; without this, agents accidentally stage them all |
-| 2 | `chore(deps): add taichi + rasterio bake-time dependencies` | `pyproject.toml` | LOW | Without taichi, `pip install -e ".[dev]"` fails immediately when bake code lands |
-| 3 | `fix(w1): remove legacy water_surface channel writes + migrate 4 consumers` | `terrain_water_variants.py:781,878`, `terrain_unity_export.py:2270-2278`, `terrain_navmesh_export.py:201,329`, `Wetland` dataclass + `detect_wetlands` reorder | HIGH | Active P0 dual-semantics bug; will corrupt new Taichi `water_surface_z` if not removed first |
-| 4 | `fix(foliage): align_to_normal default False` | `handlers/terrain_advanced.py:2652` | LOW | One-line fix; kills diagonal-tree bug at source for any caller without override |
-| 5 | `fix(chunking): chunk_world_size default 512m` | `handlers/terrain_chunking.py:100` | LOW | Default kwarg change + assertion; prevents silent wrong-grid bakes |
-
-### 11.2 — BEFORE PILOT WEEK 2 (foliage/erosion implementation)
-
-| # | PR title | Files | Risk | Why |
-|---|---|---|---|---|
-| 6 | `feat(stratigraphy): wire register_stratigraphy_pass into master_registrar` | `terrain_stratigraphy.py` (add register fn), `terrain_master_registrar.py` (add registrar tuple) | MEDIUM | Section §3.3c stratification cannot execute without this; currently zero references |
-| 7 | `fix(morphology): apply morphology_delta to height in-pass` | `terrain_morphology.py:459-465` | LOW | Unblocks 30 dead landform templates; self-contained |
-| 8 | `fix(rng): consolidate ~55 bare random.Random instances → derive_pass_seed` | `environment_scatter.py`, `terrain_features.py`, `_scatter_engine.py`, `_terrain_depth.py`, `_biome_grammar.py`, `build_scene_v3.py`, `render_scatter_visual.py`, ~10 more | MEDIUM | Per-chunk re-bake determinism guarantee currently violated by ~55 callsites (audit P0 estimate of "~50" confirmed) |
-| 9 | `fix(unity-export): create _compat re-export shim before unity_export_v2 lands` | `handlers/terrain_unity_export.py` (deprecation notices), new `_compat.py` | LOW | 14 test files import internal helpers; without shim, all break simultaneously |
-
-### 11.3 — DELETE BLOAT (stale code/artifacts cleanup)
-
-| # | PR title | Files | Disk reclaimed |
-|---|---|---|---|
-| 10 | `chore(scripts): delete 47 superseded build/render scripts` | All 47 DEPRECATED-DELETE scripts from §scripts-audit (coastal_build_v2/v3*, mountain_build_v1_full, grassland_full_build, 7× send_*_to_blender, 6× create_*_node, fix_*_lighting, dynamic_quality_*, scene_v3_*, etc.) | ~5000 LOC |
-| 11 | `chore(output): delete monolithic .blend nodes + prototype outputs` | `output/visual_nodes/` (630MB), `output/aaa_node_v1`/`v2`/`v3`/`showcase` (~155MB), `output/scene_v2`/`scene_v3` (~150MB) | **935 MB LFS** |
-| 12 | `chore(lfs): delete committed *.blend1 backup files` | 10× `.blend1` files in `output/` and `output/visual_nodes/` | ~120 MB LFS |
-| 13 | `chore(spreadsheet): prune intermediate audit snapshots` | 18 of 38 stale CSV/MD versioned snapshots in `output/spreadsheet/` | ~12 MB |
-| 14 | `chore(docs): prune superseded audit + planning docs` | `MASTER_AUDIT_V2-V5_2026-04-19.md`, April-20 planning docs, `FOLIAGE_WAVE5_RESEARCH.md`, `deep_dive_2026_04_16/`, `deep_dive_r8_2026_04_17/` | ~40 MB |
-
-### 11.4 — TEST FILE LANDMINES (must decouple before deletes in 11.3)
-
-| # | PR title | Files | Why blocking |
-|---|---|---|---|
-| 15 | `fix(tests): decouple test_dynamic_quality_truth_gates from dynamic_quality_grader script` | `veilbreakers_terrain/tests/test_dynamic_quality_truth_gates.py` | Imports old grader via importlib; deleting grader without this = CI red |
-| 16 | `fix(tests): decouple test_visual_render_camera_proof from render_coastal_camera_proof script` | `veilbreakers_terrain/tests/test_visual_render_camera_proof.py` | Same pattern; sequencing dep for PR #10 |
-| 17 | `fix(tests): rewrite test_scene_v3_visual_quality_gate against synthetic fixtures` | `veilbreakers_terrain/tests/test_scene_v3_visual_quality_gate.py` | Tests scene_v3 .blend artifacts being deleted in PR #11 |
-
-### 11.5 — DOCS UPDATE (concurrent with pilot work)
-
-| # | PR title | Files | Why |
-|---|---|---|---|
-| 18 | `docs: chunk-aware updates to BLENDER_AGENT_USAGE_GUIDE` | `docs/BLENDER_AGENT_USAGE_GUIDE.md` (already modified in working tree, uncommitted) | References per-biome monolithic workflows; needs chunk-aware sections |
-| 19 | `docs: chunk-pass wiring contract in TERRAIN_CALLABLE_USAGE_GUARDRAIL` | `docs/TERRAIN_CALLABLE_USAGE_GUARDRAIL.md` (also modified uncommitted) | Future chunk passes need callable ownership rules |
-| 20 | `ci: chunk-render-proof.yml workflow` | new `.github/workflows/chunk-render-proof.yml` | Validates `renders/pilot/{biome}/` output shape during CI |
-
-### 11.6 — Total cleanup runway
+Spec §3 line 124 and §3.7 line 237 use the same word "seed" for two different scopes. v3 resolves with a two-tier seed model amended by PR #4 (carry-amendment) + PR #36 (chunk_seed module):
 
 ```
-PR count:        20 PRs (5 IMMEDIATE + 4 PRE-WEEK-2 + 5 DELETE + 3 TEST + 3 DOCS/CI)
-Disk reclaimed:  ~1.1 GB LFS + ~50 MB git proper
-Risk profile:    1 HIGH (W-1 atomic migration) + 3 MEDIUM + 16 LOW
-Sequencing:      11.1 → 11.4 → 11.2 → 11.3 → 11.5 (tests decouple before deletes)
-Wall-clock:      ~3-5 days of focused PR work; can run in parallel with pilot Week 1 prep
+biome_seed  = hash(biome, version)
+              # Pre-slice scope. Drives DEM upscale jitter, fbm
+              # overlay basis permutation, hydraulic Mei-2007 rain
+              # noise, stratigraphy modulation, drainage carving.
+              # Same biome+version → identical merged 4096m field.
+              # USE in: heightmap_dem/, erosion_taichi/,
+              #         stage 3.4 drainage extraction, stage 3.5
+              #         derived-channel pipeline.
+
+chunk_seed  = hash(biome, chunk_x, chunk_y, version)
+              # Post-slice scope. Drives foliage scatter Poisson
+              # seeds, Voronoi clumping cell jitter, ground-clutter
+              # density randomness, edge-thread feature sampling,
+              # macro_variation.png unique noise, render camera
+              # interesting-direction tiebreakers.
+              # USE in: foliage/scatter/, foliage/ecology/,
+              #         unity_export_v2/macro_variation_baker.py,
+              #         render_v2/ camera scoring.
 ```
+
+Spec body lines 124 and 237 are amended by **PR #4 (carry-amendment)** to reference both forms explicitly, eliminating the "same word for two scopes" ambiguity. The `chunk_seed` API lands as a concrete `chunks/chunk_seed.py` module via **PR #B5-D1** (single-chunk re-bake architecture).
+
+### 11.1 Block 1 — Immediate blockers (~3 days, 15 PRs)
+
+Pipeline-can-run + perf gate + security baseline. All Block-1 PRs land sequentially (with parallelization after #3 lands) before any pilot code is touched.
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| 1 | chore(repo): gitignore + LFS hygiene | `.gitignore` | • `output/chunks/`, `renders/pilot/`, `*.blend1`, `output/aaa_node_v3/` ignored<br>• `git status` clean after first pilot bake dry-run | `git status --porcelain` empty after `make bake-dry-run` | S | none |
+| 2 | chore(deps): pyproject runtime + bake extras + CVE fixes | `pyproject.toml` | • `taichi>=1.7,<2.0`, `rasterio>=1.4`, `PyYAML>=6.0` declared<br>• `Pillow>=10.4` (CVE-2023-50447, CVE-2024-28219)<br>• `[bake]` and `[providers]` extras added<br>• `pyright==1.1.408` pinned; `numpy<2.0` cap on Blender lane<br>• `gradio_client`, `requests`, `huggingface_hub` declared | `pip install -e ".[bake,providers,dev]"` succeeds; `pip-audit` zero CRITICAL | S | #1 |
+| 3 | fix(pipeline): topo-sort consumes `overrides=` to break dual-cycles | `handlers/terrain_pipeline.py:1449-1510` | • Edge `A→B` for channel `c` suppressed when `c in B.overrides_channels`<br>• 6 dual-cycle regression tests pass<br>• `register_default_passes` no longer raises ValueError on full registry load | `pytest tests/test_terrain_pipeline_toposort_overrides.py -k overrides_breaks_cycle` | M | #2 |
+| 4 | fix(pipeline): wire 8 orphan passes into `build_default_pass_sequence` + carry C-1 amendment | `handlers/terrain_pipeline.py:169-261`; spec §3 lines 124, 237 (amend to `biome_seed`/`chunk_seed`) | • `cliffs`, `caves`, `coastline`, `karst`, `wind_erosion`, `stratigraphy`, `pass_water_flow_speed`, `pass_river_convergence` registered in default sequence<br>• `validate_default_pass_sequence` fixture lists all 8<br>• run_pipeline emits `status="ok"` for all 8<br>• Spec body line 124 and 237 amended to two-tier seed prose | `pytest tests/test_pipeline_default_sequence.py::test_orphan_passes_wired` | M | #3 |
+| 5a | fix(water): drop legacy `water_surface` channel writes (W-1 step 1) | `handlers/terrain_water_variants.py:781,878` (drop legacy writes); `TerrainMaskStack.set()` guard rejecting legacy name | • `water_surface` no longer emitted from any pass<br>• Stack-set guard raises on legacy name<br>• 12 legacy water_surface test refs deleted | `pytest tests/test_w1_legacy_writes_removed.py` | M | #3 |
+| 5b | fix(water): register canonical W-1 channels (`water_surface_mask`/`water_surface_elevation_m`/`water_depth_m`) and migrate 4 consumers | `handlers/terrain_water_variants.py`; consumers `terrain_unity_export.py:2270-2278`, `terrain_navmesh_export.py:201,329`, `detect_wetlands` (re-ordered before bathymetry); `pass_bathymetry`; `compute_riverbed_caustics` | • Single registry file declares all 3 canonical channels<br>• Spec §3.4 line 192 alternate-name vocabulary deleted<br>• 4 named consumers re-route to canonical channels<br>• PR #37 reads `water_surface_mask` produced here | `pytest tests/test_w1_canonical_channels.py`; `pytest tests/test_w1_consumers_migrated.py` | M | #5a |
+| 6 | fix(foliage): `align_to_normal` default False (kill diagonal-trunk bug) | `handlers/terrain_advanced.py:2652` (`True` → `False`) | • Default kwarg flipped<br>• 0 diagonal trunks in `golden_scenarios/cliff_talus_apron` reference render | `pytest tests/test_align_to_normal_default.py`; manual: render `cliff_talus_apron` and inspect 10 trunks at `slope > 30°` | S | none |
+| 7 | fix(chunking): `chunk_world_size` default 512m | `handlers/terrain_chunking.py:100` (`64.0` → `512.0`) | • Default size 512m<br>• 12 callers audited; none broken by default change<br>• Assertion `chunk_world_size in {64, 128, 256, 512}` | `pytest tests/test_chunk_world_size_default.py` | M | none |
+| 8 | perf(pipeline): replace `deepcopy(mask_stack)` with channel-shallow + height-COW | `handlers/terrain_pipeline.py:940,956` | • `_lightweight_state_copy` lands<br>• Saves ~30s + 4 GB RAM per default-sequence run on 4096²<br>• Identical hashes pre/post | `pytest tests/test_pipeline_performance.py::test_no_deepcopy`; `pytest --benchmark-only --benchmark-compare baseline` | L | none |
+| 9 | perf(roads): vectorize `road_network` SDF via scipy EDT | `handlers/road_network.py:1808-1817` | • Triple loop replaced by `scipy.ndimage.distance_transform_edt`<br>• ~1000× speedup verified<br>• Identical road_sdf_dist output | `pytest tests/test_road_network_sdf_correctness.py`; `pytest --benchmark` | M | none |
+| 10 | perf(shadow): `bytes += scanline` → `io.BytesIO()` | `handlers/terrain_shadow_clipmap_bake.py:317-322` | • Use `io.BytesIO()` + write<br>• 64 GB churn → 64 MB churn | `pytest tests/test_shadow_clipmap_bake.py`; manual: `tracemalloc` peak under 100 MB | S | none |
+| 11 | sec(providers): `_safe_filename` for path-injection in 3 providers | `providers/meshy_provider.py:216`, `providers/hunyuan3d2_provider.py:274`, `handlers/asset_generation.py:699,706` | • `species_id` sanitized through `_safe_filename`<br>• Path traversal attempts (`../`, absolute paths, NUL) rejected<br>• Output stays inside `dest_dir` | `pytest tests/test_providers_path_safety.py::test_traversal_blocked` | M | none |
+| 12 | fix(unity-export): atomic manifest write + temp-dir bundle pattern | `handlers/terrain_unity_export.py:2484-2510` (real `json.dumps(manifest)` site, NOT line 1612 / 1629) | • Write to `*.tmp` then `os.replace`<br>• No half-written `manifest.json` on crash<br>• Atomic across both manifest + import_descriptor | `pytest tests/test_unity_export_atomicity.py::test_kill_mid_write` | M | #5b |
+| 13 | sec(data-quality): NaN/Inf sanitization on Unity-export channels (NOT a security PR) | `handlers/terrain_unity_export.py` various pack-points | • All exported channels sanitized: NaN→0, Inf→clamp(±max_value)<br>• Reframed `fix(data-quality)` per V4 referee — these are correctness, not exploit, vectors<br>• Test: synthetic NaN-poisoned stack produces clean output | `pytest tests/test_unity_export_nan_inf_safe.py` | M | #12 |
+| 14 | fix(rng): single-source `derive_pass_seed` (kill drift hazard) | `terrain_rng.py:45` (DELETE alternate definition); `terrain_pipeline.py:269` (canonical, KEEP) | • Only one `derive_pass_seed` in repo<br>• `git grep -n "def derive_pass_seed"` returns 1 line<br>• 6 test sites' imports unchanged | `pytest tests/test_derive_pass_seed_unique.py` | S | none |
+| 15 | fix(determinism): replace `hash(cliff_id)` PYTHONHASHSEED hazard | `handlers/terrain_cliffs.py:2397` (`hash(cliff.cliff_id) & 0x7FFFFFFF` → `derive_pass_seed("cliffs", cliff_id)`) | • Bare `hash(...)` replaced<br>• Same byte-output across 3 PYTHONHASHSEED values | `pytest tests/test_determinism_hash_seed.py::test_cliff_id_seed` | S | #14 |
+
+**Block 1 totals: 15 PRs, ~3 focused days. Critical path: #1 → #2 → #3 → {#4, #5a→#5b}; #6-#11 + #14-#15 parallelize after #3.** After Block 1: pipeline runs cleanly, 8 orphan passes execute, W-1 dual-semantics extinct, deepcopy eliminated, security baseline.
+
+### 11.2 Block 2 — AAA-parity + long-tail correctness (~3 days parallel, 22 PRs)
+
+Foundation correctness, AAA-parity ecology, mask-channel completeness, determinism hardening. Block 2 may begin once Block 1 #3, #4, #5b are merged; PRs #16-#37 are largely independent and parallelize across multiple agents.
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| 16 | feat(stratigraphy): wire `register_stratigraphy_pass` in master_registrar | `handlers/terrain_master_registrar.py` Bundle I (insert after wind_erosion); `handlers/terrain_stratigraphy.py` (add `register_stratigraphy_pass`) | • Stratigraphy pass registered<br>• `pass_terrain_stratigraphy` appears in default sequence after Block 1 #4<br>• E-2 stratification delta applied to height (per audit fix at `terrain_stratigraphy.py:1069`) | `pytest tests/test_stratigraphy_registration.py` | M | #4 |
+| 17 | fix(morphology): apply `morphology_delta` to `height` in-pass | `handlers/terrain_morphology.py:459-465` | • After `stack.set("morphology_delta", delta, ...)` add `stack.set("height", height + delta, "pass_morphology")`<br>• Pass declares `overrides=("height",)`<br>• 30 dead landform templates now affect heightmap | `pytest tests/test_morphology_height_delta.py` | M | #16 |
+| 18 | fix(determinism): migrate ~58 production RNG sites to `derive_pass_seed(biome_seed/chunk_seed)` | 47 handlers (full list in `.staging/RNG_SITES_47.txt`) + 11 tests; **NOT 127** (V4 dispute resolution: 65 mentions are doc-prose, not RNG sites) | • `git grep -n "random.Random("` returns ≤ 11 (test-only)<br>• Each migrated site tagged with scope (`biome_seed` for pre-slice, `chunk_seed` for post-slice) per C-1<br>• `_FORBIDDEN_RNG_CALLS` extended to `random.choices/choice/randint/shuffle`<br>• `PYTHONHASHSEED=0` set in CI workflow | `pytest tests/test_rng_migration.py::test_no_bare_random`; `pytest tests/test_pythonhashseed_set.py` | L | #14, #15 |
+| 19 | perf(erosion): Numba/Taichi-jit `priority_flood_d8` + `_erode` (E-1, E-3 fix) | `handlers/_water_network.py:580-664` (Numba-jit + pure-Py fallback); `handlers/_terrain_erosion.py:308-487` (Taichi kernel; clamp particle re-injection at boundary) | • E-1 erodibility constants are calibrated Mei-2007 (`Kc=0.022`, `Ks=0.012`, `Kd=0.005`, `Ke=0.005`)<br>• E-3 pure-Py loop replaced by Taichi kernel<br>• `--no-numba` switch for golden test<br>• Hydraulic 200-iter on 4096² runs in <18 s on RTX 4060 Ti | `pytest tests/test_erosion_taichi_kernel.py`; `pytest --benchmark` | L | #2 |
+| 20 | fix(unity-export): `_compat` shim for 14 test imports | `handlers/terrain_unity_export.py` (deprecation notices); new `handlers/_compat.py` | • All 14 internal test imports preserved<br>• Deprecation warnings logged but suite stays green<br>• Removable post-pilot | `pytest tests/test_unity_export_compat.py` | S | #5b |
+| 21 | fix(pipeline): declare missing `requires_channels` and `overrides=` on 16+ passes | `climate_zone`, `forest_mask`, `canopy_density`, `pass_road_network` (overrides road_mask + height), `quixel_ingest` (overrides macro_color, roughness_variation, terrain_normals, terrain_displacement, terrain_ao — currently only declares `splatmap_weights_layer`), `waterfalls` (overrides `particle_emitter_specs`) | • All 16+ passes declare correct contract<br>• Topo-sort no longer needs override-suppression for these<br>• `check_protocol_adoption.py` registry extended (≥60 of 74 passes) | `pytest tests/test_pass_contracts_declared.py` | L | #3 |
+| 22 | fix(test-infra): 4 importlib script-loader landmines + 12 legacy water_surface deletions + `@pytest.mark.slow` | `tests/test_dynamic_quality_truth_gates.py`, `tests/test_visual_render_camera_proof.py`, `tests/test_scene_v3_visual_quality_gate.py` (one more importlib site), `tests/test_callable_orphan_contracts.py:283,290` | • All importlib loaders replaced with regular imports OR test deleted<br>• 12 legacy water_surface refs in tests removed<br>• `@pytest.mark.slow` on tests >2 GB allocation | `pytest tests/` (full suite green) | M | #5b, #20 |
+| 23 | fix(env): wrap DAG-escape `road_mask` write closure into a registered pass | `handlers/environment.py:6265-6266` (Blender-only legacy closure → registered `pass_road_mask_export`) | • Closure removed; write delegated to a registered pass<br>• Channel ownership traceable | `pytest tests/test_road_mask_pass.py` | M | #21 |
+| 24 | fix(cliffs): make overhang threshold configurable; CORRECT cite `terrain_cliffs.py:890` | `handlers/terrain_cliffs.py:890` (real `radians(88.0)`); add config `overhang_threshold_deg` defaulting to 88 with docs that 80 = aggressive, 88 = conservative; do NOT use comments-only 60° / 80° (V3 forensic confirms cite `857-858` is WRONG) | • Threshold sourced from intent config<br>• Defaults documented<br>• Regression test asserts no overhang at 89°+ when threshold=88 | `pytest tests/test_overhang_threshold_configurable.py` | M | #21 |
+| 25 | fix(world): biome archetype collapse cite correction; CORRECT cite `environment.py:2031` | `handlers/environment.py:2031` (`params.get("terrain_type", "mountains")`); v2 PR #25 cited `_terrain_world.py:861-869` which is WRONG (that file is 1667 lines and lines 861-869 are seed/needs_generate) | • Default `terrain_type` collapse documented at correct cite<br>• "mountains" default unchanged for backward-compat; new biome path takes precedence when supplied<br>• 5 sister callsites (lines 1211/2339/3007/3060/2355) flagged for next sweep | `pytest tests/test_biome_collapse_cite.py` | S | none |
+| 26 | feat(coastline): rescue PR — Bezier-SDF smooth shorelines (`landform_zones.py` + `shoreline_sdf.py` files do NOT exist on disk) | new `coastal/landform_zones.py`, `coastal/shoreline_sdf.py` (NET-NEW files; only stale `.pyc` artifacts present) | • Bezier-SDF math NEW module<br>• Provides sub-cell-resolution smooth shorelines (NOT a duplicate of grid-binary chunk zone IDs at spec §3.5)<br>• Coastal pilot consumes for `wave_fetch` smoothing | `pytest tests/test_coastal_landform_sdf.py` | M | #5b |
+| 27 | feat(scatter): parent-child scatter rules (1 of 2 net-new AAA gaps) | `foliage/scatter/parent_child_rules.py` | • Parent species defines child placement rules (e.g., creosote ring exclusion, mother-tree saplings)<br>• Tree imposters and shrubs are already in spec §4.4 + §4.8 (NOT new) — V4 confirms 4-net-new claim was over-inflated<br>• 4 species pairs configured for pilot biomes | `pytest tests/test_scatter_parent_child.py` | M | #6 |
+| 28 | feat(scatter): artist override layer (2 of 2 net-new AAA gaps) | `foliage/scatter/artist_override.py`; `foliage/species_libs/<biome>_overrides.yaml` | • Artist YAML can pin individual hero positions, suppress regions, force species<br>• Loaded after procedural scatter, before exclusion masks<br>• Mountain pilot has 4 hand-pinned heroes in YAML | `pytest tests/test_artist_override_scatter.py`; render-proof: hero positions match YAML | M | #27 |
+| 29 | feat(label-stamping): generator-stamping for cliff/water/rock/gravel labels (Issue #27 architectural fix) | `terrain_cliffs.py` stamps `cliff_label`; `terrain_water_variants.py` stamps `water_label`; `terrain_features.py` stamps `rock_label`; `terrain_morphology.py` stamps `gravel_label`. `terrain_pipeline.py:1133-1191` (`pass_compute_terrain_labels`) becomes validator/clamp (existing docstring at lines 1140-1143 already declares this contract — current state has zero generators stamping) | • Each generator stamps its owned label channel<br>• `pass_compute_terrain_labels` clamps to [0, 1] but does NOT zero-fill when generator stamped<br>• `std(label) > 0` in 100% of pilot chunks<br>• Issue #27 closes; **DO NOT use "synthesize from `slope_deg>60°`" alone — that is a regression per V3 forensic** | `pytest tests/test_terrain_labels_generator_stamped.py::test_std_gt_zero_all_chunks` | L | #4, #16, #17 |
+| 30 | fix(waterfalls): foam alpha both factors corrected | `handlers/terrain_waterfalls.py:115` (`prox_ratio` and `speed_ratio` both inverted; correct formula in doc-comment at lines 100-101) | • `prox_ratio = saturate(obstacle_proximity / max(foam_radius, 1e-9))` (drop the `1.0 -`)<br>• `speed_ratio = flow_speed / max(max_foam_speed, 1e-9)` (drop the `1.0 -`)<br>• Foam appears at obstacles with high flow (correct AAA reference) | `pytest tests/test_waterfall_foam_alpha.py::test_high_velocity_at_obstacle_produces_foam` | S | none |
+| 31 | fix(macro_color): expand `consumed_channels` to actual reads | `handlers/terrain_macro_color.py:230` (currently `("height",)`; actually reads `biome_id`, `wetness`, `erosion_amount`, `deposition_amount`, `albedo_shift_rgb`, `snow_line_factor`, `strata_cross_section`) | • `consumed_channels=("height", "biome_id", "wetness", "erosion_amount", "deposition_amount", "albedo_shift_rgb", "snow_line_factor", "strata_cross_section")` (8 channels, not 1)<br>• Topo-sort places macro_color after producers of all 8<br>• No silent KeyError on missing channels (all guarded) | `pytest tests/test_macro_color_consumed_channels.py` | M | #21 |
+| 32 | fix(macro_color): extend `DARK_FANTASY_PALETTE` to all 14 biomes | `handlers/terrain_macro_color.py:28-37` (currently 8 entries; biomes 8-13 fall through to `pal.get(bid, default_rgb)` to biome-0 umber) | • Add entries for biome IDs 8-13 (volcanic, frozen, desert, jungle_wet, marsh, ash_plain)<br>• Confirm fallback color is documented as biome-0 umber, not grey<br>• 14 entries total, snapshot test asserts hash | `pytest tests/test_dark_fantasy_palette_complete.py` | S | #31 |
+| 33 | fix(audio_zones): line-count and Sabine cite correction | spec body where `terrain_audio_zones.py` referenced (real LOC = **1049**, not 989); Sabine reverb cites at lines 539 (cave/2s) and 554 (open-field/0.1-0.3s) | • Spec body line-count text updated<br>• Sabine references correct<br>• Cave reverb consumes cave FBX bounding box per §12.3 contract | `git grep -n "989 lines"`; `pytest tests/test_audio_zones_sabine_cite.py` | S | none |
+| 34 | feat(checkpoints): ID-keyed registries on `id(controller)` documented | `handlers/terrain_checkpoints.py:97-102` (`_LABEL_REGISTRY: Dict[int, ...]`, `_AUTOSAVE_CONTROLLERS: Dict[int, bool]`, `_ORIGINAL_RUN_PASS: Dict[int, ...]` all keyed by `id(controller)`) | • Module docstring documents `id(controller)` keying contract<br>• Cleanup hooks unregister entries on controller dispose<br>• Memory-leak test: 1000 dispose cycles → no growth | `pytest tests/test_checkpoint_registry_id_keyed.py` | S | none |
+| 35 | fix(except-swallow): demote `bundle_n` post-pipeline error from `log.error` to hard fail | `handlers/terrain_pipeline.py:992-999` (`except Exception: log.error(...)` swallows hard budget violations) | • `bundle_n_post_pipeline_hooks` exception classifies between recoverable and unrecoverable<br>• Budget-violation exceptions raised, not logged-and-swallowed<br>• Test asserts pipeline raises when budget violated | `pytest tests/test_except_swallow_demoted.py::test_budget_violation_raises` | M | #36 |
+| 36 | feat(asset-budget): split `splatmap_layer_count` 4→8 (Unity 2022+ HDRP supports 8) | `handlers/terrain_asset_budget.py` (find `splatmap_layer_count = 4` + comment `# Unity max; same for all profiles`); fix `default_dark_fantasy_rules` 5-channel emit; fix `build_terrain_aaa_node_v6.py:597-605` silent truncate to RGBA | • All profiles: `splatmap_layer_count = 8`<br>• `default_dark_fantasy_rules` produces 8 channels<br>• v6 lines 597-605 emit `splat_secondary.png` for layers 4-7 (does not truncate)<br>• PR #41 (single-chunk re-bake) verifies splat_secondary persists | `pytest tests/test_splatmap_8_layer.py` | M | #2 |
+| 37 | feat(label-stamping): water_label stamping reads `water_surface_mask` from PR #5b | `handlers/terrain_water_variants.py` (water_label stamping); requires `water_surface_mask` channel registered | • `water_label = water_surface_mask` (binary)<br>• Test confirms `std(water_label) > 0` in pilot chunks with rivers/lakes<br>• Validator (#29) does not zero-fill when stamped | `pytest tests/test_water_label_stamping.py` | M | #5b, #29 |
+
+**Block 2 totals: 22 PRs, ~3 days parallelized.** Critical path inside block: #29 (label-stamping architecture) is the longest single PR (L effort) but unblocks Issue #27 closure.
+
+### 11.3 Block 3 — Tile-seam + concurrency + DEM (~2 days, 11 PRs)
+
+Tile-seam contract correctness, concurrency safety in pipeline parallel-merge, DEM ingestion + procedural overlay foundation.
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| 38 | feat(chunks): edge-vert sharing assert (`chunk[i,j].east == chunk[i+1,j].west`) | new `chunks/edge_contract.py`; `tests/test_edge_vert_sharing.py` | • 257-vert edge math validated<br>• Synthetic 8×8 grid passes assertion<br>• Edge tolerance 1e-3m enforced | `pytest tests/test_edge_vert_sharing.py` | M | #4 |
+| 39 | feat(chunks): `edges.json` writer + reader + N/S/E/W feature-thread schema | new `chunks/edge_contract.py`; format per spec §6.3 | • `edges.json` round-trip (write→read→assert)<br>• `feature_threads` array supports `kind ∈ {river, ridge, road}`<br>• Schema versioned (`schema_version: 2`) | `pytest tests/test_edges_json_roundtrip.py` | M | #38 |
+| 40 | feat(splat): seam re-normalize across chunk boundary (sum-to-1.0) | `unity_export_v2/splat_layers.py` (NEW); after 8-channel splat write | • Each pixel's splat weights sum to 1.0 ± 1e-4<br>• Renormalization happens on slice boundary so no half-blend at edges<br>• Test: 2-chunk synthetic biome shows zero edge popping | `pytest tests/test_splat_seam_renormalize.py` | M | #36 |
+| 41 | feat(asset-budget): BC6H/BC7/BC5 compression enforcement | new `unity_export_v2/texture_compression.py` (or extension); selectors: BC6H for HDR, BC7 for albedo, BC5 for tangent-space normals | • Hard validator: any uncompressed PNG path → `BudgetViolation`<br>• Splatmap baked as PNG (not OpenEXR — fix the §6.1 violation)<br>• Per-layer textures BC7-compressed | `pytest tests/test_texture_compression_enforced.py` | M | #36 |
+| 42 | feat(asset-budget): missing emitters (`splat_secondary.png`, `holes.png`, `flow_map.png` RG16, `triplanar_mask.png`, `vertex_ao.bin`, per-layer `albedo/normal/mask/height/detail.png`) | new `unity_export_v2/chunk_artifacts.py` extensions | • All 18 manifest artifacts written (not 14 as v6 currently does)<br>• `holes.png` R8, `flow_map.png` RG16, `vertex_ao.bin` baked<br>• Per-chunk file count enforced (≤ 50 per chunk per spec §6.5) | `pytest tests/test_chunk_artifacts_complete_18.py` | L | #36, #41 |
+| 43 | fix(asset-budget): `lod_meshes == []` validator + block manifest emission | `vegetation_system.py:1284`, `procedural_grass.py:720`; new validator | • `lod_meshes == []` raises `LodMeshValidationError`<br>• Manifest emission blocked until LOD chain complete<br>• v6 stub (32×32 controller path) cannot bypass | `pytest tests/test_lod_meshes_validator.py` | M | #36, #35 |
+| 44 | feat(unity-export): streaming budget hard cap (2 GB chunk-artifact + per-chunk file count) | `unity_export_v2/chunk_artifacts.py`; reads `meta.json.memory_budget_mb` | • 2 GB hard cap per spec §6.5<br>• Per-chunk file-count cap (≤ 50)<br>• Tested: synthetic over-budget chunk fails fast | `pytest tests/test_streaming_budget_enforced.py` | M | #42 |
+| 45 | fix(pipeline): `pass_hydrology` insert cite correction | `handlers/environment.py:2861` (`requested_passes[3:3] = ["pass_hydrology", "erosion"]`) — pre-erosion confirmed; v2 PR #45 cited `2017-2019` which is WRONG (that range is unrelated `requested_biome_name` reads) | • Cite documented<br>• Insert position verified pre-erosion<br>• Test asserts `pass_hydrology` runs before `erosion` in default sequence | `pytest tests/test_pass_hydrology_insert_position.py` | S | #4 |
+| 46 | feat(pipeline): Rule-1 gate restored on scene-read (consumes #3 toposort overrides) | new `handlers/_rule1_gate.py`; integrated with `TerrainPassController` | • Rule-1 gate active on scene-read paths<br>• Bypass at v6 controller flagged (audit referenced; PR #36 starts the wider fix)<br>• Toposort respects gate ordering | `pytest tests/test_rule1_gate_active.py` | M | #3 |
+| 47 | feat(parallel-merge): replace `setattr` bypass with explicit channel sync | `handlers/_parallel_merge.py` (audit-referenced setattr-bypass leak); add explicit `merge_channel(...)` API | • No `setattr(stack, key, value)` bypass<br>• Merge respects channel ownership + topo order<br>• Concurrent run produces identical output to serial | `pytest tests/test_parallel_merge_safe.py` | M | #21 |
+| 48 | fix(unity-export): consolidate writer edits — explicit dep chain #11 → #12 → #44 → #5b → #48 | `handlers/terrain_unity_export.py` (no new code; reorders metadata population) | • Single canonical channel layout in writer<br>• 25-field `VbTerrainTileMetadata` populated (NOT 3-field stub — memory correction in §11.10)<br>• Writer-edit serialization prevents merge collisions | `pytest tests/test_unity_export_metadata_25_fields.py` | M | #12, #44, #5b |
+
+**Block 3 totals: 11 PRs, ~2 days.** Critical path: #38 → #39 → #40 → {#41, #42, #43, #44, #48}; #45-#47 independent.
+
+### 11.4 Block 4 — Polish + rescue + infra + ecology demoted (~2 days, 14 PRs)
+
+Per-biome ecology demoted from B1 to B4 polish (P3 severity for dark-fantasy game), rescue PRs, scope-relocation infra.
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| 49 | refactor(scope): relocate `procedural_meshes.py` (22,816 LOC) | move → `veilbreakers_assets` sibling repo; add 4-symbol shim layer in `veilbreakers_terrain/_compat/procedural_meshes.py` for active callers (`_mesh_bridge.py:26`, `_terrain_depth.py:51`, `environment.py:229`, `_bridge_mesh.py:15`) | • File moved, shim preserves imports<br>• 4 callers unchanged<br>• Pyright clean | `pytest tests/test_procedural_meshes_shim.py` | L | #20 |
+| 50 | refactor(scope): relocate animation modules (~3K LOC) | `animation_environment.py`, `animation_gaits.py`, `sim/foam.py`, `sim/cloth.py` → `veilbreakers_animation` sibling | • Moved, no breakages<br>• terrain repo no longer contains animation scope contamination | `pytest tests/test_animation_relocated.py` | L | #49 |
+| 51 | refactor(core): extract `terrain_core.py` (~50 lines) | `PassDefinition`, `derive_pass_seed` (re-export), `TerrainPassController` Protocol | • 8 circular imports broken<br>• Tests refactor cleanly | `pytest`; pyright clean | M | #14 |
+| 52 | refactor(types): split `terrain_semantics.py` (82 importers) | `_types.py` (dataclasses) + `_semantics.py` (logic) | • 82 importers re-routed<br>• No behavior change | `pytest` (full suite) | L | #51 |
+| 53 | refactor(env): split `environment.py` (8651 LOC) at 5 seams | terrain / water / roads / export / validation | • Five files, original `environment.py` becomes thin re-export<br>• All 5 cited line numbers (1211, 2031, 2339, 2861, 3007, 3060) re-anchored | `pytest`; CI green | XL | #50 |
+| 54 | refactor(features): split `terrain_features.py` at 9 `generate_*` seams | one file per feature (canyons, waterfalls, cliffs, swamps, arches, geysers, sinkholes, floating rocks, ice/lava) | • 9 files emitted<br>• All `generate_*` functions exported via `__init__.py` | `pytest`; CI green | XL | #51 |
+| 55 | chore(deletes): locked-list — 47 deprecated scripts + stale audit docs + monolithic `output/visual_nodes/` | `scripts/deprecated/*` (6); 47 deprecated scripts; `terrain_scatter_altitude_safety.py`; `terrain_legacy_bug_fixes.py`; `asset_generation.py` (after replace 1 import); 14 superseded markdown docs (4× `MASTER_AUDIT_V*_2026_04_19.md`, deep_dive_2026_04_20 trio, GLM_IMPLEMENTATION_PLAN, scratch reconstruct files); 5 MB stale audit docs (V2-V5_2026_04_19, deep_dive_2026_04_16/17, R11/R12, m3_verification, manual_review_batches CSVs); 935 MB `output/visual_nodes/*` (8 .blend); ~280 MB `output/aaa_node_v*/scene_v*`; 120 MB `*.blend1` from LFS | • **5,746 LOC + ~1.3 GB reclaimed**<br>• Single PR with locked file list<br>• Run AFTER #56 (vegetation_system defaults fix) to break #55 ↔ #56 cycle | `git ls-files` shows expected delete list; CI green | M | #5b, #2, #56 |
+| 56 | fix(vegetation): repair `vegetation_system.py` defaults so #55 can delete safely | `handlers/vegetation_system.py:1284,1534` (existing `lod_meshes = []` default + manifest writer); fix BEFORE #55 deletes file | • Defaults repaired so other callers do not break on delete<br>• 1-step ordering: #56 lands first, then #55 deletes the file<br>• Resolves #56 ↔ #55 cycle from Wave-5 §B.1 | `pytest tests/test_vegetation_defaults_repaired.py` | M | #43 |
+| 57 | demote(ecology): per-biome scattering rules (mountain) | `foliage/species_libs/mountain.yaml` + `foliage/scatter/biome_specific/mountain.py` | • Mountain scatter inherits from generic + biome-specific overrides<br>• v2 PR #20 demoted from B1 to B4: dark-fantasy game, P3 polish severity (per V4 referee + user feedback)<br>• References Appendix B.1 species inventory | `pytest tests/test_mountain_ecology.py` | M | #27, #28 |
+| 58 | demote(ecology): per-biome scattering rules (grassland) | `foliage/species_libs/grassland.yaml` + `foliage/scatter/biome_specific/grassland.py` | • References Appendix B.2 species inventory<br>• v2 PR #21 demoted from B1 to B4 | `pytest tests/test_grassland_ecology.py` | M | #57 |
+| 59 | demote(ecology): per-biome scattering rules (coastal) | `foliage/species_libs/coastal.yaml` + `foliage/scatter/biome_specific/coastal.py` | • References Appendix B.3<br>• v2 PR #22 demoted | `pytest tests/test_coastal_ecology.py` | M | #57 |
+| 60 | feat(quixel): linear-space blend verification | `handlers/terrain_quixel_ingest.py:619` (verify `_srgb_to_linear` on albedo); also verify roughness/normal paths linearize | • Quixel materials blend in linear, not sRGB (P0-A4-5 from MASTER 04-27)<br>• Test asserts roughness/normal linearization | `pytest tests/test_quixel_linear_blend.py` | M | #2 |
+| 61 | feat(shader): `HistogramPreservingBlend` HLSL implements Heitz/Neyret Eq.8/11 | `terrain_stochastic_shader.py:51-265` (currently URP-tagged at lines 73, 263; rewrite for HDRP correctness — P0-A4-2) | • HLSL implements Eq.8/11 correctly<br>• `terrain_banded_advanced.py:542` no longer hardcodes `variant="classic"`<br>• `intent.stochastic_variant` threaded through (B15-P1-19) | `pytest tests/test_stochastic_shader_heitz_neyret.py` | L | #2 |
+| 62 | gate(W-1): close Issue #28 only after #5b lands AND `test_water_depth_skip.py` passes | `handlers/terrain_pipeline.py:1355-1421` (`pass_water_depth`); GitHub issue #28 | • Skip path correct under new `water_surface_elevation_m` semantics<br>• Skip when `water_surface_elevation_m` or `height` is None<br>• Producers exist at `terrain_water_variants.py:880` (water_variants writer) and `:1463` (bathymetry)<br>• Issue #28 closed only after #5b landed AND skip path verified | `pytest tests/test_water_depth_skip.py` | S | #5b, #18 |
+
+**Block 4 totals: 14 PRs, ~2 days (with refactor PRs being XL/L). #49-#54 may slip to v1.1 if Block 4 calendar is tight; #55-#62 must land for pilot acceptance.**
+
+### 11.5 Block 5 — Unity-side workstream + cross-cutting hardening (~25 PRs, studio-team-scale)
+
+Block 5 is a separate workstream from Block 1-4 bake-side PRs. Requires **Unity engineer** + HDRP shader graph development + asset-budget hardening + single-chunk re-bake module + test infra + dependency hardening + doc rot cleanup.
+
+#### 11.5.1 Unity-side parity (5 BLOCKING gaps + 9 polish)
+
+The bake-side PRs in Blocks 1-4 do **NOT** fix any of these. Block 5 is required for Unity ingestion.
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| B5-U1 | feat(unity): build HDRP shader graph stack OR trigger MicroSplat fallback | new `unity_project/Assets/Shaders/{VbTerrainLitTriplanar,AntiTile,DistanceNormal,OverlayDynamic}.shadergraph` + master + 2 subgraphs; OR commit to MicroSplat $120 fallback per spec §6.6 | • Either: 4 .shadergraph files committed AND `acceptance_checks.py` validates them<br>• Or: MicroSplat fallback decision logged + asset committed<br>• Currently 0 .shadergraph files exist on disk (audit B.3 — F grade ~10%) | Manual: open in Unity 2022 LTS HDRP, all 4 compile; `acceptance_checks.py` exits 0 | XL | none |
+| B5-U2 | feat(unity): instantiate HDRP `WaterSurface` from `water.json` | `unity_project/Assets/Scripts/VbTerrainImporter.cs:1150-1153` (currently logs "raster-backed water mesh creation disabled" + skips); replace with WaterSurface creation per ocean/river/lake interfaces | • `WaterSurface` instantiated for each water body in water.json<br>• Ocean type infinite mesh, Pool type from polyline, River type with currentMap=flow_map.png<br>• Editor smoke-test loads pilot mountain chunk with river → river surface visible | Manual: open Unity, load pilot chunk, river WaterSurface present | L | B5-U1 |
+| B5-U3 | feat(unity): `holes.png` consumer (`terrainData.SetHoles`) | `VbTerrainImporter.cs:1150-1153` adjacent (no `SetHoles` call currently) | • `terrainData.SetHoles(holes_array)` invoked<br>• Mandatory contract item 13 passes<br>• Editor: chunk with cave undercut shows hole | Manual: chunk with cave loads, hole visible | M | B5-U1 |
+| B5-U4 | fix(unity): tangent-space normal Y-flip on import | `VbTerrainImporter.cs:ImportTextureAsset:2097` (currently sets `textureType = NormalMap` but never inverts G channel for OpenGL-Y → DX-Y bake side at `terrain_unity_export.py:334` `_pack_tangent_space_normal_rgba`) | • Importer inverts G channel when `textureType = NormalMap`<br>• OR bake side flips before write<br>• Decision documented in inline comment (Unity wants DX-Y) | Manual: render slope geometry, shading direction matches reference; `pytest tests/test_normal_handedness.py` | M | B5-U1 |
+| B5-U5 | feat(unity): `edges.json` edge-stitch contract (BOTH bake AND Unity sides) | bake: `chunks/edge_contract.py` (PR #39); Unity: `VbChunkLoader.cs` `OnNeighborLoaded` event consumer with 1e-3m height tolerance per §6.3 | • Bake-side emitter (PR #39 covers writer)<br>• Unity-side validator runs on `OnNeighborLoaded`<br>• Mismatch: log error + draw red wireframe (Editor) / log warning + edge-blend smooth (Player) per §13.9<br>• Cross-chunk seam pop eliminated | Manual: 2 chunks load, edge-weld assertion passes; intentionally corrupt one heightmap → assertion fails fast in Editor | L | #39 |
+| B5-U6 | feat(unity): vertex AO from `vertex_ao.bin` to vertex color | `VbChunkLoader.cs` (vertex color attribute on terrain mesh) | • `vertex_ao.bin` read on activate, written to vertex_color.r<br>• Test: ambient-only render shows AO darkening | Manual: render contact shadows | M | #42 |
+| B5-U7 | feat(unity): HDRP `DecalProjector` instantiation from `decals.json` | `VbChunkLoader.cs` (decal projector instantiation) | • `decals.json` parsed<br>• HDRP DecalProjector instantiated per entry<br>• Pool released on chunk unload | Manual: chunk loads with decals, decals visible in render | M | #42 |
+| B5-U8 | feat(unity): bind `flow_map.png` to River `WaterSurface.currentMap` | `VbChunkLoader.cs` (after WaterSurface instantiation) | • `flow_map.png` (RG16) bound as currentMap<br>• River flows in correct direction in Editor preview | Manual: river flow visible | M | B5-U2 |
+| B5-U9 | feat(unity): `caves/*.fbx` import + GameObject child | `VbChunkLoader.cs` (cave mesh handoff) | • If `caves/` directory exists, FBX files imported as GameObject children<br>• Collider + render components attached<br>• Despawn on chunk unload | Manual: chunk with cave loads with cave geometry | M | #42 |
+| B5-U10 | feat(unity): TerrainLayer height + detail PNGs bound (currently ignored) | `VbChunkLoader.cs:terrainLayers binding` (currently TerrainLayer only gets diffuse/normal/mask) | • Per-layer height map and detail map bound to TerrainLayer<br>• Parallax + detail micro-variation visible at close range | Manual: close-up render shows parallax + detail texturing | M | #42 |
+| B5-U11 | feat(unity): real tree prefab loader (replace Capsule placeholder) | `VbChunkLoader.cs:GetOrCreateTreePrefab:2229-2273` (currently returns Capsule primitive) | • Loads species prefab from Addressables<br>• Falls back to LOD3 imposter atlas if prefab not found<br>• 4 species loaded for pilot biomes | Manual: pilot chunks render with tree species, NOT capsules | L | #42, #27 |
+| B5-U12 | feat(unity): foliage UV2 (lightmap) + UV3 (Pivot Painter wind) + vertex colors | bake: `foliage/wind_uv_bake.py` (UV2/UV3 channels); Unity: VbFoliageImporter passes through | • UV2 has lightmap UVs; UV3 has wind metadata per SpeedTree convention (`UV2 = (sway_freq, branch_amplitude, leaf_flutter, gust_freq)`, `UV3 = (gust_strength, phase_offset, wind_axis_x, wind_axis_y)`)<br>• Wind animation visible in Editor preview<br>• Lightmaps bake without UV overlap | Manual: GPU instancing wind; lightmap bake | L | #42 |
+| B5-U13 | feat(unity): expand `VbTerrainTileMetadata` to all 25 fields | `unity_project/Assets/Scripts/VbTerrainTileMetadata.cs` (memory correction: 25 fields, NOT 3-field stub); add `version_hash`, `character_spawn_safe_pos`, `addressable_deps`, `neighbor_prefetch_hints`, `memory_budget_mb`, `audio_zones`, `navmesh_hints`, `seed`, `is_landmark` (foliage), `basin_id/segment_id` (water) | • All 25 fields declared and JSON-deserializable<br>• Bake-side `meta.json` emits all 25 (PR #48 already populates)<br>• Schema-versioned migration if older `meta.json` loaded | Manual: load older chunk with v1 meta, migration path runs | L | #48 |
+| B5-U14 | feat(unity): unknown-key warnings on raw manifest sidecars (audio/decals/water JSON) | `VbChunkLoader.cs` schema validators per sidecar | • Currently only descriptor warns; raw sidecars blob-attached without schema validation<br>• Each sidecar has named JSON Schema<br>• Unknown-key warnings logged per file | Manual: corrupt one sidecar JSON, Unity logs warning, doesn't crash | M | B5-U13 |
+
+#### 11.5.2 Cross-PR coherence patches (5 PRs)
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| B5-C1 | fix(coherence): unify water-channel naming registry | `handlers/terrain_channel_registry.py` (NEW); spec body §3.4 line 192 alternate names DELETED | • Single registry file declares `water_surface_mask` (binary), `water_surface_elevation_m` (z), `water_depth_m` (delta)<br>• Spec §3.4 line 192 alternate vocab deleted<br>• 3 competing vocabularies converge to 1<br>• #5b implements; #B5-C1 documents the registry | `pytest tests/test_water_channel_registry.py` | M | #5a, #5b |
+| B5-C2 | fix(coherence): serialize `terrain_unity_export.py` writer-edit dep chain | dep ordering (#11 → #12 → #44 → #5b → #48) | • PR labels enforce: only one in-flight at a time<br>• `terrain_unity_export.py` not edited by parallel PRs<br>• Merge collisions zero | Repo policy + PR-label CI gate | S | #12, #48 |
+| B5-C3 | fix(coherence): break #56 ↔ #55 cycle (vegetation_system before delete) | dep ordering (#56 lands first; #55 then deletes file) | • Resolution: #55 removes `vegetation_system.py` from delete list, OR<br>• #56 lands before #55 with explicit dep<br>• Wave-5 §B.1 cycle resolved | PR sequencing test | S | #55, #56 |
+| B5-C4 | fix(coherence): C-1 propagated to PR #18 — scope tagging in RNG migration | extends PR #18 with `seed_scope: Literal["biome", "chunk"]` argument | • Each migrated RNG site tagged with scope (`biome` for pre-slice, `chunk` for post-slice) per C-1<br>• Migration helper enforces scope is declared | `pytest tests/test_rng_scope_tagged.py` | S | #18 |
+| B5-C5 | fix(coherence): register `water_surface_mask` channel (PR #37 reads, no PR creates) | extends PR #5b explicitly | • `water_surface_mask` channel registered in canonical channel set<br>• PR #37 reads it; producer is PR #5b<br>• Documentation explicit | `pytest tests/test_water_surface_mask_registered.py` | S | #5b |
+
+#### 11.5.3 Single-chunk re-bake architecture (4 PRs)
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| B5-D1 | feat(chunks): `chunks/chunk_seed.py` (4-arg `chunk_seed`, 2-arg `biome_seed`) | new `chunks/chunk_seed.py` | • `biome_seed(biome, version) → int`<br>• `chunk_seed(biome, x, y, version) → int`<br>• Wired into 47 RNG sites via PR #18 single-pass migration<br>• Concrete API for C-1 resolution | `pytest tests/test_chunk_seed_module.py` | M | #18 |
+| B5-D2 | feat(chunks): `chunks/cache_invalidator.py` (chunk-grid-aware content-hash + dependency graph) | new `chunks/cache_invalidator.py`; reads `terrain_dirty_tracking.DirtyRegion` | • Content-hash per chunk per channel<br>• Dependency graph: `heightmap → erosion → drainage → splat → foliage`<br>• Edit at one chunk only rebakes affected chunks | `pytest tests/test_cache_invalidator.py` | L | B5-D1 |
+| B5-D3 | feat(chunks): watershed-downstream invalidator | extends `chunks/cache_invalidator.py` | • When heightmap edited at chunk (i,j), compute D8 downstream chunk set from cached `flow_direction`<br>• Invalidates `water.json` + `flow_map.png` on those chunks<br>• Test: edit headwaters chunk → all downstream chunks invalidated | `pytest tests/test_watershed_invalidator.py` | M | B5-D2 |
+| B5-D4 | feat(chunks): `chunks/chunk_baker.py` + single-chunk CLI | new `chunks/chunk_baker.py`; CLI `python -m veilbreakers_terrain.bake --biome mountain --chunk 4,4 --reuse-merged-field` | • Halo-aware re-bake (5px halo for foliage exclusion)<br>• CLI works on 1 chunk in <9 min on RTX 4060 Ti<br>• Outputs identical to full-biome slice for the same chunk | Manual: full-biome bake, single-chunk re-bake → byte-identical for unchanged chunks | L | B5-D3 |
+
+#### 11.5.4 Test infrastructure (7 PRs)
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| B5-T1 | feat(tests): render-baseline PNGs + `compare_render_to_golden` SSIM 0.95 wired into CI | new `tests/golden_scenarios/{cave_entrance, cliff_talus_apron, deep_lake_basin, waterfall_plunge_pool}/baseline.png` (4 files); CI step uses `terrain_visual_qa.py:706` SSIM | • 4 baseline PNGs committed<br>• SSIM 0.95 threshold enforced in CI<br>• Currently ZERO render-baseline PNGs (handler at `terrain_visual_qa.py:706` is unreachable) | `pytest tests/test_golden_scenarios.py`; CI: `Render-Goldens` lane green | L | #19, #29 |
+| B5-T2 | feat(tests): `pytest-benchmark` + nightly perf cron | install `pytest-benchmark`; convert 8 ad-hoc `elapsed < N` asserts to `@pytest.mark.benchmark`; new `.github/workflows/perf-nightly.yml` | • All 8 ad-hoc perf asserts converted<br>• Nightly job tracks regression history<br>• Auto-issue on >20% regression | CI: `Perf-Nightly` lane green | M | #2 |
+| B5-T3 | feat(tests): `hypothesis` property tests on channel invariants | install `hypothesis>=6.100`; add `tests/test_channel_invariants.py` | • NaN-free, shape-stable, range-bounded across N=100 seeds<br>• Each registered channel has at least one property test | `pytest tests/test_channel_invariants.py` | M | #2 |
+| B5-T4 | feat(tests): extend byte-identity test to all 18 manifest artifacts | `tests/test_phase8_determinism_guardrails.py:53` (currently checks 3 of 18) | • Test asserts byte-identity across all 18 artifacts on 2 PYTHONHASHSEED values<br>• Includes `splat_secondary.png`, `holes.png`, `flow_map.png`, `triplanar_mask.png`, `vertex_ao.bin`, per-layer textures, `edges.json`, etc. | `pytest tests/test_phase8_determinism_guardrails.py` | L | #42 |
+| B5-T5 | feat(tests): protocol enforcement 21/74 → ≥60/74 | `scripts/check_protocol_adoption.py` registry extension; decorate handlers | • At least 60 of 74 passes have protocol enforcement<br>• `check_protocol_adoption.py` gate fails when pass added without protocol<br>• Currently 28% (21/74) | CI: `protocol-adoption` lane green | M | #21 |
+| B5-T6 | feat(tests): `pytest-rerunfailures` + flaky-hunter nightly | install `pytest-rerunfailures>=12.0`; new `.github/workflows/flaky-hunter.yml` | • Tag known-flaky tests with `@pytest.mark.flaky(reruns=3)`<br>• Nightly job rebuilds confidence intervals<br>• Auto-issue on flake-rate >5% | CI: `Flaky-Hunter` lane green | M | B5-T2 |
+| B5-T7 | feat(ci): fast-lane vs nightly-full split | `.github/workflows/python-package.yml` (split into fast PR lane + nightly full-suite); fast lane <5min (lint + smoke); nightly full | • PR lane <5 min wall-clock<br>• Nightly runs full suite + golden + perf + flaky<br>• Existing `--cov-fail-under=72` preserved (memory correction: was claimed 40, real is 72) | CI: `PR-Fast` <5min; `Nightly-Full` runs | M | B5-T1, B5-T2 |
+
+#### 11.5.5 Asset budget hardening (4 PRs beyond Block 2 #36)
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| B5-A1 | feat(asset-budget): v6 controller bypass — wire to controller | `scripts/build_terrain_aaa_node_v6.py:187-287` (currently directly invokes `pass_cliffs`, `pass_waterfalls`, `pass_materials` — bypasses `TerrainPassController.run_pipeline`) | • v6 production stack runs through controller<br>• `enforce_budget()` actually fires (currently `validation_full_present: true` is theatre)<br>• Single fix only one of 4 needed (per audit B.6) | `pytest tests/test_v6_controller_wired.py` | L | #36, #43 |
+| B5-A2 | feat(asset-budget): missing emitters — `splat_secondary.png` (layers 4-7), per-layer `albedo/normal/mask/height/detail.png`, `flow_map.png` (RG16), `triplanar_mask.png`, `vertex_ao.bin` | `unity_export_v2/chunk_artifacts.py` extensions | • All emitters in default-sequence Bundle N<br>• 18-artifact manifest contract complete<br>• Already partially in PR #42; this PR closes the gap | `pytest tests/test_emitters_complete.py` | M | #42 |
+| B5-A3 | feat(asset-budget): BC compression hard validator + PNG-not-EXR splatmap | `unity_export_v2/texture_compression.py` (extends PR #41 with hard validator) | • Splatmap baked as PNG (per spec §6.1)<br>• OpenEXR usage flagged by validator<br>• BC6H/BC7/BC5 enforced (PR #41 covers selection; #B5-A3 covers gate) | `pytest tests/test_compression_gate.py` | M | #41 |
+| B5-A4 | feat(asset-budget): `lod_meshes` validator + manifest emission gate | `vegetation_system.py:1284`, `procedural_grass.py:720` (PR #43 covers — #B5-A4 closes the manifest-emission gate) | • Manifest emission blocked when any species `lod_meshes == []`<br>• Validator runs before bundle write<br>• PR #43 + #B5-A4 together unblock | `pytest tests/test_lod_meshes_manifest_gate.py` | M | #43 |
+
+#### 11.5.6 Dependency hardening + supply chain (3 PRs)
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| B5-DEP1 | sec(deps): CVE patch + missing deps + extras split | `pyproject.toml` (extends PR #2): Pillow `>=10.4` (CVE-2023-50447 + CVE-2024-28219); declare `taichi`, `rasterio`, `PyYAML`, `gradio_client`, `requests`, `huggingface_hub`; split `[providers]` + `[geo]` extras | • All declared deps present<br>• `pip-audit` zero CRITICAL after install | `pip-audit`; CI green | M | #2 |
+| B5-DEP2 | sec(deps): lockfile + `bake-env.yml` + `--require-hashes` | new `uv.lock` OR `requirements-lock.txt`; new `bake-env.yml` (Blender 4.5 NumPy 1.24.x compat); CI uses `pip install --require-hashes` | • Lockfile committed<br>• `bake-env.yml` committed<br>• CI install uses `--require-hashes` | CI install green | M | B5-DEP1 |
+| B5-DEP3 | sec(supply-chain): `.github/dependabot.yml` + SHA-pin Actions + HF Space SHA + CodeQL `security-extended` | new `.github/dependabot.yml` (weekly cadence pip + github-actions); SHA-pin all `actions/*`; pin Hunyuan3D-2 HF Space SHA in `hunyuan3d2_provider.py`; extend `.github/codeql/codeql-config.yml` to `security-extended` + custom CWE-918 SSRF rules for `requests`/`gradio_client` paths | • Dependabot live<br>• All Actions SHA-pinned (verified by CI lint)<br>• HF Space `revision=` capture in provider<br>• CodeQL `security-extended` query suite live (memory was wrong about default-only — already at `security-and-quality`; this upgrades to `security-extended`) | CI: `CodeQL` upgraded; `dependabot.yml` live | M | B5-DEP2 |
+
+#### 11.5.7 Doc rot cleanup (4 PRs)
+
+| PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
+|------|-------|-------------------|------------|------------|--------|------|
+| B5-DOC1 | docs(archive): 14 superseded markdown files → `docs/_archive/2026-04/` | 4× `MASTER_AUDIT_V*_2026_04_19.md`; deep_dive_2026_04_20 trio; `GLM_IMPLEMENTATION_PLAN`; scratch reconstruct files | • Files moved, not deleted<br>• `docs/_archive/2026-04/INDEX.md` lists each with original path | Manual: review archive index | S | #55 |
+| B5-DOC2 | docs(supersede): patch 04-27 master implementation guide with Batch15 ✅ FIXED status + SUPERSEDED-BY banner | `docs/aaa-audit/deep_dive_2026_04_27/master_implementation_guide.md` (top-of-file banner pointing to `docs/aaa-audit/batch15_2026_05_04/MASTER_AUDIT_BATCH15.md`); patch grade table | • Banner SUPERSEDED-BY at top<br>• 5 P0s marked ✅ FIXED: W-1 (`_water_network.py:907-929`, `procedural_grass.py:350-352`, `coastline.py:1242`), E-1 (`_terrain_erosion.py:318`), E-2 (`terrain_stratigraphy.py:1069`), M-3 (`terrain_texture_layer_stack.py:38`), CL-2 (`terrain_cliffs.py:2704-2706`)<br>• Grade table predictions corrected: Water D+→C+, Visual QA F→fixed, AI assets D→live | Manual: review banner; grade table 5 wrong→fixed | M | none |
+| B5-DOC3 | docs(spec-fix): remove 3 nonexistent build script citations from spec body | spec body lines 7 + 27 (currently cite `coastal_build_v3d_vegetation_v2.py`, `mountain_build_v1_full.py`, `grassland_full_build.py` — verified deleted by V3 forensic) | • Lines 7 and 27 reference superseded scripts as historical context only<br>• `CODEBASE_STRUCTURE.md` refreshed post-providers/, post-Batch14 export-wiring, post-`terrain_texture_layer_stack.py` | Manual: review spec body cites | S | none |
+| B5-DOC4 | docs(refresh): commit dirty-tree docs (already modified, not committed) | `docs/BLENDER_AGENT_USAGE_GUIDE.md`, `docs/TERRAIN_CALLABLE_USAGE_GUARDRAIL.md` (per `git status`); add chunk-aware sections to BLENDER guide; add chunk-pass wiring contract to GUARDRAIL | • Both files committed<br>• Chunk-aware sections present<br>• Chunk-pass wiring contract documented | Manual: review docs | S | #4 |
+
+**Block 5 totals: 25 PRs (14 + 5 + 4 + 7 + 4 + 3 + 4 = 41 line items, 25 PR groups by ownership). With a Unity engineer in parallel, ~3–5 calendar days. Without, +2 weeks for B5-U1 alone.**
+
+### 11.6 Cross-PR dependency graph
+
+```
+                                ┌─────────────────────────────┐
+                                │  Block 1 — Pipeline Cleanup │
+                                └─────────────────────────────┘
+                                              │
+                       ┌──────────────────────┼─────────────────────┐
+                       ▼                      ▼                     ▼
+                      #1                    #14                    #6
+                       │                      │                    (S)
+                       ▼                      ▼
+                      #2 ◄──────────────────#15 (PYTHONHASHSEED)
+                       │                      │
+                       ▼                      │
+                      #3 (toposort overrides=)│
+                       │                      │
+                       ▼                      │
+              ┌────────┴───────┐              │
+              ▼                ▼              │
+             #4              #5a              │
+            (orphan         (drop W-1         │
+            passes)         legacy)           │
+              │                │              │
+              ▼                ▼              │
+          (parallel)         #5b              │
+                          (canonical)         │
+                              │               │
+                              ▼               │
+                            #12 (atomic)─────#13 (NaN/Inf)
+                              │
+        ┌─────────────────────┼───────────────────┐
+        ▼                     ▼                   ▼
+     Block 2              Block 3              Block 4
+   (parity + long-tail)  (seam + concurrency)  (polish + scope)
+
+#16(stratig)─#17(morph)─#29(label-stamp)─#37(water-label)
+   ▲           ▲             ▲                  ▲
+   └─#4────────┴─#16─────────┴──#16,#17         └─#5b,#29
+
+#19(taichi)─#21(contracts)─#22(test-infra)
+                  │
+                  └─#46(rule1)─#47(parallel-merge)
+
+#36(splat 4→8)─#41(BC compress)─#42(emitters)─#44(stream cap)
+   │                ▲              ▲
+   └────────────────┴──────────────┴──── all consume #36
+
+#27(parent-child)─#28(artist override)─#57(mountain ecology)
+                                       └─#58(grassland)─#59(coastal)
+
+#56(veg defaults)─#55(deletes)  ◄── must land in this order
+
+                                ┌────────────────────────────────┐
+                                │  Block 5 — Unity workstream    │
+                                │  (parallel to Blocks 1-4)      │
+                                └────────────────────────────────┘
+B5-U1(HDRP shaders OR MicroSplat)─┬─B5-U2(WaterSurface)
+                                   ├─B5-U3(holes.png)
+                                   └─B5-U4(normal Y-flip)─B5-U5(edges.json)
+B5-D1(chunk_seed)─B5-D2(cache invalidator)─B5-D3(watershed)─B5-D4(chunk_baker)
+B5-T1(goldens)─B5-T7(fast-lane)
+B5-DEP1(CVEs)─B5-DEP2(lockfile)─B5-DEP3(SHA-pin)
+B5-DOC1(archive)─B5-DOC2(04-27 banner)
+```
+
+**Critical path:** `#1 → #2 → #3 → #5a → #5b → #12 → #36 → #42 → #44` (9 PRs, all M/L/M/M/M/M/M/L/M = ~5 days serial).
+
+**Block 5 critical path (separate workstream):** `B5-U1 → B5-U2 → B5-U5 → B5-T1` (~3-5 days with Unity engineer).
+
+**Calendar minima:**
+- Single engineer, no Unity: ~14 days (Blocks 1-4 serial-parallel + Block 5 sequential).
+- Two engineers (1 bake + 1 Unity in parallel): ~7-8 days.
+
+### 11.7 AAA-parity cuts (honesty register)
+
+These are **not deferrals** — they are explicit cuts where the spec was over-claiming what the codebase or v1 pilot delivers. Each cut is acknowledged here so verifiers and the user know the gap is intentional.
+
+1. **HDRP shader graph stack — F (~10%) on disk, not "✅ tagged".** Wave-5 §B.3 verified: 0 `.shadergraph` files, 0 `.hlsl`, 0 `.shader`, 0 `.shadersubgraph`, 0 `.mat`. No Unity project exists (no `Assets/`, no `Packages/manifest.json`). All 4 promised variants (`VbTerrainLitTriplanar`, `AntiTile`, `DistanceNormal`, `OverlayDynamic`) + master + 2 subgraphs are absent. Only HLSL is `terrain_stochastic_shader.py:51-265` embedded as Python f-string, **tagged URP not HDRP** (lines 73, 263). `acceptance_checks.py` referenced by spec line 1016 — does not exist. **Block 5 PR #B5-U1 either commits to building all 4 .shadergraph files OR triggers MicroSplat $120 fallback per spec §6.6.** Pilot acceptance gate cannot pass §6.10 polish-tier without one or the other.
+
+2. **Unity-side has 5 BLOCKING gaps that bake-side PRs do NOT fix:**
+   - HDRP shader graphs absent (B5-U1)
+   - WaterSurfaces stubbed out (`VbTerrainImporter.cs:1150-1153` skip + log) — B5-U2 fixes
+   - `holes.png` never read (no `terrainData.SetHoles` call) — B5-U3 fixes
+   - Tangent-space normal handedness mismatch (bake emits OpenGL-Y, importer never inverts G) — B5-U4 fixes
+   - `edges.json` edge-stitch contract entirely absent both bake AND Unity sides — B5-U5 fixes (paired with bake-side PR #39)
+   Pilot Unity ingestion will fail without all 5.
+
+3. **Pipeline `<60min/chunk` target requires Taichi-CUDA + GPU runner; no CPU fallback (per spec §11.5 #2).** Wave-5 §B.2 confirms: bake-venv + Taichi-CUDA perf gate requires self-hosted GPU runner (RTX 4060 Ti). CPU-only path is not viable for AAA-bar erosion (E-3 audit note: pure-Python is non-functional at AAA sizes). v1 pilot acceptance assumes a self-hosted GPU CI runner. CI without GPU runner cannot validate perf budget.
+
+4. **Asset budget `enforce_budget()` exists but v6 controller bypass means the live 1024² stack does not enforce — single fix won't reach all artifacts; PR #36 + B5-A1 + B5-A2 + B5-A3 + B5-A4 are 5-PR sequence (NOT 1).** `build_terrain_aaa_node_v6.py:187-287` directly invokes `pass_cliffs`, `pass_waterfalls`, `pass_materials` — bypasses `TerrainPassController.run_pipeline()` at `terrain_pipeline.py:983-991`. The 32×32 stub through controller is theatre (writes `validation_full_present: true` to `BUILD_SUMMARY.json` but skips real budget checks).
+
+5. **AA ceiling for v1 pilot.** Even with all 85 PRs landed, v1 ships at AAA-implementable bar but **not at every-shipped-AAA-feature-equivalent**. Examples: raytraced GI, RT reflections, foliage trampling/persistence, in-engine cinematics, accessibility tier, console quality tiers (per Appendix E.3 V2-WORTHY items deferred). v1 grade target: A- minimum / A stretch on 42-item HDRP contract; v2 grade target: A+ with raytrace pipeline.
+
+6. **Tree imposters (LOD3) and midground shrubs (Layer 4) are NOT net-new AAA gaps.** v2 PRs #16 + #17 attempted to fix them; CUT in v3 (per V4 referee). Tree imposters already in spec §4.8 LOD3 (line 366); midground shrubs already in spec §4.4 Layer 4 (line 320). **Real net-new = 2 items** (parent-child scatter rules — PR #27; artist override layer — PR #28).
+
+7. **`procedural_meshes.py` (22,816 LOC) relocation to sibling package is scope contamination, not AAA enhancement.** PR #49 relocates with 4-symbol shim to keep callers working. Deletion deferred to v1.1 ship (per v2 §11.5 #7 + V4 referee).
+
+### 11.8 Open deferrals (post-pilot v2)
+
+These are P0 items that survive into v1 ship. Each gets a future spec doc post-pilot.
+
+1. **Per-playthrough seed model** — DECLARED fixed-world per §12.5; v2 if procedural-replay requested.
+2. **Day/night cycle integration** — IN-SCOPE for v1 ship (per §12.1) but separate spec; post-pilot template phase.
+3. **Triplanar UV pinstripes, parallel-merge setattr bypass, mask cache OOM (smoothed by `_lightweight_state_copy` but not solved)** — perf items deferred if time-boxed; addressed in part by PR #8 (deepcopy) + PR #47 (parallel-merge).
+4. **Pyright-strict reductions**: 977 baseline → 297 `Any` annotations remaining; v1.1 sweep.
+5. **In-process determinism CI (P0-I1)** — fix scheduled but not in pilot scope. Subprocess byte-identity test exists for CLI; weakness is 3/18 artifact coverage (PR #B5-T4 closes this).
+6. **L-1/L-3 deprecated billboard-impostor pipeline**: silent ImportError preserved in `environment_scatter.py:78`; replace with N-view Blender bake in pilot Week 2 (separately tracked).
+7. **Climate always "temperate"**: per memory; biome grammar features 8/8 still unused; v1.1 cleanup.
+8. **Foliage attachment in Unity**: per memory; pilot adds attach pass; v1 ship validates.
+9. **Full hydraulic realism** (Stéva 2008 multi-fluid; iceberg modeling for frozen biome) — research-grade additions deferred.
+10. **URP migration** — Unity 2026 strategy puts new render features on URP. Treat as separate future project after VeilBreakers v1 ships.
+11. **Raytraced GI / RT reflections** — separate pipeline conversation; A+ grade only achievable with this.
+
+### 11.9 Resolution Registry
+
+This section maps every Wave 1-5 finding to its closing PR or §11.7/§11.8 deferral. Group rows by wave for traceability.
+
+#### Wave 1 — Initial 8-Opus orphan-pass + cleanup audit (~25 findings)
+
+| Finding | Cite | Closing PR / Deferral |
+|---|---|---|
+| 7-8 orphan passes absent from default sequence | `terrain_pipeline.py:169-261` | PR #4 |
+| `_toposort_passes` cycle on `height` | `terrain_pipeline.py:1449-1510` | PR #3 |
+| `align_to_normal=True` default → diagonal trees | `terrain_advanced.py:2652` | PR #6 |
+| `chunk_world_size=64` default | `terrain_chunking.py:100` | PR #7 |
+| Deepcopy mask_stack (~30s + 4GB) | `terrain_pipeline.py:940,956` | PR #8 |
+| `road_network` SDF triple-loop | `road_network.py:1808-1817` | PR #9 |
+| `bytes += scanlines` (64GB churn) | `terrain_shadow_clipmap_bake.py:317-322` | PR #10 |
+| Path-injection in providers | `meshy_provider.py:216`, `hunyuan3d2_provider.py:274`, `asset_generation.py:699,706` | PR #11 |
+| Atomic write missing on Unity bundle | `terrain_unity_export.py:2484-2510` | PR #12 |
+| Stratigraphy never registered | `terrain_master_registrar.py`, `terrain_stratigraphy.py` | PR #16 |
+| Morphology delta not applied to height | `terrain_morphology.py:459-465` | PR #17 |
+| Procedural_meshes scope contamination (22,816 LOC) | sibling repo move | PR #49 |
+| Animation modules scope contamination | sibling repo move | PR #50 |
+| terrain_core extraction needed | PassDefinition + derive_pass_seed | PR #51 |
+| `terrain_semantics.py` 82 importers split | _types + _semantics | PR #52 |
+| `environment.py` 8651 LOC split | 5-seam | PR #53 |
+| `terrain_features.py` 9-seam split | per-feature | PR #54 |
+| 47 deprecated scripts + audit doc clutter | locked-list | PR #55 |
+| Importlib script-loader landmines (4) | tests | PR #22 |
+| 12 legacy water_surface test refs | tests | PR #22 |
+| Coverage-gate test (handlers without companion test) | new gate | PR #B5-T5 |
+| Golden scenarios SHA contract | new test | PR #B5-T1 |
+| `pytest-xdist` enabled | python-package.yml | PR #B5-T7 (combined with fast-lane split) |
+| `PYTHONHASHSEED=0` in CI | python-package.yml | PR #18 (covered by #15) |
+| In-process determinism CI theatre | P0-I1 | §11.8 #5 |
+
+#### Wave 2 — 11-Opus + verifier-3 forensic (~58 findings)
+
+| Finding | Cite | Closing PR / Deferral |
+|---|---|---|
+| 35 features unlocked by orphan passes | (composite) | PR #4 |
+| 17 registered-but-inert passes | overlap with orphans | PR #4 |
+| Banded macro placement | (composite) | PR #21 |
+| 16+ passes missing `requires_channels` | (multiple) | PR #21 |
+| Quixel ingest declares only `splatmap_weights_layer` | overrides incomplete | PR #21 |
+| Waterfalls overrides `particle_emitter_specs` | declaration missing | PR #21 |
+| RNG count "127 sites" | INFLATED — V3 says ~58 | PR #18 (corrected) |
+| `hash(cliff.cliff_id)` PYTHONHASHSEED hazard | `terrain_cliffs.py:2397` | PR #15 |
+| W-1 dual-semantics atomic migration | `terrain_water_variants.py:781,878` + 4 consumers | PRs #5a + #5b |
+| Manifest atomicity cite WRONG (1612 / 1629) | real cite `terrain_unity_export.py:2484` | PR #12 |
+| Overhang threshold cite WRONG (857-858) | real cite `terrain_cliffs.py:890` | PR #24 |
+| Biome collapse cite WRONG (`_terrain_world.py:861-869`) | real cite `environment.py:2031` | PR #25 |
+| `pass_hydrology` insert cite WRONG (2017-2019) | real cite `environment.py:2861` | PR #45 |
+| `derive_pass_seed` two definitions (drift hazard) | `terrain_rng.py:45` + `terrain_pipeline.py:269` | PR #14 |
+| `OMP_NUM_THREADS=1` not pinned | BLAS thread leak | PR #18 |
+| `terrain_quixel_ingest.py:874` unsorted iterdir | order-dependent | PR #18 |
+| ID-keyed checkpoint registries `id(controller)` | `terrain_checkpoints.py:97-102` | PR #34 |
+| Foam alpha INVERTED (both factors) | `terrain_waterfalls.py:115` | PR #30 |
+| `consumed_channels=("height",)` actually reads 8 | `terrain_macro_color.py:230` | PR #31 |
+| `DARK_FANTASY_PALETTE` covers IDs 0-7 only | `terrain_macro_color.py:28-37` | PR #32 |
+| `terrain_audio_zones.py` 989 lines (real 1049) | spec body | PR #33 |
+| Sabine cave/2s + open-field/0.1-0.3s cites | `terrain_audio_zones.py:539, :554` | PR #33 |
+| terrain_labels std=0 (Issue #27) | architectural — generator-stamping | PR #29 |
+| `pass_water_depth` skip behavior (Issue #28) | `terrain_pipeline.py:1355-1421` | PR #62 (gated on #5b) |
+| 6 v2 PRs verified literal (#3, #4, #15, §11.5 #5, §11.5 #1+#3) | spec lines 1633, 1635, 1648, 1685, 1681, 1683 | (referenced, no new PR) |
+| Issue #27 fix architecture (V1 wrong, V2 correct, current zero) | terrain_pipeline.py:1140-1143 docstring | PR #29 |
+| Rescue PR C — landform_zones / shoreline_sdf NET-NEW | files don't exist on disk | PR #26 |
+| AAA-vs-AA gap = 2 net-new items | parent-child + artist override | PRs #27 + #28 |
+| Tree imposters already in spec §4.8 | (CUT — was v2 PR #16) | §11.7 #6 |
+| Midground shrubs already in spec §4.4 | (CUT — was v2 PR #17) | §11.7 #6 |
+| Per-biome ecology PRs (mountain/grassland/coastal) DEMOTE | (was v2 PRs #20/#21/#22) | PRs #57/#58/#59 |
+| `_lightweight_state_copy` perf | `terrain_pipeline.py:940,956` | PR #8 |
+| Numba/Taichi-jit erosion | `_water_network.py:580-664`, `_terrain_erosion.py:308-487` | PR #19 |
+| Three-interpreter split decision | `requires_blender: bool` on `PassDefinition` | (architecture, no single PR; documented in §8) |
+| Taichi + Cycles GPU separate processes | (architecture) | (decision documented in §8) |
+| L-Py conda-only | docs | (documented in §8) |
+| Quixel linear-space blend | `terrain_quixel_ingest.py:619` | PR #60 |
+| Heitz/Neyret HLSL Eq.8/11 | `terrain_stochastic_shader.py:51-265` | PR #61 |
+| Stochastic shader contrast knob ignored | `terrain_banded_advanced.py:542` | PR #61 |
+| Triplanar UV pinstripes | (deferred) | §11.8 #3 |
+| Parallel-merge setattr bypass | `_parallel_merge.py` | PR #47 |
+| Mask cache OOM | (deferred) | §11.8 #3 |
+| Pyright-strict reductions | (deferred) | §11.8 #4 |
+| L-1/L-3 deprecated billboard | `environment_scatter.py:78` | §11.8 #6 |
+| Climate always "temperate" | (deferred) | §11.8 #7 |
+| Foliage attachment in Unity | (deferred) | §11.8 #8 |
+
+#### Wave 3 — Verifier-4 referee (~10 findings)
+
+| Finding | Resolution |
+|---|---|
+| v3 draft 78% correct | OPTION 1 chosen (revert + clean rewrite) |
+| All 4 wrong v2 cites confirmed | PRs #12, #24, #25, #45 use correct cites |
+| RNG count V3 = 47 handlers + 11 tests = 58 (or 68 with scripts) | PR #18 |
+| Issue #27 fix: V1 wrong, V2 correct on architecture, current zero | PR #29 |
+| `landform_zones.py` net-new (files don't exist) | PR #26 |
+| AAA-vs-AA gap real net-new = 2 items | PRs #27 + #28 |
+| Tree imposters/shrubs already in spec | §11.7 #6 |
+| Per-biome ecology demotion | PRs #57/#58/#59 (Block 4) |
+| C-1 contradiction resolution | §11.0.2 + PR #4 (carry-amendment) + #B5-D1 |
+| 14 phantom channel reads | (existing v2 PRs cover ~8; rest in §11.8) |
+
+#### Wave 4 — Cross-PR coherence (~25 findings, 9 severe)
+
+| Finding | Cite | Closing PR |
+|---|---|---|
+| Water-channel naming 3 vocabularies | spec §3.4 line 192 + 209 + §10.6 line 1041 | PR #B5-C1 |
+| `terrain_unity_export.py` touched by 5 PRs (#5/#11/#12/#44/#48) | dep chain serialization | PR #B5-C2 |
+| #56 ↔ #55 cycle | vegetation defaults vs delete | PR #B5-C3 |
+| C-1 amendment not propagated to PR #18 | scope tagging | PR #B5-C4 |
+| `water_surface_mask` not registered (PR #37 reads, no producer) | extends PR #5b | PR #B5-C5 |
+| #36 missing dep on #40 (splat seam re-normalize) | dep declared | PR #36 + #40 (now explicit) |
+| #46 missing dep on #3 (toposort) | dep declared | PR #46 (now explicit) |
+| #62 missing dep on #18 (subprocess determinism) | gate added | PR #62 (gated on #5b + #18) |
+| #44 + #48 don't list #12 (atomicity) | dep added | PR #B5-C2 |
+
+#### Wave 5 — 10 reports (CI, HDRP, Unity-side, determinism, asset budget, single-chunk, test infra, doc rot, deps, supply chain) (~150 findings)
+
+| Wave-5 report | Closing PRs |
+|---|---|
+| §B.1 Cross-PR coherence (25 issues) | PRs #B5-C1 through #B5-C5 |
+| §B.2 CI pipeline impact (8 changes, +60-100% wall-clock) | PRs #B5-T2, #B5-T6, #B5-T7, #B5-DEP3 |
+| §B.3 HDRP shader graph F (~10%) | PR #B5-U1 (+ §11.7 #1 cut) |
+| §B.4 Unity-side parity 5 BLOCKING + 9 polish | PRs #B5-U1 through #B5-U14 (+ §11.7 #2 cut) |
+| §B.5 End-to-end determinism CLOSE (4 PRs to byte-identical) | PRs #14, #15, #18, #B5-T4 |
+| §B.6 Asset budget 1 enforced + 6 paper | PRs #36, #B5-A1, #B5-A2, #B5-A3, #B5-A4, #43 (+ §11.7 #4 cut) |
+| §B.7 Single-chunk re-bake DEGRADED but achievable (6 missing modules) | PRs #B5-D1 through #B5-D4 |
+| §B.8 Test infrastructure 1,315 tests, 7 gaps | PRs #B5-T1 through #B5-T7 |
+| §B.9 Doc rot HIGH severity (220 markdowns, 14 superseded) | PRs #B5-DOC1, #B5-DOC2, #B5-DOC3, #B5-DOC4 |
+| §B.10 Dependency CVE + supply chain (8 hardening items) | PRs #B5-DEP1, #B5-DEP2, #B5-DEP3 |
+
+**Resolution Registry totals: ~234 unique findings mapped across Waves 1-5. Zero declined integrations — all verified findings have either a PR closing the issue or a §11.7/§11.8 explicit cut/deferral.**
+
+### 11.10 Memory updates (5 stale items + 04-27 SUPERSEDED-BY)
+
+The user's auto-memory at `~/.claude/projects/.../memory/MEMORY.md` has 5 stale items that PR #B5-DOC2 must update (memory file is outside the repo; this is a manual user-edit task, not a PR):
+
+1. **`VbTerrainTileMetadata 3-field stub`** → real value: **25 fields**. Source: `unity_plugin/VbTerrainTileMetadata.cs` (Wave-5 §B.4 verification).
+2. **`127 random.Random sites`** → real value: **47 handlers + 11 tests = 58 production sites + 1 hash() hazard**. The "127" mistakenly counted 65 doc-prose mentions as RNG sites (Wave-3 V3 forensic, finding A.1 #4).
+3. **`coverage floor 40%`** → real value: **72%**. Source: `.github/workflows/python-package.yml:83` (`--cov-fail-under=72`). Memory predates the bump.
+4. **`branch protection protected=false`** → real value: **protected=true**. Verified via live GitHub API check (Wave-5 §B.2). 6 required checks live, `enforce_admins=true`, `required_linear_history=true`, `allow_force_pushes=false`. Gap: `required_approving_review_count=0`.
+5. **`CodeQL default config only`** → real value: **`security-and-quality` query suite + Python+Actions languages**. Source: `.github/codeql/codeql-config.yml` (Wave-5 §B.10). PR #B5-DEP3 upgrades to `security-extended`.
+
+**04-27 master implementation guide SUPERSEDED-BY banner** — pinned in user memory as IMPORTANT but stale: 5+ P0 blockers listed as ACTIVE that Batch15 (2026-05-04) marks ✅ FIXED:
+
+- W-1 dual-semantics ✅ FIXED at `_water_network.py:907-929`, `procedural_grass.py:350-352`, `coastline.py:1242` (PR #5a + #5b carry the rest)
+- E-1 erodibility 1000× ✅ FIXED at `_terrain_erosion.py:318` (PR #19 carries Taichi kernel rewrite)
+- E-2 stratigraphy delta ✅ FIXED at `terrain_stratigraphy.py:1069` (PR #16 wires registration)
+- M-3 `TerrainTextureLayerStack` "doesn't exist" → it exists at `terrain_texture_layer_stack.py:38`
+- CL-2 cliff/talus/strata masks "never rasterized" ✅ FIXED at `terrain_cliffs.py:2704-2706`
+
+Grade table predicted 5/11 wrong: Water D+→C+, Visual QA F→fixed (real PR #B5-T1), AI assets D→live (Hunyuan3D-2 wired), etc. **PR #B5-DOC2 patches the 04-27 guide with SUPERSEDED-BY banner pointing to `docs/aaa-audit/batch15_2026_05_04/MASTER_AUDIT_BATCH15.md`.**
+
+### 11.11 Verification protocol
+
+Each PR's acceptance is checked through **one of three lanes**:
+
+#### 11.11.1 pytest validation lane
+
+For PRs with explicit test commands in the Validation column above. Standard contract:
+
+```
+1. Branch off main: git checkout -b <type>/<scope> origin/main
+2. Apply PR diff
+3. Run: pytest <validation-command>
+4. Confirm: green
+5. Run: pytest tests/ (full suite)
+6. Confirm: 1,315 tests still pass; coverage ≥ 72%
+7. Run: python -m pyright (after Block 1 #2 lands)
+8. Confirm: no NEW pyright errors
+9. Run: ruff check
+10. Confirm: clean
+11. Push branch + open PR into main
+12. CI green: ci (3.11), ci (3.12), pyright, callable-census, Analyze (python), Analyze (actions)
+13. After Block 5 PRs land: also gating Render-Goldens, Perf-Nightly, Flaky-Hunter, CodeQL security-extended
+```
+
+#### 11.11.2 render-proof validation lane
+
+For PRs whose acceptance depends on visual output (PR #6 vertical trunks, PR #29 label-stamping, PR #B5-T1 goldens, B5-U1 through B5-U14 Unity-side). Contract:
+
+```
+1. Run bake on `golden_scenarios/<scenario>` (4 scenarios committed by PR #B5-T1)
+2. Capture render proof PNG at `renders/proof/<pr-num>/<scenario>.png`
+3. Compare via SSIM 0.95 to `tests/golden_scenarios/<scenario>/baseline.png`
+4. Manual visual review on diff > 0.05
+5. Render proofs committed to `renders/proof/` (LFS) in same PR
+```
+
+PR review checklist for render-proof PRs:
+- [ ] Render proof PNGs attached
+- [ ] SSIM diff visible (red highlight > 0.05)
+- [ ] User-perspective camera (3rd person + crouched) sample present
+- [ ] Compared to nearest reference photo (Carpathians for mountain, Yorkshire for grassland)
+
+#### 11.11.3 manual review validation lane
+
+For doc-rot, scope-relocation, and refactor PRs (#49-#54, #B5-DOC1 through #B5-DOC4). Contract:
+
+```
+1. Reviewer opens PR diff
+2. Confirms no functional change (refactor) OR documents intentional doc updates
+3. Cross-references against this §11 table for cite accuracy
+4. Verifies SUPERSEDED-BY banners and archive paths
+5. Spot-checks 3 of N file moves
+6. Approves
+```
+
+#### 11.11.4 Sub-agent test execution rule
+
+Per memory `feedback_no_pytest_in_agents`: sub-agents do NOT run pytest. Test suite runs only on primary agent or CI. Verification PRs must be reviewed by primary agent or in CI lane.
+
+#### 11.11.5 Approval gate
+
+After §11 v3 lands in spec, two Opus verifiers run in parallel (coverage + consistency), then Codex CLI does final pass with `gpt-5.5` model. User commits only after all 4 approvals (this author + 2 Opus verifiers + Codex CLI).
 
 ---
 
