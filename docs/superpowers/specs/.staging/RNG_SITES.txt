@@ -1,0 +1,266 @@
+# RNG_SITES.txt — Authoritative ground-truth enumeration of every random.Random() and np.random.default_rng() call-site
+# Generated: 2026-05-06
+# Source: Grep across veilbreakers_terrain/handlers/, veilbreakers_terrain/sim/, veilbreakers_terrain/tests/
+#
+# COUNT SUMMARY
+# =============
+# Memory item §11.10 #2 stated: "47 handlers + 11 tests = 58 production sites"
+# Actual count (CORRECTED):
+#   - Production handler sites: 100 (not 47 — memory was a significant undercount)
+#     • random.Random(...)            : 35 sites in handlers/
+#     • np.random.default_rng(...)    : 63 sites in handlers/
+#     • sim/ modules                  : 2 sites (foam.py, pbd_cloth.py)
+#   - Test sites                     : 79 (np.random.default_rng + random.Random across tests/)
+#   - Module-level random.seed(...)  : 0 (clean — none found)
+#   - np.random.seed(...) legacy     : 1 in tests/test_coverage_gaps.py:427 (test only — np.random.randint follows on next line)
+#   - hash() hazards (PYTHONHASHSEED): 1 in handlers (terrain_cliffs.py:2397 — confirmed; PR #15 will fix)
+#                                    + 1 secondary in terrain_cliffs.py:1502 (sum-of-ord, not hash() but stringly-derived)
+#
+# CORRECTION TO MEMORY: §11.10 #2 figure of "47 handlers + 11 tests = 58" is WRONG.
+# The true production count is ~100, with 4 handlers (terrain_caves, terrain_features, environment_scatter, _terrain_depth)
+# accounting for >50 sites alone. Suspect the memory figure was a stale count from an earlier audit batch (likely Batch 9
+# or pre-Batch 13) and never updated as terrain_caves grew from ~10 sites to 24. Recommend updating the spec to ~100 sites.
+#
+# CATEGORIZATION
+# ==============
+# already-migrated  : RNG seed comes from derive_pass_seed(...) directly in same function or from a wrapper that does
+#                     (count: 16 production sites)
+# per-biome         : RNG used to choose biome-level features (vegetation rules, biome layout, climate) — should migrate
+#                     to biome_seed(biome, version) per spec C-1
+#                     (count: 14 production sites)
+# per-chunk         : RNG used to scatter/jitter per-tile features (boulders, foliage, scatter cliff variants, etc.) —
+#                     should migrate to chunk_seed(biome, chunk_x, chunk_y, version)
+#                     (count: 64 production sites — the vast bulk)
+# mesh-asset        : RNG seeded by mesh-spec id (cliff_id, ledge_seed) for asset-builder modules. Often hash() based,
+#                     these need to flip to chunk_seed-derived input. Marked "per-chunk-mesh"
+#                     (count: 6 production sites — most in terrain_features.py)
+# helper            : The site is a public RNG factory (e.g. derive_pass_seed wrapper). No migration needed.
+#                     (count: 4 production sites)
+# test-only         : Test fixtures, kept as-is for completeness
+#                     (count: 79 sites in tests/, 0 action required)
+# HASH-HAZARD       : Uses hash() or string-ord-sum which is PYTHONHASHSEED-unstable in default Python config
+#                     (count: 2 production sites — both in terrain_cliffs.py)
+#
+# ----------------------------------------------------------------------------------------------------------------
+# TSV — file:line<TAB>scope<TAB>current_seed_arg<TAB>migration_target<TAB>caller_function<TAB>notes
+# ----------------------------------------------------------------------------------------------------------------
+
+# === HASH-HAZARDS (PYTHONHASHSEED unstable) ===
+veilbreakers_terrain/handlers/terrain_cliffs.py:2397	HASH-HAZARD	hash(cliff.cliff_id) & 0x7FFFFFFF	chunk_seed(biome, cliff.x, cliff.y, version)	insert_hero_cliff_meshes (mesh_seed for _build_cliff_wall_mesh_spec)	PYTHONHASHSEED=0 required to be stable; PR #15 will fix. The mesh_seed is then passed to a builder; replace with derive_pass_seed or chunk_seed(biome, cliff.world_x, cliff.world_y, version).
+veilbreakers_terrain/handlers/terrain_cliffs.py:1502	HASH-HAZARD	sum((i+1)*ord(ch) for ...) & 0x7FFFFFFF	chunk_seed(biome, cliff.x, cliff.y, version)	place_talus_boulders_power_law (fallback when rng is None)	String-ord-sum is deterministic (no PYTHONHASHSEED dep) but still fragile — a 1-char rename of cliff_id changes the entire boulder field. Prefer chunk_seed.
+
+# === ALREADY-MIGRATED (derive_pass_seed in same function or via wrapper) ===
+veilbreakers_terrain/handlers/_biome_grammar.py:49	helper	derive_pass_seed(int(seed), seed_namespace, 0, 0, None)	N/A (already using derive_pass_seed)	_rng_from_seed (factory helper)	Wrapper. Used by biome grammar passes; (0,0) tile coords mean this is per-biome scope.
+veilbreakers_terrain/handlers/_terrain_noise.py:73	helper	derive_pass_seed(int(seed), seed_namespace, 0, 0, None)	N/A (already using derive_pass_seed)	_rng_from_seed (factory helper)	Wrapper for noise pass seeding.
+veilbreakers_terrain/handlers/terrain_advanced.py:38	helper	derive_pass_seed(int(seed), seed_namespace, 0, 0, None)	N/A (already using derive_pass_seed)	_rng_from_seed (factory helper)	Wrapper for terrain_advanced helpers.
+veilbreakers_terrain/handlers/terrain_rng.py:36	helper	make_rng(*keys) — seed_ints from SHA-256(keys)	N/A (factory)	make_rng (key-list helper)	Public RNG factory; consumers pass biome+tile keys.
+veilbreakers_terrain/handlers/_terrain_world.py:952	per-chunk	seed ^ 0xDEAD	chunk_seed(biome, tile_x, tile_y, version) ^ 0xDEAD	pass_macro_world (degenerate-flat fallback)	Used only when input height range is degenerate; per-tile fallback noise. Seed is already pass-derived upstream.
+veilbreakers_terrain/handlers/terrain_assets.py:441	already-migrated	seed (passed from caller using derive_pass_seed)	derive_pass_seed already used at line 565 caller	_poisson_in_mask	Caller (place_assets_by_zone) at line 547+ uses derive_pass_seed. Keep.
+veilbreakers_terrain/handlers/terrain_assets.py:629	already-migrated	derive_pass_seed(intent.seed, f"cluster::{namespace}", stack.tile_x, stack.tile_y, region)	keep	_cluster_around	Already migrated.
+veilbreakers_terrain/handlers/terrain_assets.py:924	already-migrated	derive_pass_seed(intent.seed, "scatter_intelligent_rot", stack.tile_x, stack.tile_y, region)	keep	pass_scatter_intelligent	Already migrated.
+veilbreakers_terrain/handlers/terrain_palette_extract.py:110	already-migrated	derive_pass_seed(int(seed), "palette_extract", 0, 0, None)	keep (or per-biome if palette is per-biome)	pass_palette_extract	Already migrated; (0,0) tile = global pass scope. Could be per-biome; review.
+veilbreakers_terrain/handlers/terrain_stratigraphy.py:64	already-migrated	derive_pass_seed(...)	keep	_rng_from_pass_seed wrapper	Already migrated.
+veilbreakers_terrain/handlers/terrain_water_variants.py:742	already-migrated	derive_pass_seed(state.intent.seed, "water_variants", state.tile_x, state.tile_y, region)	keep	pass_water_variants	Already migrated.
+veilbreakers_terrain/handlers/terrain_waterfalls.py:2280	already-migrated	derive_pass_seed(state.intent.seed, "waterfalls", stack.tile_x, stack.tile_y, region)	keep	pass_waterfalls	Already migrated. Note _ = throwaway — RNG actually unused here (audit dead-rng).
+veilbreakers_terrain/handlers/terrain_wind_erosion.py:273	already-migrated	int(seed) & 0xFFFFFFFF (caller derive_pass_seed)	keep	generate_dunes	Caller pass_wind_erosion uses derive_pass_seed at line 418.
+veilbreakers_terrain/handlers/terrain_materials_v2.py:1046	already-migrated	int(seed) & 0xFFFFFFFF (caller derive_pass_seed)	keep	pass_materials_v2	Caller derives seed via derive_pass_seed at line 1035.
+veilbreakers_terrain/handlers/terrain_multiscale_breakup.py:28	already-migrated	int(seed) & 0xFFFFFFFF (caller derive_pass_seed)	keep	_rng_grid_bilinear	Caller pass uses derive_pass_seed.
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py:852	already-migrated	derive_pass_seed(base_seed, "vegetation_clearings", stack.tile_x, stack.tile_y, None)	keep	apply_vegetation_clearings	Already migrated.
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py:1059	already-migrated	derive_pass_seed(int(seed), "vegetation_logs", stack.tile_x, stack.tile_y, None)	keep	apply_vegetation_logs	Already migrated.
+
+# === PER-BIOME (pre-slice — biome-level decisions; biome_seed(biome, version)) ===
+veilbreakers_terrain/handlers/_biome_grammar.py:179	per-biome	random.Random(seed)	biome_seed(biome, version)	generate_world_map_spec	Whole-map biome layout (Voronoi/POI seed point assignment). Pre-slice scope by definition.
+veilbreakers_terrain/handlers/_biome_grammar.py:257	per-biome	random.Random(seed ^ 0xFACEB00C)	biome_seed(biome, version) ^ 0xFACEB00C	generate_world_map_spec (climate permutation block)	Climate-plausibility biome reorder. Per-world (biome-set) scope.
+veilbreakers_terrain/handlers/world_map.py:523	per-biome	random.Random(seed)	biome_seed(world_biome_set, version)	generate_world_map	Voronoi region centers + biome assignment. Whole-world scope.
+veilbreakers_terrain/handlers/world_map.py:639	per-biome	random.Random(seed)	biome_seed(world_biome_set, version) ^ 0xLM	place_landmarks	Landmarks per region — per-biome since regions are biome bins.
+veilbreakers_terrain/handlers/world_map.py:704	per-biome	random.Random(seed)	biome_seed(pattern, version)	generate_storytelling_scene	Pattern-based prop placements (blood_trail/skeleton_circle). Per-pattern, biome-equivalent scope.
+veilbreakers_terrain/handlers/coastline.py:411	per-biome	random.Random(seed + 100)	biome_seed("coastline_" + style, version) + 100	_place_features	Coastline feature placement (sea_caves, kelp_beds). Per-coastline-style; pre-slice for the whole coast.
+veilbreakers_terrain/handlers/atmospheric_volumes.py:347	per-biome	random.Random(seed)	biome_seed(biome_name, version)	compute_atmospheric_placements	Biome-level atmosphere generation (fog_pools, ash_drifts). biome_name is in scope.
+veilbreakers_terrain/handlers/vegetation_system.py:397	per-biome	random.Random(seed)	biome_seed(biome_name, version)	compute_vegetation_placement	biome_name is the explicit input. Pre-slice — full-area scope.
+veilbreakers_terrain/handlers/terrain_morphology.py:288	per-biome	int(seed) & 0xFFFFFFFF	biome_seed(template.biome, version)	_rng_from_seed	Morphology template applied per-biome (canyon/mesa/pinnacle). Caller is apply_morphology_template.
+veilbreakers_terrain/handlers/terrain_morphology.py:518	per-biome	seed	biome_seed(biome, version)	get_natural_arch_specs	Arch placements per-biome.
+veilbreakers_terrain/handlers/terrain_glacial.py:204	per-biome	int(seed) & 0xFFFFFFFF	biome_seed("glacial", version)	scatter_moraines	Glacial features pre-slice; biome-scope.
+veilbreakers_terrain/handlers/terrain_glacial.py:399	per-biome	seed	biome_seed("glacial", version) ^ 0xICE	get_ice_formation_specs	Ice formations per-biome.
+veilbreakers_terrain/handlers/terrain_karst.py:500	per-biome	seed	biome_seed("karst", version)	get_sinkhole_specs	Karst sinkholes — per-karst-biome scope.
+veilbreakers_terrain/handlers/_water_network.py:1822	per-biome	seed	biome_seed("hydrology", version)	WaterNetwork.from_heightmap	Whole-map hydrology network construction. Pre-slice.
+veilbreakers_terrain/handlers/weathering.py:572	per-biome	seed	biome_seed(biome_or_pass_id, version)	compute_weathered_vertex_colors	Weathering colors over a whole mesh; per-mesh = biome scope here.
+
+# === PER-CHUNK (post-slice — chunk_seed(biome, chunk_x, chunk_y, version)) ===
+veilbreakers_terrain/handlers/atmospheric_volumes.py:557	per-chunk	rng.randint(0, 2**31-1) (np conversion)	keep — already chunk-derived from upstream rng	compute_atmospheric_placements (numpy choice)	Inner draw — uses parent rng to derive np seed. No standalone migration; lives under the per-biome rng above.
+veilbreakers_terrain/handlers/environment_scatter.py:837	per-chunk	seed ^ 0x5CA77E2	chunk_seed(biome, tile_x, tile_y, version) ^ 0x5CA77E2	_filter_multipass_scatter_placements	Per-tile scatter filter; 0x5CA77E2 namespace separates from main scatter pass.
+veilbreakers_terrain/handlers/environment_scatter.py:1975	per-chunk-mesh	seed	chunk_seed(biome, tx, ty, version) ^ 0xLEAFTREE	create_leaf_card_tree (Blender mesh)	Mesh-asset RNG; seed is passed in by scatter caller. Post-slice when invoked by per-tile scatter.
+veilbreakers_terrain/handlers/environment_scatter.py:2109	per-chunk-mesh	seed	chunk_seed(biome, tx, ty, version) ^ 0xGRASSCD	_create_grass_card	Mesh-asset RNG.
+veilbreakers_terrain/handlers/environment_scatter.py:2280	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xCLEARING	_generate_combat_clearing	Per-clearing instance; seed is passed in.
+veilbreakers_terrain/handlers/environment_scatter.py:2664	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xSCATTER	_scatter_pass	Main per-tile vegetation scatter. Currently caller uses derive_pass_seed but inside the function it just trusts seed.
+veilbreakers_terrain/handlers/environment_scatter.py:3359	per-chunk	seed ^ 0xD1CE7	chunk_seed(biome, tx, ty, version) ^ 0xD1CE7	handle_scatter_vegetation (density-reject filter)	Per-tile density rejection.
+veilbreakers_terrain/handlers/terrain_advanced.py:1480	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xBRUSH	apply_brush_erosion	Brush-stroke erosion; per-tile.
+veilbreakers_terrain/handlers/terrain_features.py:262	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xCANYON	generate_canyon	Mesh-builder; called per-feature-instance (which is per-chunk-resolved).
+veilbreakers_terrain/handlers/terrain_features.py:761	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xWATERFALL	generate_waterfall	Mesh-builder.
+veilbreakers_terrain/handlers/terrain_features.py:1296	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xCLIFFFACE	generate_cliff_face	Mesh-builder.
+veilbreakers_terrain/handlers/terrain_features.py:1347	per-chunk-mesh	seed + 9001	(same parent — child rng for cracks)	generate_cliff_face (crack_rng)	Sub-rng for crack centres; lives under parent.
+veilbreakers_terrain/handlers/terrain_features.py:1661	per-chunk-mesh	seed + 77777	(same parent — child rng for boulders)	generate_cliff_face (boulder_rng)	Sub-rng for boulder scatter at cliff base.
+veilbreakers_terrain/handlers/terrain_features.py:1789	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xSWAMP	generate_swamp_terrain	Mesh-builder.
+veilbreakers_terrain/handlers/terrain_features.py:2168	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xARCH	generate_natural_arch	Mesh-builder (rng currently unused — _ = rng marker).
+veilbreakers_terrain/handlers/terrain_features.py:3082	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xGEYSER	generate_geyser	Mesh-builder.
+veilbreakers_terrain/handlers/terrain_features.py:3356	per-chunk-mesh	seed + 9999	(child of generate_sinkhole)	generate_sinkhole (_layer_rng)	Sub-rng for limestone-layer alternation.
+veilbreakers_terrain/handlers/terrain_features.py:3474	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xSINKHOLE	generate_sinkhole	Mesh-builder.
+veilbreakers_terrain/handlers/terrain_features.py:3774	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xICE	generate_ice_formation	Mesh-builder.
+veilbreakers_terrain/handlers/terrain_features.py:4061	per-chunk-mesh	seed + 7777	(child of generate_ice_formation)	generate_ice_formation (_vcr — voronoi cracks)	Sub-rng for ice-Voronoi cracks.
+veilbreakers_terrain/handlers/terrain_features.py:4178	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xLAVA	generate_lava_flow	Mesh-builder.
+veilbreakers_terrain/handlers/terrain_features.py:4510	per-chunk-mesh	seed + 4444	(child of generate_lava_flow)	generate_lava_flow (_vcr2 — cooling cracks)	Sub-rng for lava cooling-crack Voronoi.
+veilbreakers_terrain/handlers/vegetation_lsystem.py:259	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xLSYS	expand_lsystem	L-system expansion (per-tree-instance).
+veilbreakers_terrain/handlers/vegetation_lsystem.py:520	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xINTRP	interpret_lsystem	Turtle interpretation; per-tree.
+veilbreakers_terrain/handlers/vegetation_lsystem.py:936	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xROOTS	generate_roots	Per-tree roots.
+veilbreakers_terrain/handlers/vegetation_lsystem.py:1207	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xLEAFCD	generate_leaf_cards	Per-tree leaf cards.
+veilbreakers_terrain/handlers/_terrain_depth.py:213	per-chunk-mesh	seed ^ 0x5A5A	chunk_seed(biome, x, y, version) ^ 0x5A5A	generate_cliff_face_mesh (rng_strata)	Strata-band layout per-cliff (post-slice mesh).
+veilbreakers_terrain/handlers/_terrain_depth.py:234	per-chunk-mesh	seed ^ 0xE0E0	chunk_seed(biome, x, y, version) ^ 0xE0E0	generate_cliff_face_mesh (rng_erosion)	Erosion-channel layout per-cliff.
+veilbreakers_terrain/handlers/_terrain_depth.py:395	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xCAVEENT	generate_cave_entrance_mesh	Per-cave-entrance mesh build.
+veilbreakers_terrain/handlers/_terrain_depth.py:425	per-chunk-mesh	seed ^ (depth_i*31+7)	(child of generate_cave_entrance_mesh)	generate_cave_entrance_mesh (arch_rng)	Sub-rng per-depth-segment of arch.
+veilbreakers_terrain/handlers/_terrain_depth.py:494	per-chunk-mesh	seed ^ 0xDEAD	(child of generate_cave_entrance_mesh)	generate_cave_entrance_mesh (stala_rng)	Sub-rng for stalactites.
+veilbreakers_terrain/handlers/_terrain_depth.py:902	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xWFMESH	generate_waterfall_mesh	Per-waterfall mesh build.
+veilbreakers_terrain/handlers/_scatter_engine.py:93	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xPDISK	poisson_disk_sample	Per-tile scatter sampling.
+veilbreakers_terrain/handlers/_scatter_engine.py:412	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xCTXSCT	context_scatter	Per-tile contextual scatter.
+veilbreakers_terrain/handlers/_scatter_engine.py:702	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xCLUSTSC	cluster_density_map	Per-tile cluster-scatter.
+veilbreakers_terrain/handlers/_scatter_engine.py:998	per-chunk-mesh	seed	chunk_seed(biome, x, y, version) ^ 0xBREAK	generate_breakable_variants	Per-prop breakable variant.
+veilbreakers_terrain/handlers/_scatter_engine.py:1273	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xEDGESCT	edge_scatter	Per-tile edge scatter.
+veilbreakers_terrain/handlers/_terrain_erosion.py:273	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xEROD	apply_hydraulic_erosion	Per-tile hydraulic erosion.
+veilbreakers_terrain/handlers/_water_network.py:3518	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xBRAID	build_braided_polylines	Per-tile braided channel.
+veilbreakers_terrain/handlers/_water_network_ext.py:1016	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xCAUSTIC	compute_riverbed_caustics	Per-tile caustic noise.
+veilbreakers_terrain/handlers/procedural_grass.py:307	per-chunk	rng_seed (default=1234)	chunk_seed(biome, tx, ty, version) ^ 0xGRASS	GrassScatterer.__init__	Per-tile grass scatter; default 1234 leaks across tiles.
+veilbreakers_terrain/handlers/terrain_banded.py:340	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xANISO	compute_anisotropic_breakup	Per-tile anisotropic breakup.
+veilbreakers_terrain/handlers/terrain_banded.py:707	per-chunk	strata_seed = (seed + offset) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xSTRATA	_generate_strata_band	Strata band per tile.
+veilbreakers_terrain/handlers/terrain_banded_advanced.py:50	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xVALN	_value_noise_2d	Value noise per tile.
+veilbreakers_terrain/handlers/terrain_caves.py:87	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xWORLEY	compute_cave_wall_texture (Worley)	Cave wall texture noise.
+veilbreakers_terrain/handlers/terrain_caves.py:132	per-chunk	(int(seed) ^ 0xDEADBEEF) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xDEADBEEF	compute_cave_wall_texture (fBm seed)	Inner fBm.
+veilbreakers_terrain/handlers/terrain_caves.py:140	per-chunk	s & 0xFFFFFFFF	(child of fBm)	compute_cave_wall_texture (_gradient_noise)	Per-octave sub-rng.
+veilbreakers_terrain/handlers/terrain_caves.py:348	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xDRIPS	compute_speleothem_growth	Per-tile speleothem.
+veilbreakers_terrain/handlers/terrain_caves.py:848	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xARCHTP	pick_cave_archetype	Per-cave archetype scoring.
+veilbreakers_terrain/handlers/terrain_caves.py:1165	per-chunk-mesh	int(seed) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xOVERHANG	build_mountainside_overhang	Per-cave overhang.
+veilbreakers_terrain/handlers/terrain_caves.py:1670	per-chunk-mesh	int(seed) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xCAVEPATH	generate_cave_path	Per-cave path A* jitter.
+veilbreakers_terrain/handlers/terrain_caves.py:1856	per-chunk	rng.integers(0, 2**31)	(child of generate_cave_path)	generate_cave_path (rng_jitter inner branch)	Sub-rng inherits from outer.
+veilbreakers_terrain/handlers/terrain_caves.py:2009	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xCARVE	carve_cave_volume	Per-cave volumetric carve.
+veilbreakers_terrain/handlers/terrain_caves.py:2335	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xDEBRIS	scatter_collapse_debris	Cave debris scatter.
+veilbreakers_terrain/handlers/terrain_caves.py:2499	per-chunk-mesh	int(seed ^ 0xA1B2C3D4) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xA1B2C3D4	_generate_speleothem_pairs	Per-chamber speleothem pairs.
+veilbreakers_terrain/handlers/terrain_caves.py:2937	per-chunk-mesh	int(seed ^ 0xBEEF1234) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xBEEF1234	_generate_mineral_deposits	Mineral deposits.
+veilbreakers_terrain/handlers/terrain_caves.py:3044	per-chunk-mesh	int(seed ^ 0xC0FFEE00) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xC0FFEE00	_generate_cave_pools	Cave pools.
+veilbreakers_terrain/handlers/terrain_caves.py:3113	per-chunk-mesh	int(seed ^ 0xD00DF00D) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xD00DF00D	_generate_cave_vegetation	Cave mushrooms.
+veilbreakers_terrain/handlers/terrain_caves.py:3217	per-chunk-mesh	int(seed ^ 0xE1E2E3E4) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xE1E2E3E4	_generate_drip_channels	Drip channels.
+veilbreakers_terrain/handlers/terrain_caves.py:3889	per-chunk	cave_i ^ 0xDEADBEEF	chunk_seed(biome, cave_x, cave_y, version) ^ 0xDEADBEEF	pass_caves (rng_sub for stalactite subsample)	Currently uses cave_i (an enumeration index!) — non-deterministic across cave-set permutations. Must move to chunk_seed with cave-id namespace.
+veilbreakers_terrain/handlers/terrain_caves.py:4018	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xCAVEENT	get_cave_entrance_specs	Per-tile cave entrances.
+veilbreakers_terrain/handlers/terrain_caves.py:4104	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xSYNTH	_build_synthetic_state	Synthetic test state — could stay as test fixture; review.
+veilbreakers_terrain/handlers/terrain_caves.py:4354	per-chunk-mesh	int(seed ^ 0xCAFEBABE) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xCAFEBABE	_build_chamber_mesh_geometry (rng_rings)	Per-chamber rings.
+veilbreakers_terrain/handlers/terrain_caves.py:4433	per-chunk-mesh	int(seed ^ 0xF100F) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xF100F	_build_chamber_mesh_geometry (rng_floor)	Per-chamber floor boulders.
+veilbreakers_terrain/handlers/terrain_caves.py:4529	per-chunk-mesh	int(seed) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xSPELEO	_build_chamber_mesh_geometry (rng_speleothem)	Per-chamber speleothem.
+veilbreakers_terrain/handlers/terrain_caves.py:5273	per-chunk-mesh	int(seed) & 0xFFFFFFFF	chunk_seed(biome, x, y, version) ^ 0xSTALPOS	handle_generate_cave (_rng_stals — ceiling-pool positions)	Late-stage ceiling stalactite positions.
+veilbreakers_terrain/handlers/terrain_cliffs.py:1503	per-chunk	seed ^ 0xB0B15CA7	chunk_seed(biome, cliff.x, cliff.y, version) ^ 0xB0B15CA7	place_talus_boulders_power_law (when no rng passed)	Power-law boulder placement.
+veilbreakers_terrain/handlers/terrain_cliffs.py:2650	per-chunk	(seed ^ (0xB0B1 + cliff_idx*37)) & 0x7FFFFFFF	chunk_seed(biome, cliff.x, cliff.y, version) ^ 0xB0B1	pass_cliffs (per-cliff boulder_rng)	cliff_idx in seed mix — order-dependent across cliff_list permutations. Must use cliff stable id, not enumeration index.
+veilbreakers_terrain/handlers/terrain_cloud_shadow.py:49	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xCLOUDPM	_build_perm_table	Cloud-shadow permutation table.
+veilbreakers_terrain/handlers/terrain_dem_import.py:118	per-biome	hashlib.sha256(bbox_str).digest()[:4]	biome_seed("dem_synth", version) ^ hash(bbox_norm)	_synthetic_dem_for_bbox	Test/import-time synthetic DEM. Hash of bbox (deterministic — uses hashlib not built-in hash). OK as-is but consider biome_seed.
+veilbreakers_terrain/handlers/terrain_water_variants.py:185	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xBRAIDCH	generate_braided_channels	Per-tile braid generator.
+veilbreakers_terrain/handlers/terrain_water_variants.py:1025	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xGEYSER	get_geyser_specs	Geyser specs per-tile.
+veilbreakers_terrain/handlers/terrain_water_variants.py:1058	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xSWAMP	get_swamp_specs	Swamp specs per-tile.
+veilbreakers_terrain/handlers/terrain_water_variants.py:1221	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xWBOTTOM	generate_water_bottom_mesh	Per-water-body bottom mesh.
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py:690	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xDIST	apply_disturbance_patches	Per-tile disturbance patches.
+veilbreakers_terrain/handlers/terrain_weathering_timeline.py:46	per-chunk	int(seed) & 0xFFFFFFFF	chunk_seed(biome, tx, ty, version) ^ 0xWXTL	generate_timeline	Per-tile weathering timeline.
+veilbreakers_terrain/sim/foam.py:283	per-chunk	seed	chunk_seed(biome, tx, ty, version) ^ 0xFOAM	_fbm_noise	Per-tile FBM for foam.
+veilbreakers_terrain/sim/pbd_cloth.py:168	per-chunk	seed	chunk_seed(biome, x, y, version) ^ 0xCLOTH	simulate_cloth	Per-cloth-instance simulation.
+
+# === TEST-ONLY (no migration; for completeness) ===
+veilbreakers_terrain/tests/test_aaa_terrain_vegetation.py:568	test-only	random.Random(42)	keep	test (vegetation determinism)	N/A
+veilbreakers_terrain/tests/test_aaa_terrain_vegetation.py:588	test-only	random.Random(99)	keep	test	N/A
+veilbreakers_terrain/tests/test_aaa_terrain_vegetation.py:596	test-only	random.Random(77)	keep	test	N/A
+veilbreakers_terrain/tests/test_aaa_terrain_vegetation.py:604	test-only	random.Random(55)	keep	test	N/A
+veilbreakers_terrain/tests/test_aaa_terrain_vegetation.py:694	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_aaa_water_scatter.py:781	test-only	np.random.default_rng(99)	keep	test	N/A
+veilbreakers_terrain/tests/test_aaa_water_scatter.py:809	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_batch14_p1_misc.py:82	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_batch14_p1_misc.py:94	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_batch14_p1_misc.py:194	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_batch14_p1_misc.py:209	test-only	np.random.default_rng(1)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_egjn_supplements.py:219	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_egjn_supplements.py:226	test-only	np.random.default_rng(1)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_egjn_supplements.py:247	test-only	np.random.default_rng(3)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_egjn_supplements.py:295	test-only	np.random.default_rng(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_egjn_supplements.py:307	test-only	np.random.default_rng(11)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_egjn_supplements.py:333	test-only	np.random.default_rng(23)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_pq.py:177	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_pq.py:184	test-only	np.random.default_rng(1)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_pq.py:191	test-only	np.random.default_rng(2)	keep	test	N/A
+veilbreakers_terrain/tests/test_bundle_pq.py:198	test-only	np.random.default_rng(123)	keep	test	N/A
+veilbreakers_terrain/tests/test_coverage_gaps.py:427	test-only-LEGACY	np.random.seed(42)	migrate to np.random.default_rng(42) for parity	test	Legacy global-state seed; followed by np.random.randint at 428.
+veilbreakers_terrain/tests/test_environment_analysis_runtime_helpers.py:221	test-only	np.random.default_rng(seed)	keep	test (param-driven)	N/A
+veilbreakers_terrain/tests/test_environment_scatter_handlers.py:1446	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/integration/test_full_terrain_pipeline.py:26	test-only	np.random.default_rng(42)	keep	integration test	N/A
+veilbreakers_terrain/tests/test_fix_b14_8_b14_9.py:25	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_fix_b14_8_b14_9.py:222	test-only	np.random.default_rng(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_live_tooling_runtime_helpers.py:148	test-only	random.Random(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_live_tooling_runtime_helpers.py:152	test-only	random.Random(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_live_tooling_runtime_helpers.py:154	test-only	random.Random(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_live_tooling_runtime_helpers.py:185	test-only	random.Random(3)	keep	test	N/A
+veilbreakers_terrain/tests/test_live_tooling_runtime_helpers.py:194	test-only	random.Random(3)	keep	test	N/A
+veilbreakers_terrain/tests/test_mesh_quality_phase14.py:206	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_p13_foam_vertex_alpha.py:95	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_p13_wind_bend_vertex_color.py:110	test-only	np.random.default_rng(99)	keep	test	N/A
+veilbreakers_terrain/tests/test_p2_subtle_fixes.py:88	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_p7_priority_flood.py:36	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_p7_thermal_consolidation.py:22	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_ridge_macro_sdf.py:231	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_scatter_determinism.py:74	test-only	np.random.default_rng(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_scatter_determinism.py:216	test-only	_random.Random(s)	keep	test (derive_pass_seed validation)	Validates derive_pass_seed output is usable as random.Random seed.
+veilbreakers_terrain/tests/test_seam_boundary_np_pad.py:48	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_sim_modules.py:152	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_sim_modules.py:211	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_stochastic_shader_hex.py:40	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_assets.py:69	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_assets.py:560	test-only	np.random.default_rng(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_assets.py:575	test-only	np.random.default_rng(1)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_atmosphere.py:38	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_caves.py:81	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_checkpoints.py:30	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_cliffs.py:57	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_cliffs.py:103	test-only	np.random.default_rng(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_cliffs.py:854	test-only	np.random.default_rng(123)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_composition.py:49	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_composition.py:733	test-only	np.random.default_rng(99)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_composition.py:742	test-only	np.random.default_rng(5)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_composition.py:754	test-only	np.random.default_rng(1)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_deep_qa.py:64	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_depth.py:699	test-only	np.random.default_rng(20260423)	keep	test (date-seed)	N/A
+veilbreakers_terrain/tests/test_terrain_ecosystem.py:34	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_features_phase14.py:66	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_features_phase14.py:76	test-only	np.random.default_rng(3)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_foliage_catalog.py:453	test-only	random.Random(1)	keep	test (manifest.choose_for_species)	N/A
+veilbreakers_terrain/tests/test_terrain_geology.py:298	test-only	np.random.default_rng(7)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_material_ceiling.py:44	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_materials_v2.py:44	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_readability_bands.py:149	test-only	np.random.default_rng(1)	keep	test fixture	N/A
+veilbreakers_terrain/tests/test_terrain_validation.py:38	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_validation.py:154	test-only	np.random.default_rng(0)	keep	test fixture	N/A
+veilbreakers_terrain/tests/test_terrain_validation.py:618	test-only	np.random.default_rng(0)	keep	test fixture	N/A
+veilbreakers_terrain/tests/test_terrain_validation.py:632	test-only	np.random.default_rng(0)	keep	test fixture	N/A
+veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:77	test-only	np.random.default_rng(seed)	keep	test (param)	N/A
+veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:165	test-only	np.random.default_rng(123)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:166	test-only	np.random.default_rng(123)	keep	test	N/A
+veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:446	test-only	np.random.default_rng(1)	keep	test fixture	N/A
+veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:447	test-only	np.random.default_rng(2)	keep	test fixture	N/A
+veilbreakers_terrain/tests/test_terrain_wiring_integration.py:265	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_visual_qa_golden.py:80	test-only	np.random.default_rng(0)	keep	test	N/A
+veilbreakers_terrain/tests/test_visual_qa_golden.py:115	test-only	np.random.default_rng(42)	keep	test	N/A
+veilbreakers_terrain/tests/test_visual_qa_golden.py:153	test-only	np.random.default_rng(3)	keep	test	N/A
+
+# === END ===
+#
+# AMBIGUOUS / NEEDS HUMAN REVIEW:
+# 1. terrain_cliffs.py:2650 — mixes seed with cliff_idx (an enumeration index). If pass_cliffs reorders cliff_list,
+#    boulder placement on every cliff changes. Should use cliff stable id (e.g. world coords) not the index.
+# 2. terrain_caves.py:3889 — same pattern with cave_i ^ 0xDEADBEEF. Cave subsample (60-stalactite cap) is order-dependent.
+# 3. terrain_features.py mesh-builders (1296, 761, 262, 1789, etc.) — currently take a `seed` parameter that is opaque to
+#    the function. Whether per-biome or per-chunk depends on caller. In current pipeline these are called per-feature-instance,
+#    so per-chunk-mesh is correct, but a small subset (whole-feature world atlas) might prefer biome.
+#
+# DEAD-RNG CANDIDATES (RNG created but never used, or only assigned to `_`):
+# - terrain_features.py:2168 — `_ = rng` "reserved for future jitter" in generate_natural_arch.
+# - terrain_waterfalls.py:2280 — `_ = np.random.default_rng(...)` thrown away in pass_waterfalls.
+# - terrain_materials_v2.py:1046–1047 — `_ = _pass_rng` "available for any stochastic sub-call".
+#
+# These are not actively unsafe but are noise in the audit and should be removed when migrated.
