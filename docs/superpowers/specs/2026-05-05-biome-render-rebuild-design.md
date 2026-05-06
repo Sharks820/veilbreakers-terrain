@@ -47,7 +47,7 @@ Every decision below was negotiated with the user during the 2026-05-05 brainsto
 | Q11 | Acceptance gate | **C: functional + visual + reference parity** | A- minimum, A target. Reference-photo plausibility (Carpathians + Yorkshire). Promotion gate to template. |
 | Q12 | Runtime water stack | **A: HDRP built-in water (free, native, AAA) + custom waterfall mesh + custom lava emissive** | Unity 2026 strategy: HDRP maintenance mode but still ships free water; URP migration deferred to future project |
 | Q13 | Lava treatment | **A: custom emissive surface shader (NOT through water)** | Lava emits light, doesn't refract — water shader produces wrong physics |
-| Q14 | Anti-tile / triplanar / macro / distance normals | **A: free ultrathink stack** | Per-chunk unique macro variation + ground-clutter scatter + HDRP Shader Graph custom variants. $0. Fallback: MicroSplat $120 if blocked. |
+| Q14 | Anti-tile / triplanar / macro / distance normals | **[AUTO-APPLIED — Decision 3.2 / pending user override] A: MicroSplat $40 (default) — FREE base + $20 HDRP 2022 module + $20 Mesh Terrains module = $40 total** | Saves ~2 weeks of solo-dev time vs custom HDRP shader graph. Custom HDRP shader graph stack remains an alternative if a specific visual signature is required. HDRP 14 (Unity 2022 LTS) is in maintenance mode per Feb 2026; URP migration via $20 module swap if needed. |
 | Q-jungle | Jungle scope | **B: jungle-style assets as wet-zone overrides on coastal+grassland** | No 7th biome; cloud-forest aesthetic available via `wet_zone_override` mask in highest-moisture sub-zones |
 
 ---
@@ -237,6 +237,8 @@ Splat textures composed from biome-zone masks → splat.png + splat_secondary.pn
 - Same `seed = hash(biome, version)` → identical heightmap pixel-for-pixel
 - Single-chunk re-bake possible (re-slice from cached merged field)
 - `version_hash = sha256(pipeline_git_sha + biome_yaml + taichi_kernel_sha + dem_blob_sha)` stored in every chunk's `meta.json`
+
+**Determinism enforcement:** Determinism is enforced via subprocess byte-identity CI gate per §11.5.4 PR B5-T4 + Fix 1.22's 18-artifact matrix (12 byte-identity + 2 SSIM ≥0.95 for Cycles cross-platform float drift + 1 schema-only for `meta.runtime.json` volatile fields, plus 4 absorbed via `splatmap_*.png` glob expansion = 18 nominal manifest entries). The in-process determinism CI variant is convenience-only and deferred per §11.8 #5 without compromise to this §3.7 pixel-for-pixel promise.
 
 ---
 
@@ -650,7 +652,11 @@ Streaming budget: max 9 chunks Loaded, 16 LOD2, 64 LOD3 simultaneous
 
 Async load: all reads on background thread; only SetHeights, Instantiate, material-bind on main thread. Chunk load target: <120ms p99.
 
-### 6.6 — HDRP Custom Shader Stack (free ultrathink, $0)
+### 6.6 — HDRP Shader Stack ([AUTO-APPLIED — Decision 3.2 / pending user override] MicroSplat $40 default; custom HDRP shader graph as alternative)
+
+**Default (recommended): MicroSplat HDRP 2022 + Mesh Terrains modules ($20 + $20 = $40 total; FREE base).** Saves ~2 weeks of solo-dev time vs custom Shader Graph authoring. Provides triplanar, anti-tile, distance-normal blend, dynamic overlay out of the box; HDRP 14 (Unity 2022 LTS) supported; URP migration possible via $20 module swap if needed.
+
+**Alternative (if specific visual signature required): custom HDRP Shader Graph stack ($0).** Layout below; ~12-18 days realistic solo-dev effort:
 
 ```
 hdrp_shader_graph_assets/
@@ -663,7 +669,7 @@ hdrp_shader_graph_assets/
                                               over splat result before BSDF
 ```
 
-Combined into one `VbTerrainLit.shadergraph` Master node. Anti-tile + triplanar + distance blend + dynamic overlay all in single shader pass. ~3-5 days Shader Graph work. **Fallback: MicroSplat $120 if blocked.**
+Combined into one `VbTerrainLit.shadergraph` Master node. Anti-tile + triplanar + distance blend + dynamic overlay all in single shader pass.
 
 ### 6.7 — Quixel Megascans Integration (free with Unity license)
 
@@ -714,7 +720,7 @@ The 42-item AAA HDRP contract is split into two tiers for the pilot acceptance g
 | Pilot A stretch | **32/32 (all)** | 10/10 | **A** | $0 |
 | Beyond | + raytraced GI / RT reflections | n/a | A+ | separate pipeline |
 
-**Pilot pass = 32 mandatory + 8 polish minimum.** Free ultrathink stack must clear this bar; MicroSplat $120 fallback authorized if Shader Graph work blocks the polish tier.
+**Pilot pass = 32 mandatory + 8 polish minimum.** [AUTO-APPLIED — Decision 3.2 / pending user override] Default to MicroSplat HDRP 2022 + Mesh Terrains modules ($40 total; saves ~2 weeks solo-dev time); custom HDRP Shader Graph stack remains an alternative if specific visual signature required.
 
 This split resolves the Section 7.2 vs 6.10 contradiction surfaced by the spec-review v2 audit: the "all criteria pass" rule applies to the mandatory tier; the polish tier permits up to 2 deferrals at A- grade. Section 7.2 acceptance criteria are tagged below in v1.1 with their tier membership.
 
@@ -907,7 +913,7 @@ After pilot acceptance:
 
 | Risk | Probability | Mitigation |
 |---|---|---|
-| HDRP Shader Graph blocker on triplanar/anti-tile | 15% | Fallback: $120 MicroSplat |
+| HDRP Shader Graph blocker on triplanar/anti-tile | 15% | [AUTO-APPLIED — Decision 3.2 / pending user override] Default is now MicroSplat $40 (FREE base + $20 HDRP 2022 + $20 Mesh Terrains). Custom Shader Graph stack is the alternative if specific visual signature required. |
 | Taichi GPU OOM on 4096² hydraulic | 5% | Tile heightmap in 2048² halves, stitch results |
 | L-Py grass density crashes scatter | 10% | LOD + culling already designed; reduce density 30% if hit |
 | Reference-photo gate fails twice | 30% | Plan for 2-4 iterations per biome (built into timeline) |
@@ -1618,11 +1624,11 @@ After the v1.0 spec was committed to PR #25, six adversarial review agents were 
 | Total reported findings (Waves 1-5) | 178 | 276 |
 | Verified open after Wave-3 forensic re-check | 174 | 263 |
 | Unique items mapped to PRs (after dedup) | 132 | 234 |
-| PR count | 27 | 90 (unchanged after Phase 2 — fixes only annotate sub-blocks, do not add/remove PRs) |
+| PR count | 27 | 91 (90 + B5-T1b added per Phase 3 Theme 3.8 — forest stratification render-proof fixture binding §4.4 layers to PRs #57/#58) |
 | Block count | 4 | 5 pilot blocks + Block 6 post-pilot maturity (v1.1 batch, per Phase 2 Fix 2.1) |
-| Effort (focused, single-engineer days) | 5–7 | 11–14 (or 7–8 with Block 5 parallelized to a Unity engineer) |
+| Effort (focused, single-engineer days) | 5–7 | **30–45 working days realistic solo (~6-9 weeks calendar) per [AUTO-APPLIED — Decision 3.3 / pending user override]**; prior optimistic 11–14 estimate dropped — assumed 1 PR/hour throughput at 6h focus/day with no review/surprises. Two-engineer estimate dropped (out of scope; would require hiring). |
 | Critical-path length | 5 PRs (#1→#2→#3→#4→#5) | 6 PRs (#1→#2→#3→#4→#5b→#11) |
-| Cuts surfaced (§11.7) | 0 (all "tagged ✅") | 9 (HDRP-F shadergraph, 5 Unity BLOCKING gaps, GPU-only perf, asset-budget 5-PR sequence, AA ceiling, tree-imposters/shrubs not net-new, procedural_meshes relocation, VbChunkLoader/Streamer architecture decision, GPU runner provisioning 3-paths) |
+| Cuts surfaced (§11.7) | 0 (all "tagged ✅") | 9 (HDRP-F shadergraph, 5 Unity BLOCKING gaps, GPU-only perf, asset-budget 5-PR sequence, A-/A pilot-grade target [framing reframed per Decision 3.1; deferrals to §11.8 #1-#14], tree-imposters/shrubs not net-new, procedural_meshes relocation, VbChunkLoader/Streamer architecture decision, GPU runner provisioning 3-paths [Path 1 chosen per Decision 3.4]) |
 | Open deferrals (§11.8) | 8 | 14 (was 12 pre-Phase-2; +1 grouped refactor entry per Fix 2.3, +1 Block 6 reference per Fix 2.1) |
 
 The headline deltas: (1) cite corrections to 4 v2 PRs against V3 forensic line-cite ground truth; (2) Block 5 added — Unity-side parity + cross-PR coherence + asset-budget hardening + single-chunk re-bake + test infra + deps + doc rot; (3) Issue #27 fix architecture rewritten (generator-stamping per pass, terrain_labels = validator); (4) ~58 production RNG sites (was over-claimed 127); (5) HDRP shader graph stack honest grade F (~10%); (6) `VbTerrainTileMetadata` is 29 fields, not 3-field stub; (7) coverage already 72% (was claimed 40%); (8) `_terrain_world.py:861-869` cite WRONG → real biome collapse at `environment.py:2031`.
@@ -1675,6 +1681,30 @@ All file paths in §11.1-§11.5 use shorthand for readability. Implementer must 
 - `unity_project/Assets/Scripts/<file>.cs` → real path `unity_plugin/<file>.cs` (Editor-side: `unity_plugin/Editor/<file>.cs`)
 
 Path-shorthand-vs-real-location was global doc-rot identified by `CODEX1_CITE_AUDIT.tsv`; this preface unblocks every PR row.
+
+### 11.0.4 Visible-value milestones (solo-dev motivation)
+
+For a solo dev shipping 90 PRs across 30-45 working days, visible-value
+checkpoints prevent motivation collapse:
+
+1. **After Block 1 PR #6 (foliage `align_to_normal` fix)** + #6.5 baseline:
+   bake 1 chunk of `cliff_talus_apron`. Render preview should show 0
+   diagonal trunks at slope > 30°. **Visible win**.
+
+2. **After Block 1 PR #19** (Mei-2007 Taichi-CUDA hydraulic): bake 1
+   chunk of mountain biome. Compare visual heightmap to baseline.
+   **Visible win** if erosion looks materially better.
+
+3. **After Block 2 PR #29** (label-stamping architecture): bake 1
+   chunk; verify cliff/water/rock/gravel labels stamp correctly via
+   `std(label) > 0`. **Functional win**.
+
+4. **After Block 5a PR B5-U1** (HDRP shader stack — MicroSplat or
+   custom): import 1 chunk into Unity. Visual material should look
+   AAA-bar in HDRP 2022 LTS. **Major visible win**.
+
+5. **After Block 5a PR B5-U2-U5** (water/holes/edges/decals/foliage):
+   full chunk import. End-to-end pilot demo. **Pilot acceptance gate**.
 
 ### 11.1.0 Fix 1.0 — Cite-refresh prereq (P0, MUST precede all surgical PRs)
 
@@ -1818,7 +1848,7 @@ The bake-side PRs in Blocks 1-4 do **NOT** fix any of these. Block 5 is required
 
 | PR # | Sub-block | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
 |------|-----------|-------|-------------------|------------|------------|--------|------|
-| B5-U1 | 5a | feat(unity): build HDRP shader graph stack OR trigger MicroSplat fallback | new `unity_project/Assets/Shaders/{VbTerrainLitTriplanar,AntiTile,DistanceNormal,OverlayDynamic}.shadergraph` + master + 2 subgraphs; OR commit to MicroSplat $120 fallback per spec §6.6 | • Either: 4 .shadergraph files committed AND `acceptance_checks.py` validates them<br>• Or: MicroSplat fallback decision logged + asset committed<br>• Currently 0 .shadergraph files exist on disk (audit B.3 — F grade ~10%) | Manual: open in Unity 2022 LTS HDRP, all 4 compile; `acceptance_checks.py` exits 0 | XL | none |
+| B5-U1 | 5a | feat(unity): integrate MicroSplat HDRP 2022 + Mesh Terrains ($40, RECOMMENDED) OR author custom HDRP shader graph stack ([AUTO-APPLIED — Decision 3.2 / pending user override]) | (a) MicroSplat path: `unity_project/Assets/MicroSplat/` package + 2 module imports; OR (b) custom path: new `unity_project/Assets/Shaders/{VbTerrainLitTriplanar,AntiTile,DistanceNormal,OverlayDynamic}.shadergraph` + master + 2 subgraphs per spec §6.6 | • EITHER: (a) buy + integrate MicroSplat HDRP 2022 + Mesh Terrains modules ($40, RECOMMENDED — FREE base + $20 + $20; saves ~2 weeks solo-dev time); OR (b) author 4 .shadergraph files from scratch (~12-18 days solo-dev realistic) AND `acceptance_checks.py` validates them<br>• Currently 0 .shadergraph files exist on disk (audit B.3 — F grade ~10%) | Manual: open in Unity 2022 LTS HDRP, MicroSplat layer stack compiles or all 4 .shadergraph files compile; `acceptance_checks.py` exits 0 | XL | none |
 | B5-U2 | 5a | feat(unity): instantiate HDRP `WaterSurface` from `water.json` | `unity_project/Assets/Scripts/VbTerrainImporter.cs:1150-1153` (currently logs "raster-backed water mesh creation disabled" + skips); replace with WaterSurface creation per ocean/river/lake interfaces | • `WaterSurface` instantiated for each water body in water.json<br>• Ocean type infinite mesh, Pool type from polyline, River type with currentMap=flow_map.png<br>• Editor smoke-test loads pilot mountain chunk with river → river surface visible | Manual: open Unity, load pilot chunk, river WaterSurface present | L | B5-U1 |
 | B5-U3 | 5a | feat(unity): `holes.png` consumer (`terrainData.SetHoles`) | `VbTerrainImporter.cs:1150-1153` adjacent (no `SetHoles` call currently) | • `terrainData.SetHoles(holes_array)` invoked<br>• Mandatory contract item 13 passes<br>• Editor: chunk with cave undercut shows hole | Manual: chunk with cave loads, hole visible | M | B5-U1 |
 | B5-U4 | 5a | fix(unity): tangent-space normal Y-flip on import | `VbTerrainImporter.cs:ImportTextureAsset:2097` (currently sets `textureType = NormalMap` but never inverts G channel for OpenGL-Y → DX-Y bake side at `terrain_unity_export.py:334` `_pack_tangent_space_normal_rgba`) | • Importer inverts G channel when `textureType = NormalMap`<br>• OR bake side flips before write<br>• Decision documented in inline comment (Unity wants DX-Y) | Manual: render slope geometry, shading direction matches reference; `pytest tests/test_normal_handedness.py` | M | B5-U1 |
@@ -1857,20 +1887,21 @@ Per Phase 2 Fix 2.1: all single-chunk re-bake PRs are pilot-supporting infra →
 | B5-D3 | 5b | feat(chunks): watershed-downstream invalidator | extends `chunks/cache_invalidator.py` | • When heightmap edited at chunk (i,j), compute D8 downstream chunk set from cached `flow_direction`<br>• Invalidates `water.json` + `flow_map.png` on those chunks<br>• Test: edit headwaters chunk → all downstream chunks invalidated | `pytest tests/test_watershed_invalidator.py` | M | B5-D2 |
 | B5-D4 | 5b | feat(chunks): `chunks/chunk_baker.py` + single-chunk CLI | new `chunks/chunk_baker.py`; CLI `python -m veilbreakers_terrain.bake --biome mountain --chunk 4,4 --reuse-merged-field` | • Halo-aware re-bake (5px halo for foliage exclusion)<br>• CLI works on 1 chunk in <9 min on RTX 4060 Ti<br>• Outputs identical to full-biome slice for the same chunk | Manual: full-biome bake, single-chunk re-bake → byte-identical for unchanged chunks | L | B5-D3 |
 
-#### 11.5.4 Test infrastructure (7 PRs core; B5-CI1 conditional)
+#### 11.5.4 Test infrastructure (8 PRs core; B5-CI1 conditional)
 
-Per Phase 2 Fix 2.4 (test infra over-engineered): B5-T1 (render goldens framework) + B5-T4 (byte-identity 18 artifacts) are pilot-required → Block 5b. B5-T2 (pytest-benchmark), B5-T3 (hypothesis), B5-T5 (protocol enforcement), B5-T6 (flaky-hunter), B5-T7 (CI fast-lane split) are post-pilot test maturity → Block 6. B5-CI1 conditional → 5b only if Path 2/3 chosen, else not opened.
+Per Phase 2 Fix 2.4 (test infra over-engineered): B5-T1 (render goldens framework) + B5-T1b ([AUTO-APPLIED — Phase 3 Theme 3.8 added] forest stratification baseline) + B5-T4 (byte-identity 18 artifacts) are pilot-required → Block 5b. B5-T2 (pytest-benchmark), B5-T3 (hypothesis), B5-T5 (protocol enforcement), B5-T6 (flaky-hunter), B5-T7 (CI fast-lane split) are post-pilot test maturity → Block 6. B5-CI1 conditional → DEFERRED per Decision 3.4 (Path 1 chosen).
 
 | PR # | Sub-block | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
 |------|-----------|-------|-------------------|------------|------------|--------|------|
 | B5-T1 | 5b | feat(tests): remaining test-infra wiring after PR #6.5 lands baseline + harness — full goldens framework, `Render-Goldens` CI lane, `terrain_visual_qa.py:706` SSIM hookup | extends PR #6.5 (which committed the 4 baseline PNGs + `tests/conftest.py` SSIM helper); CI step uses `terrain_visual_qa.py:706` SSIM | • SSIM 0.95 threshold enforced in CI lane (PR #6.5 committed PNGs and helper; B5-T1 now wires the CI lane and validator hookup)<br>• `Render-Goldens` lane green<br>• Validator hooked into the now-reachable `terrain_visual_qa.py:706` codepath | `pytest tests/test_golden_scenarios.py`; CI: `Render-Goldens` lane green | M | #6.5, #19, #29 |
+| B5-T1b | 5b | feat(tests): `forest_stratification` baseline + render-proof PR (binds §4.4 five-layer stratification to a goldens fixture) | `tests/golden_scenarios/forest_canopy_layered/{closed_canopy.png, open_canopy.png}` (2 NEW baselines); harness reuse from PR #6.5 SSIM helper | • Closed-canopy chunk shows moss-carpet floor + minimal shrub layer (canopy-shaded → shrub-suppressed; ground = bryophyte/moss layer dominant)<br>• Open-canopy chunk shows grass/forb explosion (sun-exposed → understory layer thrives)<br>• PRs #57 (mountain ecology) and #58 (grassland) bind to this baseline as their visual acceptance gate<br>• Closes §4.4 design-lens conf-75 gap (five-layer stratification not bound to any PR) | `pytest tests/test_golden_scenarios.py::test_forest_stratification`; CI: `Render-Goldens` lane green for forest fixtures | S | #6.5, B5-T1 |
 | B5-T2 | 6 | feat(tests): `pytest-benchmark` + nightly perf cron | install `pytest-benchmark`; convert 8 ad-hoc `elapsed < N` asserts to `@pytest.mark.benchmark`; new `.github/workflows/perf-nightly.yml` | • All 8 ad-hoc perf asserts converted<br>• Nightly job tracks regression history<br>• Auto-issue on >20% regression | CI: `Perf-Nightly` lane green | M | #2 |
 | B5-T3 | 6 | feat(tests): `hypothesis` property tests on channel invariants | install `hypothesis>=6.100`; add `tests/test_channel_invariants.py` | • NaN-free, shape-stable, range-bounded across N=100 seeds<br>• Each registered channel has at least one property test | `pytest tests/test_channel_invariants.py` | M | #2 |
 | B5-T4 | 5b | feat(tests): 18-artifact byte-identity matrix (concrete acceptance per Fix 1.22) | `tests/test_phase8_determinism_guardrails.py:53` (currently checks 3 of 18) | • **Byte-identity** (12 artifacts — full bit equality across 2 PYTHONHASHSEED values): `heightmap.bin`, `heightmap.png`, `normalmap.png`, `splatmap_*.png`, `watermap.png`, `macro_variation.png`, `navmesh.png`, `foliage.json`, `decals.json`, `water.json`, `edges.json`, `manifest.json`<br>• **SSIM ≥0.95** (2 artifacts — Cycles cross-platform float drift): `terrain_render_preview.png`, `lighting_validation.png`<br>• **Schema-only** (1 artifact — volatile fields stripped): `meta.runtime.json` (volatile fields like timestamps stripped from byte-identity matched against `meta.json`)<br>• Per §8.4 of CE Fixes Guide; total = 18 artifacts (12 byte + 2 SSIM + 4 absorbed via `splatmap_*.png` glob expansion = 16 base + the 2 SSIM = 18 nominal manifest entries) | `pytest tests/test_phase8_determinism_guardrails.py::test_byte_identity_matrix`; `pytest tests/test_phase8_determinism_guardrails.py::test_ssim_matrix`; `pytest tests/test_phase8_determinism_guardrails.py::test_schema_only` | L | #42 |
 | B5-T5 | 6 | feat(tests): protocol enforcement 21/74 → ≥60/74 | `scripts/check_protocol_adoption.py` registry extension; decorate handlers | • At least 60 of 74 passes have protocol enforcement<br>• `check_protocol_adoption.py` gate fails when pass added without protocol<br>• Currently 28% (21/74) | CI: `protocol-adoption` lane green | M | #21 |
 | B5-T6 | 6 | feat(tests): `pytest-rerunfailures` + flaky-hunter nightly | install `pytest-rerunfailures>=12.0`; new `.github/workflows/flaky-hunter.yml` | • Tag known-flaky tests with `@pytest.mark.flaky(reruns=3)`<br>• Nightly job rebuilds confidence intervals<br>• Auto-issue on flake-rate >5% | CI: `Flaky-Hunter` lane green | M | B5-T2 |
 | B5-T7 | 6 | feat(ci): fast-lane vs nightly-full split | `.github/workflows/python-package.yml` (split into fast PR lane + nightly full-suite); fast lane <5min (lint + smoke); nightly full | • PR lane <5 min wall-clock<br>• Nightly runs full suite + golden + perf + flaky<br>• Existing `--cov-fail-under=72` preserved (memory correction: was claimed 40, real is 72) | CI: `PR-Fast` <5min; `Nightly-Full` runs | M | B5-T1, B5-T2 |
-| B5-CI1 | 5b (conditional) | feat(ci): GitHub-hosted GPU larger runner for nightly perf gate (lands ONLY if §11.7 #3 / honesty register #9 chooses Path 2 or Path 3) | `.github/workflows/perf-nightly-gpu.yml`; `larger_runner: gpu-t4` declarations; budget gate (~$60-70/mo) | • GPU larger runner provisioned<br>• Perf-Nightly bake runs on T4 GPU<br>• Cost gate enforced<br>• If Path 1 chosen, this PR not opened | CI: `Perf-Nightly-GPU` lane green | M | B5-T2 |
+| B5-CI1 | DEFERRED (Path 1 chosen per Decision 3.4) | feat(ci): GitHub-hosted GPU larger runner for nightly perf gate (lands ONLY if §11.7 #3 / honesty register #9 chooses Path 2 or Path 3) | `.github/workflows/perf-nightly-gpu.yml`; `larger_runner: gpu-t4` declarations; budget gate (~$60-70/mo) | **Does not ship in v1 pilot per [AUTO-APPLIED — Decision 3.4 / pending user override] (Path 1 chosen — drop GPU perf gate, use local benchmark + nightly cron compare).** • GPU larger runner provisioned<br>• Perf-Nightly bake runs on T4 GPU<br>• Cost gate enforced | CI: `Perf-Nightly-GPU` lane green | M | B5-T2 |
 
 #### 11.5.5 Asset budget hardening (4 PRs beyond Block 2 #36)
 
@@ -1891,8 +1922,8 @@ Per Phase 2 Fix 2.1: B5-DEP2 + B5-DEP3 are post-pilot maturity → Block 6. B5-D
 |------|-----------|-------|-------------------|------------|------------|--------|------|
 | B5-DEP2 | 6 | sec(deps): lockfile + `bake-env.yml` + `--require-hashes` | new `uv.lock` OR `requirements-lock.txt`; new `bake-env.yml` (Blender 4.5 NumPy 1.24.x compat); CI uses `pip install --require-hashes` | • Lockfile committed<br>• `bake-env.yml` committed<br>• CI install uses `--require-hashes` | CI install green | M | #2 |
 | B5-DEP3 | 6 | sec(supply-chain): `.github/dependabot.yml` + SHA-pin Actions + HF Space SHA + CodeQL `security-extended` | new `.github/dependabot.yml` (weekly cadence pip + github-actions); SHA-pin all `actions/*`; pin Hunyuan3D-2 HF Space SHA in `hunyuan3d2_provider.py`; extend `.github/codeql/codeql-config.yml` to `security-extended` + custom CWE-918 SSRF rules for `requests`/`gradio_client` paths | • Dependabot live<br>• All Actions SHA-pinned (verified by CI lint)<br>• HF Space `revision=` capture in provider<br>• CodeQL `security-extended` query suite live (memory was wrong about default-only — already at `security-and-quality`; this upgrades to `security-extended`) | CI: `CodeQL` upgraded; `dependabot.yml` live | M | B5-DEP2 |
-| B5-DEP4 | 5b (conditional) | sec(secrets): secret hygiene baseline (lands ONLY if §11.7 #3 / honesty register #9 chooses Path 2 or Path 3 — needed for runner SSH keys / GHCR PATs) | `.github/workflows/*` review for `${{ secrets }}` exposure; `secret-scanner` pre-commit hook; rotation policy doc | • Zero secrets in workflow logs (gitleaks scan)<br>• Pre-commit hook blocks new secret commits<br>• Rotation policy committed | CI: `secret-scan` green | M | B5-DEP3 |
-| B5-DEP5 | 5b (conditional) | sec(ci): runner isolation rules per harden-runner pattern (lands ONLY if Path 2 or Path 3 from §11.7 #3 / honesty register #9) | `step-security/harden-runner@v2` step on every workflow; egress allow-list; runner-scope token narrowing | • Harden-runner installed on all jobs<br>• Egress allow-list enforced<br>• PR-fork isolation rule: forked PRs get scoped GITHUB_TOKEN, no secret access | CI: harden-runner audit green | M | B5-DEP4 |
+| B5-DEP4 | DEFERRED (Path 1 chosen per Decision 3.4) | sec(secrets): secret hygiene baseline (lands ONLY if §11.7 #3 / honesty register #9 chooses Path 2 or Path 3 — needed for runner SSH keys / GHCR PATs) | `.github/workflows/*` review for `${{ secrets }}` exposure; `secret-scanner` pre-commit hook; rotation policy doc | **Does not ship in v1 pilot per [AUTO-APPLIED — Decision 3.4 / pending user override] (Path 1 chosen).** • Zero secrets in workflow logs (gitleaks scan)<br>• Pre-commit hook blocks new secret commits<br>• Rotation policy committed | CI: `secret-scan` green | M | B5-DEP3 |
+| B5-DEP5 | DEFERRED (Path 1 chosen per Decision 3.4) | sec(ci): runner isolation rules per harden-runner pattern (lands ONLY if Path 2 or Path 3 from §11.7 #3 / honesty register #9) | `step-security/harden-runner@v2` step on every workflow; egress allow-list; runner-scope token narrowing | **Does not ship in v1 pilot per [AUTO-APPLIED — Decision 3.4 / pending user override] (Path 1 chosen).** • Harden-runner installed on all jobs<br>• Egress allow-list enforced<br>• PR-fork isolation rule: forked PRs get scoped GITHUB_TOKEN, no secret access | CI: harden-runner audit green | M | B5-DEP4 |
 
 #### 11.5.7 Doc rot cleanup (4 PRs)
 
@@ -1905,7 +1936,7 @@ Per Phase 2 Fix 2.1: all doc-rot PRs are post-pilot maturity → Block 6.
 | B5-DOC3 | 6 | docs(spec-fix): remove 3 nonexistent build script citations from spec body | spec body lines 7 + 27 (currently cite `coastal_build_v3d_vegetation_v2.py`, `mountain_build_v1_full.py`, `grassland_full_build.py` — verified deleted by V3 forensic) | • Lines 7 and 27 reference superseded scripts as historical context only<br>• `CODEBASE_STRUCTURE.md` refreshed post-providers/, post-Batch14 export-wiring, post-`terrain_texture_layer_stack.py` | Manual: review spec body cites | S | none |
 | B5-DOC4 | 6 | docs(refresh): commit dirty-tree docs (already modified, not committed) | `docs/BLENDER_AGENT_USAGE_GUIDE.md`, `docs/TERRAIN_CALLABLE_USAGE_GUARDRAIL.md` (per `git status`); add chunk-aware sections to BLENDER guide; add chunk-pass wiring contract to GUARDRAIL | • Both files committed<br>• Chunk-aware sections present<br>• Chunk-pass wiring contract documented | Manual: review docs | S | #4 |
 
-**Block 5 totals (after Phase 2 Fix 2.1 severity split + Phase 2.5 Fix B B5-C1 re-tag): 26 PR groups split into Block 5a (5 pilot-blocking Unity parity PRs: B5-U1 through B5-U5) + Block 5b (pilot-supporting infra: 9 of §11.5.1 + B5-C1 + B5-C2 + B5-C6 + 3 of §11.5.3 + 4 of §11.5.5 + B5-T1 + B5-T4 + 2 conditional B5-DEP4/DEP5 + B5-CI1 conditional) + Block 6 (post-pilot maturity: B5-C3 + B5-C5 + B5-T2/T3/T5/T6/T7 + B5-DEP2 + B5-DEP3 + B5-DOC1-4 = 13 deferred = 2+5+2+4). Block 5a + Block 5b land during pilot calendar (~3–5 days with Unity engineer in parallel; +2 weeks for B5-U1 alone without). Block 6 deferred to v1.1 (see §11.6.1).**
+**Block 5 totals (after Phase 2 Fix 2.1 severity split + Phase 2.5 Fix B B5-C1 re-tag + Phase 3 Decision 3.4 deferring B5-CI1/DEP4/DEP5 + Phase 3 Theme 3.8 adding B5-T1b): 27 PR groups split into Block 5a (5 pilot-blocking Unity parity PRs: B5-U1 through B5-U5) + Block 5b (pilot-supporting infra: 9 of §11.5.1 + B5-C1 + B5-C2 + B5-C6 + 3 of §11.5.3 + 4 of §11.5.5 + B5-T1 + B5-T1b [Phase 3 Theme 3.8] + B5-T4) + Block 6 (post-pilot maturity: B5-C3 + B5-C5 + B5-T2/T3/T5/T6/T7 + B5-DEP2 + B5-DEP3 + B5-DOC1-4 = 13 deferred = 2+5+2+4) + DEFERRED-by-Decision-3.4 (B5-CI1 + B5-DEP4 + B5-DEP5 do not ship in v1 pilot; not part of Block 6 either — they only land if Path 2/3 chosen, which is now deferred to v2). Block 5a + Block 5b land during pilot calendar (within the 30-45 working days [Decision 3.3] envelope). Block 6 deferred to v1.1 (see §11.6.1).**
 
 ### 11.6 Cross-PR dependency graph
 
@@ -1989,9 +2020,9 @@ B5-DOC1(archive)─B5-DOC2(04-27 banner)
 
 **Block 5 critical path (separate workstream):** `B5-U1 → B5-U2 → B5-U5 → B5-T1` (~3-5 days with Unity engineer).
 
-**Calendar minima:**
-- Single engineer, no Unity: ~14 days (Blocks 1-4 serial-parallel + Block 5 sequential).
-- Two engineers (1 bake + 1 Unity in parallel): ~7-8 days.
+**Calendar minima** [AUTO-APPLIED — Decision 3.3 / pending user override]:
+- **Single solo developer realistic: 30-45 working days (~6-9 weeks calendar).** The optimistic 14-day figure assumes 1 PR/hour throughput at 6h focus/day with no review cycles or surprises — not realistic for solo dev. 90 PRs across 5+ blocks at realistic solo throughput (review, debugging, integration, surprise rate ~30%, calendar gaps) lands at 30-45 working days.
+- Two-engineer estimate dropped (out of scope; would require hiring).
 
 ### 11.6.1 Block 6 — Post-pilot maturity (deferred to v1.1 per Phase 2 Fix 2.1)
 
@@ -2010,7 +2041,7 @@ Block 6 collects all non-pilot-blocking Block-5 PRs that R2-Opus-2 originally pr
 
 These are **not deferrals** — they are explicit cuts where the spec was over-claiming what the codebase or v1 pilot delivers. Each cut is acknowledged here so verifiers and the user know the gap is intentional.
 
-1. **HDRP shader graph stack — F (~10%) on disk, not "✅ tagged".** Wave-5 §B.3 verified: 0 `.shadergraph` files, 0 `.hlsl`, 0 `.shader`, 0 `.shadersubgraph`, 0 `.mat`. No Unity project exists (no `Assets/`, no `Packages/manifest.json`). All 4 promised variants (`VbTerrainLitTriplanar`, `AntiTile`, `DistanceNormal`, `OverlayDynamic`) + master + 2 subgraphs are absent. Only HLSL is `terrain_stochastic_shader.py:51-265` embedded as Python f-string, **tagged URP not HDRP** (lines 73, 263). `acceptance_checks.py` referenced by spec line 1016 — does not exist. **Block 5 PR #B5-U1 either commits to building all 4 .shadergraph files OR triggers MicroSplat $120 fallback per spec §6.6.** Pilot acceptance gate cannot pass §6.10 polish-tier without one or the other.
+1. **[AUTO-APPLIED — Decision 3.2 / pending user override] HDRP shader graph stack — F (~10%) on disk; default mitigation is MicroSplat $40 (FREE base + $20 HDRP 2022 + $20 Mesh Terrains).** Wave-5 §B.3 verified: 0 `.shadergraph` files, 0 `.hlsl`, 0 `.shader`, 0 `.shadersubgraph`, 0 `.mat`. No Unity project exists (no `Assets/`, no `Packages/manifest.json`). All 4 promised variants (`VbTerrainLitTriplanar`, `AntiTile`, `DistanceNormal`, `OverlayDynamic`) + master + 2 subgraphs are absent. Only HLSL is `terrain_stochastic_shader.py:51-265` embedded as Python f-string, **tagged URP not HDRP** (lines 73, 263). `acceptance_checks.py` referenced by spec line 1016 — does not exist. **Block 5 PR #B5-U1 default action: buy + integrate MicroSplat HDRP 2022 + Mesh Terrains modules ($40 total; saves ~2 weeks solo-dev time). Alternative: author 4 .shadergraph files from scratch (~12-18 days realistic solo-dev).** Pilot acceptance gate cannot pass §6.10 polish-tier without one or the other.
 
 2. **Unity-side has 5 BLOCKING gaps that bake-side PRs do NOT fix:**
    - HDRP shader graphs absent (B5-U1)
@@ -2020,14 +2051,14 @@ These are **not deferrals** — they are explicit cuts where the spec was over-c
    - `edges.json` edge-stitch contract entirely absent both bake AND Unity sides — B5-U5 fixes (paired with bake-side PR #39)
    Pilot Unity ingestion will fail without all 5.
 
-3. **Pipeline `<60min/chunk` target requires Taichi-CUDA + GPU runner; no CPU fallback (per spec §11.5.4 PR B5-T2).** Wave-5 §B.2 confirms: bake-venv + Taichi-CUDA perf gate requires self-hosted GPU runner (RTX 4060 Ti). CPU-only path is not viable for AAA-bar erosion (E-3 audit note: pure-Python is non-functional at AAA sizes). v1 pilot acceptance assumes a self-hosted GPU CI runner. CI without GPU runner cannot validate perf budget. **Three paths to resolve (per Fix 1.10 / honesty register #9):**
-   - **Path 1 (recommended):** drop GPU perf gate from required checks; use local benchmark + nightly cron compare.
-   - **Path 2:** GitHub-hosted larger T4 runner ~$60-70/mo nightly bake. Triggers new PR `B5-CI1` (`feat(ci): GitHub-hosted GPU larger runner for nightly perf gate`) in §11.5.4. Also requires `B5-DEP4`/`B5-DEP5` from §11.5.6 (secrets + runner isolation).
-   - **Path 3:** self-hosted runner. Highest hardening surface; requires `B5-CI1` + `B5-DEP4` + `B5-DEP5`.
+3. **[AUTO-APPLIED — Decision 3.4 / pending user override — Path 1 chosen for v1 pilot]** **Pipeline `<60min/chunk` target requires Taichi-CUDA + GPU runner; no CPU fallback (per spec §11.5.4 PR B5-T2).** Wave-5 §B.2 confirms: bake-venv + Taichi-CUDA perf gate requires self-hosted GPU runner (RTX 4060 Ti). CPU-only path is not viable for AAA-bar erosion (E-3 audit note: pure-Python is non-functional at AAA sizes). v1 pilot acceptance assumes a self-hosted GPU CI runner. CI without GPU runner cannot validate perf budget. **Three paths to resolve (per Fix 1.10 / honesty register #9); Path 1 chosen for v1 pilot per Decision 3.4 (avoids #1 GitHub anti-pattern of self-hosted GPU runner on public repo):**
+   - **Path 1 (recommended; chosen for v1 pilot):** drop GPU perf gate from required checks; use local benchmark + nightly cron compare. No additional CI cost. Effect: B5-CI1, B5-DEP4, B5-DEP5 conditional rows do not ship in v1 pilot.
+   - **Path 2 (deferred):** GitHub-hosted larger T4 runner ~$60-70/mo nightly bake. Triggers new PR `B5-CI1` (`feat(ci): GitHub-hosted GPU larger runner for nightly perf gate`) in §11.5.4. Also requires `B5-DEP4`/`B5-DEP5` from §11.5.6 (secrets + runner isolation).
+   - **Path 3 (deferred):** self-hosted runner. Highest hardening surface; requires `B5-CI1` + `B5-DEP4` + `B5-DEP5`.
 
 4. **Asset budget `enforce_budget()` exists but v6 controller bypass means the live 1024² stack does not enforce — single fix won't reach all artifacts; PR #36 + B5-A1 + B5-A2 + B5-A3 + B5-A4 are 5-PR sequence (NOT 1).** `build_terrain_aaa_node_v6.py:187-287` directly invokes `pass_cliffs`, `pass_waterfalls`, `pass_materials` — bypasses `TerrainPassController.run_pipeline()` at `terrain_pipeline.py:983-991`. The 32×32 stub through controller is theatre (writes `validation_full_present: true` to `BUILD_SUMMARY.json` but skips real budget checks).
 
-5. **AA ceiling for v1 pilot.** Even with all ~90 PRs landed, v1 ships at AAA-implementable bar but **not at every-shipped-AAA-feature-equivalent**. Examples: raytraced GI, RT reflections, foliage trampling/persistence, in-engine cinematics, accessibility tier, console quality tiers (per Appendix E.3 V2-WORTHY items deferred). v1 grade target: A- minimum / A stretch on 42-item HDRP contract; v2 grade target: A+ with raytrace pipeline.
+5. **[AUTO-APPLIED — Decision 3.1 / pending user override]** **Pilot ship target = A- minimum / A stretch on 42-item HDRP contract (per §6.10 lock).** v1-ship items deferred per §11.8 #1-#14 (raytraced GI, RT reflections, foliage trampling/persistence, in-engine cinematics, accessibility tier, console quality tiers — per Appendix E.3 V2-WORTHY items deferred). The deferrals do **not** undermine the A-/A pilot grade; they document v2 scope. v2 grade target: A+ with raytrace pipeline.
 
 6. **Tree imposters (LOD3) and midground shrubs (Layer 4) are NOT net-new AAA gaps.** v2 PRs #16 + #17 attempted to fix them; CUT in v3 (per V4 referee). Tree imposters already in spec §4.8 LOD3 (line 366); midground shrubs already in spec §4.4 Layer 4 (line 320). **Real net-new = 2 items** (parent-child scatter rules — PR #27; artist override layer — PR #28).
 
@@ -2035,10 +2066,10 @@ These are **not deferrals** — they are explicit cuts where the spec was over-c
 
 8. **`VbChunkLoader.cs` is unifying name for tile-loader path; `VbTerrainRuntimeStreamer.cs` (284 LOC) exists on `main` as runtime tile-loader.** Architectural decision required: rename + extend → `VbChunkLoader.cs` (Option A, recommended) OR keep `VbTerrainRuntimeStreamer.cs` and create separate `VbChunkLoader.cs` (Option B). **Default to Option A** — single class for tile loading; preserves camera-aware activation/frustum/distance-priority code already in `VbTerrainRuntimeStreamer.cs`. PR B5-U11 cite corrected from `:2229` to `:2152` (actual `GetOrCreateTreePrefab` location per V1).
 
-9. **GPU runner provisioning approach (P1).** Three paths for the perf gate:
-   - **Path 1 (recommended):** drop GPU perf gate from required checks; use local benchmark + nightly cron compare. No additional CI cost.
-   - **Path 2:** GitHub-hosted larger T4 runner ~$60-70/mo nightly bake.
-   - **Path 3:** self-hosted with full hardening (B5-CI1/DEP4/DEP5). Highest cost + risk.
+9. **[AUTO-APPLIED — Decision 3.4 / Path 1 chosen] GPU runner provisioning approach (P1).** Three paths for the perf gate; **Path 1 chosen for v1 pilot** (self-hosted GPU runner on public repo is the #1 GitHub anti-pattern; Path 2 ~$60-70/mo cost not justified for pilot scope):
+   - **Path 1 (chosen for v1 pilot):** drop GPU perf gate from required checks; use local benchmark + nightly cron compare. No additional CI cost.
+   - **Path 2 (deferred):** GitHub-hosted larger T4 runner ~$60-70/mo nightly bake.
+   - **Path 3 (deferred):** self-hosted with full hardening (B5-CI1/DEP4/DEP5). Highest cost + risk.
 
 ### 11.8 Open deferrals (post-pilot v2)
 
@@ -2048,7 +2079,7 @@ These are P0 items that survive into v1 ship. Each gets a future spec doc post-p
 2. **Day/night cycle integration** — IN-SCOPE for v1 ship (per §12.1) but separate spec; post-pilot template phase.
 3. **Triplanar UV pinstripes, parallel-merge setattr bypass, mask cache OOM (smoothed by `_lightweight_state_copy` but not solved)** — perf items deferred if time-boxed; addressed in part by PR #8 (deepcopy) + PR #47 (parallel-merge).
 4. **Pyright-strict reductions**: 977 baseline → 297 `Any` annotations remaining; v1.1 sweep.
-5. **In-process determinism CI (P0-I1)** — fix scheduled but not in pilot scope. Subprocess byte-identity test exists for CLI; weakness is 3/18 artifact coverage (PR #B5-T4 closes this).
+5. **In-process determinism CI (P0-I1)** — fix scheduled but not in pilot scope. Subprocess byte-identity test exists for CLI; weakness is 3/18 artifact coverage (PR #B5-T4 closes this). **Note:** Subprocess byte-identity CI gate (Fix 1.22's 18-artifact matrix, PR #B5-T4) is the canonical enforcement for §3.7 determinism promise; in-process gate is convenience-only, deferred without compromise to §3.7 pixel-for-pixel determinism.
 6. **L-1/L-3 deprecated billboard-impostor pipeline**: silent ImportError preserved in `environment_scatter.py:78`; replace with N-view Blender bake in pilot Week 2 (separately tracked).
 7. **Climate always "temperate"**: per memory; biome grammar features 8/8 still unused; v1.1 cleanup.
 8. **Foliage attachment in Unity**: per memory; pilot adds attach pass; v1 ship validates.
@@ -2272,6 +2303,18 @@ Per memory `feedback_no_pytest_in_agents`: sub-agents do NOT run pytest. Test su
 #### 11.11.5 Approval gate
 
 After §11 v3 lands in spec, two Opus verifiers run in parallel (coverage + consistency), then Codex CLI does final pass with `gpt-5.5` model. User commits only after all 4 approvals (this author + 2 Opus verifiers + Codex CLI).
+
+### 11.12 Hygiene runway (separate doc)
+
+**[AUTO-APPLIED — Decision 3.5 / pending user override]** Per Round-3 strategic recommendation, the post-pilot Block 6 hygiene PRs are conceptually a **separate maintenance backlog**, NOT pilot scope. The 11 hygiene PRs are:
+
+- **Test infra maturity (5 PRs):** B5-T2 (`pytest-benchmark`), B5-T3 (`hypothesis` property tests), B5-T5 (protocol enforcement 21/74 → 60/74), B5-T6 (`pytest-rerunfailures` + flaky-hunter), B5-T7 (CI fast-lane vs nightly-full split).
+- **Dependency hygiene (2 PRs):** B5-DEP2 (lockfile + `bake-env.yml` + `--require-hashes`), B5-DEP3 (dependabot + SHA-pin Actions + CodeQL `security-extended`).
+- **Doc rot (4 PRs):** B5-DOC1 (archive 14 superseded markdown), B5-DOC2 (04-27 SUPERSEDED-BY banner), B5-DOC3 (nonexistent script cite removal), B5-DOC4 (commit dirty-tree docs).
+
+None of these connect to the §0 problem statement (terrain bake → Unity HDRP ingestion → A-/A pilot). They are repository-maintenance items that the AAA-audit waves surfaced.
+
+**Recommended:** peel into a separate doc at `docs/superpowers/specs/2026-05-06-repo-hygiene-runway.md` post-pilot. For now they remain in §11.6.1 Block 6 with the deferral marker; the separate-doc move is a v1.1 housekeeping decision and does not block pilot ship.
 
 ---
 
