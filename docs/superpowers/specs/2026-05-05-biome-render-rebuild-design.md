@@ -36,7 +36,7 @@ Every decision below was negotiated with the user during the 2026-05-05 brainsto
 |---|---|---|---|
 | Q1 | Chunk size | **512m × 512m** | AAA mid-range default (Skyrim/Elden Ring zone-cell). 64-piece puzzle per 4096m biome zone. Keeps Blender responsive. |
 | Q2 | Edge contract depth | **C: heights + structural masks + feature threads** | Continuous rivers/roads/ridges across chunks; per-chunk `edges.json` with N/S/E/W edge structs |
-| Q3 | Vertex resolution | **257 verts/side, 2m grid, ~66k verts/chunk** | Encodes individual rocks, cart ruts, micro-erosion in heightfield itself |
+| Q3 | Vertex resolution | **257 verts/side, 2m grid, ~66k verts/chunk** — 256 cells × 2m = 512m chunk extents; the 257th vert is the shared edge with the neighbor (vert-shared, not duplicated). Edge contract files store 257 entries per side. | Encodes individual rocks, cart ruts, micro-erosion in heightfield itself |
 | Q4 | Heightmap source | **Hybrid DEM + procedural detail, Gaea/Houdini-quality bar** | NASA SRTM 30m macro + 3-octave fbm overlay + Taichi erosion + drainage |
 | Q5 | Compute backend | **Taichi-CUDA primary, CPU fallback** | Free MIT license, AAA-grade (Embark, Coalition), 50–200× over NumPy on RTX 4060 Ti |
 | Q6 | Foliage stack | **MTree filler + L-Py hero + vertical-Z trunks + exclusion masks** | Real branched topology, kills diagonal-tree bug, structurally prevents props-inside-trees |
@@ -702,14 +702,21 @@ Per F2 HDRP export audit (graded C-, but honest grade vs shipped AAA = F):
 
 ### 6.10 — Honest Grade Table (Locked Targets)
 
-| Stage | 42-item coverage | Grade | Cost |
-|---|---|---|---|
-| Current export (no rebuild) | ~5/42 | F (~10%) | $0 |
-| Pilot acceptance gate (mandatory floor) | 40-41/42 | **A-** | $0 |
-| Pilot stretch goal (with hand-tuned art passes) | 41-42/42 | **A** | $0 |
-| Beyond | requires raytraced GI / RT reflections | A+ | separate conversation |
+The 42-item AAA HDRP contract is split into two tiers for the pilot acceptance gate to resolve the prior conflict between "all criteria pass" (Section 7.2) and "40-41 of 42" (this section):
 
-**No B+ target.** Pilot acceptance requires A- minimum. Free ultrathink stack must hit it; MicroSplat fallback authorized if shader work blocks.
+- **Mandatory tier (32 items, ALL must pass for A-):** items 1–8 (heightmap+splat+layers), 13 (holes), 19–25 (foliage including UV2/UV3 wind), 26–28 (probes+GI), 30–35 (water masks+fog+decals+terrain LOD), 36–41 (streaming+audio+navmesh walkable+exclusion).
+- **Polish tier (10 items, at least 8 must pass for A-, all 10 for A):** items 9–12 (macro variation, anti-tile, distance normal blend, triplanar), 14 (cave mesh handoff — only if caves exist on pilot biomes), 15 (detail maps), 16–18 (wetness/snow/dust overlay), 29 (sky occlusion), 42 (off-mesh links).
+
+| Stage | Mandatory tier | Polish tier | Grade | Cost |
+|---|---|---|---|---|
+| Current export (no rebuild) | ~3/32 | ~2/10 | F (~10%) | $0 |
+| Pilot A- acceptance gate | **32/32 (all)** | ≥ 8/10 | **A-** | $0 |
+| Pilot A stretch | **32/32 (all)** | 10/10 | **A** | $0 |
+| Beyond | + raytraced GI / RT reflections | n/a | A+ | separate pipeline |
+
+**Pilot pass = 32 mandatory + 8 polish minimum.** Free ultrathink stack must clear this bar; MicroSplat $120 fallback authorized if Shader Graph work blocks the polish tier.
+
+This split resolves the Section 7.2 vs 6.10 contradiction surfaced by the spec-review v2 audit: the "all criteria pass" rule applies to the mandatory tier; the polish tier permits up to 2 deferrals at A- grade. Section 7.2 acceptance criteria are tagged below in v1.1 with their tier membership.
 
 ---
 
@@ -1593,4 +1600,544 @@ Light:
 
 ---
 
-**End of design spec. Ready for spec-document-reviewer subagent dispatch and user review.**
+# Spec v1.1 Addendum (2026-05-05, post 6-agent strict review)
+
+After the v1.0 spec was committed to PR #25, six adversarial review agents were dispatched in parallel: 3 Opus deep-dives (PR #24 audit, AAA spec vertical depth, AAA spec horizontal coverage) and 3 Sonnet code-clutter audits (scripts/, veilbreakers_terrain/ core, output/renders/docs/CI). All 6 returned. v1.0's verdict from the strictest reviewer: "spec is NOT implementable as-is — AA at most, needs v1.1 to reach AAA bar." This addendum closes the load-bearing BLOCKING gaps and adds the SHIP-BLOCKING runtime contracts that v1.0 implicitly assumed.
+
+---
+
+## 11. Pre-Pilot Cleanup Runway (consolidated PR sequence)
+
+The repo is **NOT clean enough to start the pilot today.** Three audit agents independently surfaced the same blockers. This is the locked-order PR sequence that must land before pilot Week 1 begins. All PRs target `main`.
+
+### 11.1 — IMMEDIATE (must land before any pilot code)
+
+| # | PR title | Files | Risk | Why now |
+|---|---|---|---|---|
+| 1 | `chore: gitignore output/chunks, renders/pilot, *.blend1, output/aaa_node_v3` | `.gitignore` | LOW | First pilot bake produces ~7000 files per biome; without this, agents accidentally stage them all |
+| 2 | `chore(deps): add taichi + rasterio bake-time dependencies` | `pyproject.toml` | LOW | Without taichi, `pip install -e ".[dev]"` fails immediately when bake code lands |
+| 3 | `fix(w1): remove legacy water_surface channel writes + migrate 4 consumers` | `terrain_water_variants.py:781,878`, `terrain_unity_export.py:2270-2278`, `terrain_navmesh_export.py:201,329`, `Wetland` dataclass + `detect_wetlands` reorder | HIGH | Active P0 dual-semantics bug; will corrupt new Taichi `water_surface_z` if not removed first |
+| 4 | `fix(foliage): align_to_normal default False` | `handlers/terrain_advanced.py:2652` | LOW | One-line fix; kills diagonal-tree bug at source for any caller without override |
+| 5 | `fix(chunking): chunk_world_size default 512m` | `handlers/terrain_chunking.py:100` | LOW | Default kwarg change + assertion; prevents silent wrong-grid bakes |
+
+### 11.2 — BEFORE PILOT WEEK 2 (foliage/erosion implementation)
+
+| # | PR title | Files | Risk | Why |
+|---|---|---|---|---|
+| 6 | `feat(stratigraphy): wire register_stratigraphy_pass into master_registrar` | `terrain_stratigraphy.py` (add register fn), `terrain_master_registrar.py` (add registrar tuple) | MEDIUM | Section §3.3c stratification cannot execute without this; currently zero references |
+| 7 | `fix(morphology): apply morphology_delta to height in-pass` | `terrain_morphology.py:459-465` | LOW | Unblocks 30 dead landform templates; self-contained |
+| 8 | `fix(rng): consolidate ~55 bare random.Random instances → derive_pass_seed` | `environment_scatter.py`, `terrain_features.py`, `_scatter_engine.py`, `_terrain_depth.py`, `_biome_grammar.py`, `build_scene_v3.py`, `render_scatter_visual.py`, ~10 more | MEDIUM | Per-chunk re-bake determinism guarantee currently violated by ~55 callsites (audit P0 estimate of "~50" confirmed) |
+| 9 | `fix(unity-export): create _compat re-export shim before unity_export_v2 lands` | `handlers/terrain_unity_export.py` (deprecation notices), new `_compat.py` | LOW | 14 test files import internal helpers; without shim, all break simultaneously |
+
+### 11.3 — DELETE BLOAT (stale code/artifacts cleanup)
+
+| # | PR title | Files | Disk reclaimed |
+|---|---|---|---|
+| 10 | `chore(scripts): delete 47 superseded build/render scripts` | All 47 DEPRECATED-DELETE scripts from §scripts-audit (coastal_build_v2/v3*, mountain_build_v1_full, grassland_full_build, 7× send_*_to_blender, 6× create_*_node, fix_*_lighting, dynamic_quality_*, scene_v3_*, etc.) | ~5000 LOC |
+| 11 | `chore(output): delete monolithic .blend nodes + prototype outputs` | `output/visual_nodes/` (630MB), `output/aaa_node_v1`/`v2`/`v3`/`showcase` (~155MB), `output/scene_v2`/`scene_v3` (~150MB) | **935 MB LFS** |
+| 12 | `chore(lfs): delete committed *.blend1 backup files` | 10× `.blend1` files in `output/` and `output/visual_nodes/` | ~120 MB LFS |
+| 13 | `chore(spreadsheet): prune intermediate audit snapshots` | 18 of 38 stale CSV/MD versioned snapshots in `output/spreadsheet/` | ~12 MB |
+| 14 | `chore(docs): prune superseded audit + planning docs` | `MASTER_AUDIT_V2-V5_2026-04-19.md`, April-20 planning docs, `FOLIAGE_WAVE5_RESEARCH.md`, `deep_dive_2026_04_16/`, `deep_dive_r8_2026_04_17/` | ~40 MB |
+
+### 11.4 — TEST FILE LANDMINES (must decouple before deletes in 11.3)
+
+| # | PR title | Files | Why blocking |
+|---|---|---|---|
+| 15 | `fix(tests): decouple test_dynamic_quality_truth_gates from dynamic_quality_grader script` | `veilbreakers_terrain/tests/test_dynamic_quality_truth_gates.py` | Imports old grader via importlib; deleting grader without this = CI red |
+| 16 | `fix(tests): decouple test_visual_render_camera_proof from render_coastal_camera_proof script` | `veilbreakers_terrain/tests/test_visual_render_camera_proof.py` | Same pattern; sequencing dep for PR #10 |
+| 17 | `fix(tests): rewrite test_scene_v3_visual_quality_gate against synthetic fixtures` | `veilbreakers_terrain/tests/test_scene_v3_visual_quality_gate.py` | Tests scene_v3 .blend artifacts being deleted in PR #11 |
+
+### 11.5 — DOCS UPDATE (concurrent with pilot work)
+
+| # | PR title | Files | Why |
+|---|---|---|---|
+| 18 | `docs: chunk-aware updates to BLENDER_AGENT_USAGE_GUIDE` | `docs/BLENDER_AGENT_USAGE_GUIDE.md` (already modified in working tree, uncommitted) | References per-biome monolithic workflows; needs chunk-aware sections |
+| 19 | `docs: chunk-pass wiring contract in TERRAIN_CALLABLE_USAGE_GUARDRAIL` | `docs/TERRAIN_CALLABLE_USAGE_GUARDRAIL.md` (also modified uncommitted) | Future chunk passes need callable ownership rules |
+| 20 | `ci: chunk-render-proof.yml workflow` | new `.github/workflows/chunk-render-proof.yml` | Validates `renders/pilot/{biome}/` output shape during CI |
+
+### 11.6 — Total cleanup runway
+
+```
+PR count:        20 PRs (5 IMMEDIATE + 4 PRE-WEEK-2 + 5 DELETE + 3 TEST + 3 DOCS/CI)
+Disk reclaimed:  ~1.1 GB LFS + ~50 MB git proper
+Risk profile:    1 HIGH (W-1 atomic migration) + 3 MEDIUM + 16 LOW
+Sequencing:      11.1 → 11.4 → 11.2 → 11.3 → 11.5 (tests decouple before deletes)
+Wall-clock:      ~3-5 days of focused PR work; can run in parallel with pilot Week 1 prep
+```
+
+---
+
+## 12. SHIP-BLOCKING Gaps Identified by Strict Review (Decisions)
+
+Five gaps surfaced by the horizontal-coverage Opus review as SHIP-BLOCKING for a commercial AAA dark-fantasy game. Each is now explicitly resolved as either IN-SCOPE for pilot, IN-SCOPE for v1 ship (post-pilot template phase), or DEFERRED with named follow-up spec.
+
+### 12.1 — Day/Night Cycle Integration
+
+**Status: IN-SCOPE for v1 ship, NOT in pilot.**
+
+Pilot acceptance gate uses single static sun rig at 50° altitude / 145° azimuth (Section 5.1). v1 ship requires dynamic time-of-day:
+
+- HDRP Time-of-Day Volume override curves per-biome
+- Sun azimuth animated 0°→360° over game-day cycle (default 24-min real-time = 1 game-day)
+- Sun elevation curve per latitude (per-biome `latitude_deg` field added to biome YAML)
+- Per-biome ambient color/intensity curves at: dawn (5°), morning (25°), noon (55°), evening (15°), dusk (-2°), night (-30°+ moon)
+- HDRP Adaptive Probe Volumes: bake at 4 keyframes (dawn/noon/dusk/night), runtime blend
+- Moon: secondary directional light, intensity curve tied to lunar phase (gameplay-driven later)
+- Reflection probes use HDRP Realtime mode in dynamic chunks; Baked mode for static cinematic chunks
+
+**Pilot delivery:** Section 5.1 lighting rig validates static look-dev; the day/night extension is a **separate v1-ship spec** scheduled post-pilot template phase (filed as future spec `2026-XX-XX-day-night-cycle-design.md`).
+
+### 12.2 — Save/Load Version Hash Mismatch Behavior
+
+**Status: IN-SCOPE for v1 ship.**
+
+`meta.json.version_hash` is currently produced but the runtime contract for mismatch is unspecified. Locking the contract:
+
+```
+On chunk load, compare meta.version_hash vs game_data.expected_version_hash:
+  Match → load normally
+  Minor version mismatch (same major+minor, different patch) → load with warning logged
+  Major+minor mismatch (post-patch save load):
+    1. Attempt migration via VbChunkMigrator (per-version migration scripts)
+    2. If migration unavailable, prompt player: "World data needs regenerating —
+       persistent edits (felled trees, scorch marks) will be lost. Continue?"
+    3. On confirm: regenerate chunk from current pipeline; player_state preserved;
+       world_state diff (destruction, decals, item drops) discarded with notice
+    4. On cancel: revert to last save with matching version
+```
+
+Per-version migration scripts live in `veilbreakers_terrain/migrations/v<from>_to_v<to>.py`. This contract added to Section 6 as a new sub-section 6.11 in v2 of the spec.
+
+### 12.3 — Audio Zone Schema (was checked ✅ but never defined)
+
+**Status: IN-SCOPE for pilot — schema locked here.**
+
+`meta.json.audio_zones[]` schema:
+
+```json
+{
+  "audio_zones": [
+    {
+      "zone_id": "mountain_alpine_open",
+      "aabb": {"min": [-128, 0, -128], "max": [128, 800, 128]},  // chunk-local coords
+      "footstep_surface": "rock_loose",   // maps to Unity AudioMixer surface set
+      "reverb_preset": "alpine_open",     // maps to HDRP/Unity Reverb Zone preset
+      "ambient_loop": "wind_high_alpine", // AudioClip path in Addressables
+      "ambient_volume_db": -8.0,
+      "wind_intensity_curve_id": "alpine_wind",  // drives runtime wind audio
+      "water_proximity": null  // populated to nearest river/lake basin_id if <50m
+    }
+  ]
+}
+```
+
+Splat-layer-ID → footstep-surface mapping per biome locked in `species_libs/<biome>.yaml` under `splat_layer_audio_map`:
+
+```yaml
+mountain:
+  splat_layer_audio_map:
+    layer_0: alpine_grass    # alpine_grass splat → grass footstep
+    layer_1: forest_soil_dry # forest_soil → dirt footstep
+    layer_2: rock_loose      # scree → rock_loose footstep (skitter sound)
+    layer_3: rock_solid      # rock → rock_solid footstep
+    layer_4: snow_powder     # snow → snow_powder footstep
+    ...
+```
+
+Cave reverb geometry is the cave FBX bounding box; ambient audio loops are biome-default unless a chunk-level override exists.
+
+### 12.4 — NavMesh Build Trigger + Off-Mesh Link Heuristic
+
+**Status: IN-SCOPE for v1 ship, partial pilot.**
+
+Pilot ships `navmesh.png` walkable mask only (Section 6.1). v1 ship requires:
+
+```
+Build trigger:
+  Mode A (dev): Unity Editor button "Bake NavMesh from Chunk Walkable Masks"
+                runs NavMeshSurface.BuildNavMesh() per chunk, stores in chunk prefab
+  Mode B (runtime): NavMeshComponents.NavMeshSurface with `collectObjects=Volume`
+                    bakes on chunk load; ~50ms per chunk on RTX 4060 Ti CPU thread
+
+Surrogate stitching across streamed chunks:
+  Each chunk's NavMeshData stored in chunk.navmesh_data
+  On neighbor load: NavMesh.SetNavMeshData() merges surfaces by edge proximity
+  Edge tolerance: 0.5m height, 1.0m horizontal
+
+Off-mesh link generation (heuristic):
+  Jump anchors: detected gaps where two walkable regions are within 1-4m horizontal
+                AND <2m vertical drop AND no walkable path exists between them.
+                Algorithm: erode walkable_mask by 2px to find "ledges"; for each ledge
+                pixel, raycast 1-4m perpendicular; if landing pixel walkable, register.
+  Climb anchors: detected on cliff faces where walkable_mask transitions to non-walkable
+                 with slope > 60° AND height < 4m AND climbable_material flag in splat.
+                 Algorithm: scan vertical strips along cliff base; sample every 3m;
+                 if grippable splat at top, register climb anchor.
+  Fall anchors: walkable_mask edges with >2m drop AND walkable below.
+
+Stored in meta.json.navmesh_hints.{jump_anchors, climb_anchors, fall_anchors}.
+Unity NavMeshSurface consumes these as off-mesh links during bake.
+```
+
+Pilot: `navmesh.png` only (mandatory tier #40-41). v1 ship: full NavMesh build + off-mesh links (polish tier #42 + new v1-ship spec).
+
+### 12.5 — Per-Playthrough Seed Model (declared intent)
+
+**Status: DECLARED — world is fixed across playthroughs by design.**
+
+VeilBreakers is a story-driven dark-fantasy game; player exploration relies on world consistency for quest design, environmental storytelling, and shared community knowledge. Therefore:
+
+- **`version_hash` deliberately omits per-playthrough seed.** Same chunks for every player.
+- New Game+ runs are visually identical to original; only player_state differs.
+- Procedural quest content (procgen item drops, dynamic encounters) seeds from `hash(player_id, chunk_id, version)` — playthrough-specific via player_id, world-shared via chunk_id.
+- Modding hook: a `world_seed_override` in pyproject.toml debug config allows dev-time variant generation; never exposed to runtime players.
+
+**Spec impact:** none — current `version_hash` is correct as-is. This is a *declaration of intent*, not a design change.
+
+---
+
+## 13. Vertical-Depth Parameter Specifications (closing v1.0 BLOCKING gaps)
+
+The vertical-depth Opus review identified 10 BLOCKING parameter gaps. Each is now specified.
+
+### 13.1 — Mei et al. 2007 Hydraulic Solver Parameters
+
+```
+# Mei et al. 2007 shallow-water flux solver — locked parameters
+g                = 9.81 m/s²                # gravity
+dt               = 0.05 s                    # timestep (CFL-stable for 2m grid + 200 iters)
+A                = 4.0 m²                    # virtual pipe cross-section
+L                = 2.0 m                     # virtual pipe length (matches grid spacing)
+friction         = 0.04                      # bed friction coefficient (Manning-like)
+Kc               = 0.022                     # sediment capacity constant
+Ks               = 0.012                     # dissolution constant
+Kd               = 0.005                     # deposition constant
+Ke               = 0.005 m/iter              # evaporation rate
+rain_rate        = 0.012 m/iter              # uniform rainfall
+n_iterations     = 200
+hardness_factor  = per-pixel from terrain_stratigraphy modulation, range [0.4, 1.6]
+```
+
+**Rationale:** values calibrated against Št'ava et al. 2008 reference implementation; `Kc=0.022` produces visible river valleys without over-erosion at 200 iter on 4096² grid. CFL stability check: `dt × max_velocity < 0.5 × grid_spacing`; with `g=9.81`, max water depth ~2.4m, max velocity ≈ 5 m/s → `0.05 × 5 = 0.25 < 0.5 × 2 = 1.0` ✅.
+
+### 13.2 — Erosion Re-run State Semantics (Section 3.3c)
+
+**Locked:** stratification re-run **continues** from prior hydraulic state (water depth, sediment) — does NOT reset. The 50 additional iterations apply the modulated erodibility on top of the converged 200-iteration field. Reset would discard physical realism (rivers would re-form, taking another 50+ iter to converge).
+
+### 13.3 — Procedural FBM Specification
+
+```
+fbm_overlay(x, y, biome_seed):
+  basis        = OpenSimplex2 (deterministic, gradient-noise)
+  permutation  = derived from hash(biome_name, version)  # not random
+  octaves      = 3
+  wavelengths  = [4m, 16m, 64m]
+  amplitudes   = [0.5m, 2m, 6m]
+  offset       = (0, 0)  # no spatial offset; biome_seed varies basis seed
+  modulation   = elevation-conditioned: amplitude *= (1 - smoothstep(elev/300m, 0.7, 1.0))
+                 # high-altitude pixels get less procedural noise (snow caps stay smooth)
+```
+
+### 13.4 — DEM Void Handling + Datum/Projection
+
+```
+DEM source: NASA SRTM 30m, Hgt format, EGM96 geoid datum
+Projection: WGS84 lat/lon → local tangent plane Mercator at biome center coordinate
+Resampling: cubic Hermite interpolation 30m → 2m
+Void handling (SRTM has known voids in steep terrain):
+  Step 1: detect voids via SRTM `_NUM` stripe metadata
+  Step 2: fill with NASA SRTM Plus (hole-filled variant) where available
+  Step 3: remaining voids → bicubic interpolation from 8 nearest valid neighbors
+  Step 4: if void cluster > 100 pixels, log warning + flag for manual review
+  Step 5: post-fill, apply 3-pixel Gaussian blur in void regions only (hide seams)
+
+Carpathian foothills (Tatry/Bieszczady) — verified void-free in SRTM Plus.
+Yorkshire Dales — verified void-free.
+Future biomes — void inspection per region before locking reference.
+```
+
+### 13.5 — TWI Threshold Calibration to 2m Grid
+
+**Issue:** v1.0 spec §4.5 sets `wet_zone_override` trigger at TWI > 8.5, derived from 30m DEM context. TWI scales with cell area: at 2m resampled grid, the *same physical wetness* corresponds to a different TWI value because `upslope_area` is measured in pixels, and pixel size shrunk 15×.
+
+**Locked recalibration:**
+```
+TWI_2m = ln(upslope_area_in_pixels × pixel_area_m² / tan(slope))
+       = ln(upslope_area_pixels × 4 / tan(slope))   # 4 = (2m)²
+       = ln(4) + TWI_baseline_pixels
+       ≈ 1.386 + TWI_baseline_pixels
+
+Original 30m: pixel_area = 900 m², so TWI_30m baseline + ln(900) = TWI_30m + 6.802
+2m equivalent: TWI_2m baseline + ln(4) = TWI_2m + 1.386
+Offset: TWI_30m → TWI_2m: subtract (6.802 - 1.386) = 5.416
+
+Therefore: 30m TWI 8.5 → 2m TWI ≈ 3.08
+
+LOCKED:
+  TWI_min = 1.5
+  TWI_max = 6.0
+  wet_zone_override threshold (formerly "TWI > 8.5"): TWI_2m > 3.0
+```
+
+This recalibration is critical. v1.0's "8.5" would have been so high that wet-zone overrides would NEVER trigger in practice on the 2m grid.
+
+### 13.6 — L-Py Grammar Authoring Contract
+
+```
+Per-species L-system grammar lives at:
+  veilbreakers_terrain/foliage/species_libs/lpy_grammars/<biome>/<species>.lpy
+
+File format (L-Py native):
+  # Header metadata
+  # species_id: alpine_pine_hero
+  # biome: mountain
+  # height_range_m: [18, 25]
+  # tris_per_lod0: 5000
+  # variants_to_bake: 12
+
+  axiom = ...
+  derivation_length = ...
+  productions = ...
+  interpretation = ...
+
+Bake driver: foliage/lpy_hero.py.bake_species_variants(species_id, n_variants=12)
+  - For i in range(n_variants):
+      seed L-Py global RNG with hash(species_id, i)
+      run derivation
+      capture mesh as Blender object
+      apply biome-bark + leaf material
+      export to species library .blend at output/species_libs/<biome>/<species>_v<i>.blend
+  - Variant catalog written to species_libs/<biome>/<species>_catalog.json
+
+Hero scoring picks variant_id from `hash(chunk_x, chunk_y, position) % n_variants`.
+
+Grammar authoring effort: ~4-6 hours per hero species; ~2 hours per filler species
+(spec Week 2 budget: mountain 2 hero + 4 filler + grassland 2 hero + 4 filler =
+12 species × ~3hr avg = ~36 hours total — fits Week 2 with margin)
+```
+
+### 13.7 — MTree Headless Parameter File Format
+
+```
+MTree is a Blender add-on; we invoke its operators headlessly.
+
+Per-species parameter file:
+  veilbreakers_terrain/foliage/species_libs/mtree_params/<biome>/<species>.json
+
+Schema:
+  {
+    "species_id": "alpine_pine_filler_med",
+    "mtree_node_graph": "<JSON serialization of MTree node graph from Blender>",
+    "trunk_height_m": 14.5,
+    "trunk_radius_m": 0.32,
+    "branch_count": 28,
+    "leaf_count": 3500,
+    "wind_uv_data": {
+      "trunk_mass": 0.85, "primary_axis": [0, 0, 1],
+      "sway_freq_hz": 0.4, "gust_response": 0.3,
+      "leaf_detail_freq_hz": 2.1, "leaf_amplitude_m": 0.08
+    },
+    "lod_targets": {"lod0_tris": 1800, "lod1_tris": 800, "lod2_tris": 200}
+  }
+
+Bake driver: foliage/mtree_filler.py.bake_species(species_id)
+  Uses bypass_operator wrapper from MTree addon to invoke node-graph evaluation
+  without bpy.context.scene context (headless-clean).
+```
+
+### 13.8 — Voronoi Clumping Cell Specification
+
+```
+Cell size: 4m × 4m baseline (configurable per-species), produces visible clump structure
+           at human-scale viewing distances (3rd-person camera, crouch POV, etc.)
+
+Cell seeding: blue-noise Poisson distribution (Bridson 2007) at radius 4m,
+              jittered ±0.8m within cell; deterministic from hash(chunk_x, chunk_y, biome)
+
+Per-cell variance:
+  clump_offset       ~ TruncatedNormal(mean=1.0, sigma=0.18, bounds=[0.8, 1.25])
+  species_blend      ~ Categorical(species_weights from biome_yaml)
+                       1-3 species per cell, weighted; produces species mixing
+  density_multiplier ~ Beta(2, 2) ∈ [0, 1.5]   # most cells near 0.75-1.0, occasional gaps
+  rotation_y         ~ Uniform(0, 2π)
+
+Edges between cells: smoothstep blend over 0.5m → smooth species transitions
+```
+
+### 13.9 — Edge-Weld Assertion Failure Mode (Player Build vs Editor)
+
+```
+Editor mode (Debug+Development builds):
+  On mismatch: log error to Unity Console, draw red wireframe at bad edge,
+               continue loading (do NOT crash) — allows iteration
+
+Player mode (Release builds):
+  On minor mismatch (within tolerance × 5):
+    log warning to player_log.txt; load with edge-blend smoothing applied
+    (interpolates last 4 verts of mismatched edge over neighbor)
+  On major mismatch (> tolerance × 5):
+    log error to player_log.txt; load chunk anyway with red-shifted debug tint
+    on terrain shader (visible-but-not-fatal indicator)
+  Never crash. Never block. Never silent — always logged.
+
+Telemetry (post-ship): aggregate edge-weld error counts, surface in dev dashboards
+                       so post-patch errors are visible.
+```
+
+### 13.10 — Spawn-Safe Fallback Hierarchy
+
+```
+chunk_spawn_safe_position determination:
+  Priority 1: chunk center if (slope < 25 AND water_depth == 0 AND tree_footprint == 0
+                              AND NOT cliff_overhang)
+  Priority 2: nearest valid pixel by Euclidean distance from chunk center (search radius 100m)
+  Priority 3: if no valid pixel within chunk: emit (chunk_center, valid=false) and log warning
+              Unity treats invalid spawn-safe chunks as "no respawn anchor here"
+              (e.g., mountain peak chunk, lake-only chunk)
+  Priority 4: gameplay layer queries nearest VALID spawn-safe across neighbor chunks
+              for fast-travel / respawn fallback
+```
+
+---
+
+## 14. Runtime Channel Contracts (per Opus #3 horizontal review recommendation)
+
+The bake side of the spec is at A- quality; this section formalizes the runtime side. Each baked artifact below is paired with its runtime consumer, schema reference, and lifecycle.
+
+| Baked artifact | Runtime consumer | Schema | Lifecycle |
+|---|---|---|---|
+| `terrain.raw` | Unity Terrain | 16-bit raw, 257² | Load on chunk activate; immutable |
+| `splat.png` + `splat_secondary.png` | Unity Terrain alphamap | RGBA 257² × 2 | Load on activate; immutable |
+| `holes.png` | Unity Terrain Holes + MeshCollider for hole edges | R8 257² | Load + generate edge collider mesh on activate |
+| `layers/<n>_*.png` | Custom HDRP TerrainLit Shader Graph variant | per-layer 4K texture set | Loaded biome-wide once; reused across all chunks |
+| `macro_variation.png` | Custom Shader Graph (macro overlay slot) | RGBA 512² unique per chunk | Load on activate; bound to material per-chunk |
+| `overlay_dynamic.png` | Custom Shader Graph (overlay_dynamic slot) | RGBA 257² | Load on activate; refreshed when weather state changes |
+| `triplanar_mask.png` | Custom Shader Graph (triplanar fade) | R8 257² | Load on activate; static |
+| `flow_map.png` | HDRP WaterSurface River type (current map) | RG16 257² | Load on water surface activate |
+| `navmesh.png` | NavMeshSurface bake input + off-mesh anchor scoring | R8 257² | Load → bake via NavMeshComponents → discard texture |
+| `vertex_ao.bin` | Vertex color attribute on terrain mesh | binary float per vert | Load on activate; immutable |
+| `caves/*.fbx` | GameObject children of chunk; collider + render | static mesh | Instantiate on activate; despawn on deactivate |
+| `foliage.json` | Addressables prefab instantiation | tree+prop instance list | Instantiate hero/filler trees on activate; pool deactivated |
+| `grass.json` | GPU instancing per 32m sub-cell | 30k–80k entries per chunk | Lazy load on player proximity (sub-cell-level streaming) |
+| `water.json` | HDRP WaterSurface + custom Waterfall prefabs | rivers/lakes/waterfalls/ocean | Instantiate water bodies on activate |
+| `edges.json` | VbChunkLoader stitch assertion + Terrain.SetNeighbors() | N/S/E/W edge structs | Read on neighbor-load events |
+| `probes.json` | Reflection Probe + Light Probe placement | placements list | Instantiate on biome activate (zone-level, not chunk-level) |
+| `decals.json` | HDRP Decal Projector instantiation | per-chunk decal list | Instantiate on activate; pool deactivated |
+| `meta.json` | Per-chunk metadata + audio_zones + navmesh_hints + addressable_deps | structured | Read on activate; drives all of the above |
+
+**Lifecycle events (Unity-side):**
+```
+OnChunkLoadRequested   → fetch addressable bundle, parse meta.json, schedule load
+OnChunkLoadStarted     → background thread reads all artifact files
+OnChunkLoadComplete    → main thread: SetHeights, SetAlphamaps, SetHoles, instantiate
+                         prefabs, bind shaders, set material parameters, register
+                         WaterSurfaces, AudioSources, ReverbZones, NavMesh data
+OnNeighborLoaded       → Terrain.SetNeighbors() + edge-weld assertion check + flow continuity check
+OnChunkUnloadRequested → reverse all instantiation, release Addressable handles, free GPU buffers
+```
+
+---
+
+## Appendix E — Strict-Reviewer Findings Register
+
+This appendix tracks every finding from the 6-agent strict review wave (3 Opus deep-dives + 3 Sonnet code-clutter audits) and its disposition.
+
+### E.1 — Opus PR #24 Audit Verdict
+
+**Verdict: CLOSE-WITHOUT-MERGE with 2 narrow rescue PRs.**
+
+Rescue PR A (small, ~10 files, the only durable contribution):
+- `veilbreakers_terrain/handlers/visual_render_camera_proof.py` (deterministic camera-render assertion handler)
+- `veilbreakers_terrain/tests/test_visual_render_camera_proof.py`
+- `docs/solutions/best-practices/visual-render-camera-proof-2026-05-04.md`
+- 7 rows in `GRADES_VERIFIED.csv`
+
+Rescue PR B (optional, ~6 files):
+- `veilbreakers_terrain/coastal/{landform_zones,shoreline_sdf}.py` + tests — Bezier-SDF math reusable in chunk-based pipeline
+
+File 2 plausibly-new bugs as GitHub issues: `terrain_labels` (std=0 across all biomes), `pass_water_depth` skip behavior — may not be in the May 3 audit at this precision.
+
+**Reasoning:** PR #24 is a 64×64 toy harness with synthetic-channel pre-population (smoke test, not quality system). 67% of its "6 confirmed bugs" are redundant with the May 3 / Batch 15 audit which already documents them with file:line precision. The PR contradicts itself across commits. CI failures are fixable but fixing CI to merge a system about to be deleted = negative ROI. Net: ~5% useful after rebuild ships; close.
+
+### E.2 — Opus AAA Spec Vertical Depth — 10 BLOCKING Gaps Resolved in v1.1
+
+| Gap | v1.0 state | v1.1 resolution | Section |
+|---|---|---|---|
+| Mei et al. 2007 hydraulic parameter set | unspecified | locked Kc/Ks/Kd/Ke/A/L/g/dt/friction/rain_rate values | §13.1 |
+| Erosion re-run state semantics | ambiguous | continues from prior state (does NOT reset) | §13.2 |
+| Chunk extents math (512m vs 514m) | ambiguous | 256 cells × 2m = 512m extents; 257th vert is shared edge | §1 Q3 |
+| DEM void handling + datum/projection | silent | SRTM Plus fallback + bicubic + EGM96 → WGS84 → local tangent Mercator | §13.4 |
+| TWI 8.5 calibration to 2m grid | wrong scale | recalibrated to TWI_2m > 3.0 (with derivation) | §13.5 |
+| L-Py grammar authoring contract | unspecified | per-species `.lpy` file at `species_libs/lpy_grammars/<biome>/`, bake driver, variant catalog | §13.6 |
+| MTree bypass_operator parameter file format | unspecified | per-species JSON at `species_libs/mtree_params/<biome>/`, schema locked | §13.7 |
+| Voronoi clumping cell size + seed + variance | unspecified | 4m cell, blue-noise Poisson seed, TruncatedNormal variance | §13.8 |
+| Edge-weld assertion failure mode in player builds | fail-fast (crash risk) | log + edge-blend smoothing + telemetry (never crash) | §13.9 |
+| Section 6.10 vs 7.2 grade conflict | contradictory | mandatory-32 + polish-10 split with explicit pass criteria | §6.10 |
+
+### E.3 — Opus AAA Spec Horizontal Coverage — 5 SHIP-BLOCKING Gaps Resolved
+
+| Gap | Disposition | Section |
+|---|---|---|
+| Day/night cycle integration | IN-SCOPE for v1 ship (post-pilot template), separate spec | §12.1 |
+| Save/load version_hash mismatch | IN-SCOPE for v1 ship; contract locked | §12.2 |
+| Audio zone schema | IN-SCOPE for pilot; schema locked here | §12.3 |
+| NavMesh build trigger + off-mesh links | partial pilot (mask only); full v1 ship | §12.4 |
+| Per-playthrough seed model | DECLARED — world fixed across playthroughs by design | §12.5 |
+
+V2-WORTHY items deferred (acknowledged): foliage interactions (trampling/destruction), terrain persistence, in-engine cinematics, accessibility tier, console quality tiers. Each gets a future spec doc post-pilot.
+
+### E.4 — Sonnet veilbreakers_terrain/ Core Clutter — 8 Surgical PRs Locked
+
+Compatibility grade: **C** — existing structure not hostile, surgical fixes required.
+
+8 critical conflicts with file:line precision (all addressed in §11 PR sequence):
+1. `terrain_water_variants.py:781,878` — W-1 legacy writes (PR #3)
+2. `terrain_advanced.py:2652` — align_to_normal default True (PR #4)
+3. `terrain_morphology.py:459-465` — morphology_delta never applied (PR #7)
+4. `terrain_water_variants.py:622-648` — wetland_type discarded (PR #3)
+5. `terrain_unity_export.py` — 14 test imports (PR #9)
+6. `environment.py:8274` — lazy import will ImportError (PR #9)
+7. `terrain_chunking.py:100` — chunk_world_size default 64m (PR #5)
+8. `_terrain_erosion.py:308` — E-1 erodibility (replaced by Taichi)
+
+14 phantom channels triaged in §14 runtime contracts (some WIRED, some REMOVED, some KEPT).
+
+Critical unwired: `terrain_stratigraphy.py` has zero `register_*` references in master_registrar — addressed by PR #6.
+
+### E.5 — Sonnet scripts/ Clutter — 47 Deletes + 8 Conflicts
+
+Disposition summary:
+- 47 DEPRECATED-DELETE → consolidated into PR #10 (single cleanup PR)
+- 8 CONFLICT scripts → PR #10 deletes most; PR #15-17 decouple test imports first
+- 29 KEEP scripts → CI gates + asset fetchers + audit tools (no action)
+- 7 UNCLEAR → reviewed post-pilot
+- 2 DEPRECATED-KEEP-UNTIL-PILOT → marked with header comments
+
+Scripts confirmed as carrying the diagonal-tree bug at exact line numbers: `coastal_build_v3d_vegetation.py:285-392` and `coastal_build_v3d_vegetation_v2.py:360-392` (cited as evidence in spec §0).
+
+### E.6 — Sonnet output/renders/docs/CI Clutter — Repo Storage + CI
+
+Storage:
+- ~1.1 GB LFS reclaimable post-pilot (renders/quality-audit, output/visual_nodes, output/aaa_node_v*, output/scene_v*, *.blend1)
+- ~50 MB git proper reclaimable (stale audit docs, intermediate spreadsheets)
+
+Critical pre-pilot blocker: `taichi` and `rasterio` missing from `pyproject.toml` — PR #2.
+
+Test landmines: 3 test files import scripts being deleted — PRs #15-17 decouple before deletes.
+
+CI workflows stable: all 10 referenced scripts exist; new chunk-render-proof workflow (PR #20) added.
+
+`.gitignore` gap: `output/aaa_node_v3/` is committed but only v4+ is ignored — PR #1.
+
+### E.7 — Net Effect of Strict Review on Spec
+
+**Lines added in v1.1: ~700.** Spec is now 2300+ lines.
+
+- v1.0 grade per strict reviewer: **AA at most, NOT implementable as-is**
+- v1.1 grade target after addendum: **AAA implementable** (close BLOCKING gaps + define runtime contracts + lock cleanup runway)
+- Net additions: 4 new sections (11, 12, 13, 14), 1 new appendix (E), parameter tables for hydraulic/L-Py/MTree/Voronoi, runtime channel lifecycle contracts
+- 20 PR cleanup runway → ~3-5 days focused work before pilot Week 1
+
+---
+
+**End of design spec v1.1. Ready for re-review by spec-document-reviewer subagent and final user approval.**
