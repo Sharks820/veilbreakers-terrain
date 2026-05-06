@@ -69,6 +69,7 @@ _LOC_HANDLERS: Dict[str, str] = {
     "visual_capture_screenshot": "visual_qa_capture_screenshot",
     "visual_validate_channels": "visual_qa_validate_channels",
     "visual_compare_render": "visual_qa_compare_render",
+    "render_camera_proof": "visual_render_camera_proof",
     "terrain_sculpt": "terrain_sculpt",
     "terrain_lods": "terrain_generate_lods",
     "terrain_biome_setup": "terrain_setup_biome",

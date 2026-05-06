@@ -777,6 +777,23 @@ def _build_command_handlers() -> dict[str, CommandHandler]:
             exc,
         )
 
+    # ------------------------------------------------------------------
+    # visual_render_camera_proof.py — non-black-pixel render proof handler
+    # used by Coastal-perfection (U2-U13). The kwargs-style handler must
+    # be wrapped via _make_signature_handler so MCP dispatch (which passes
+    # a single params dict) does not TypeError.
+    # ------------------------------------------------------------------
+    try:
+        _vrcp = _il.import_module(f"{_pkg}.visual_render_camera_proof")
+        handlers["visual_render_camera_proof"] = _make_signature_handler(
+            _vrcp.handle_visual_render_camera_proof
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register visual_render_camera_proof handler: %r",
+            exc,
+        )
+
     try:
         _vs = _il.import_module(f"{_pkg}.terrain_viewport_sync")
         from .terrain_semantics import BBox as _BBox

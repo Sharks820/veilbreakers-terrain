@@ -222,7 +222,8 @@ def render_camera_proof(
             eevee.use_shadows = True
             eevee.use_gtao = True
         except AttributeError:
-            pass
+            # eevee.use_shadows / use_gtao not available in this Blender version
+            logger.warning("eevee.use_shadows / use_gtao not available in this Blender version")
 
     if frame is not None:
         scene.frame_set(int(frame))
@@ -243,7 +244,7 @@ def render_camera_proof(
         unit_id=unit_id,
         out_dir=str(out_path),
         engine=engine,
-        resolution=tuple(resolution),
+        resolution=(resolution[0], resolution[1]),
         samples=int(samples),
         frame=frame,
         view_transform=view_transform,
