@@ -1624,7 +1624,7 @@ After the v1.0 spec was committed to PR #25, six adversarial review agents were 
 | Total reported findings (Waves 1-5) | 178 | 276 |
 | Verified open after Wave-3 forensic re-check | 174 | 263 |
 | Unique items mapped to PRs (after dedup) | 132 | 234 |
-| PR count | 27 | 113 (91 + 22 net-new from Phase 4: B5-U-NAV, B5-U15-U22 (8 Unity), B5-C7-C12 (6 channels), B5-D5-D8 (4 chunks), B5-T8-T10 (3 tests), PR #65 (RNG cleanup) — Phase 4 adds 22 PR rows; was 91 post-Phase-3 with B5-T1b, now 113 post-Phase-4) |
+| PR count | 27 | 114 (91 + 23 net-new from Phase 4: B5-U-NAV (1) + B5-U15-U22 (8 Unity) + B5-C7-C12 (6 channels) + B5-D5-D8 (4 chunks) + B5-T8-T10 (3 tests) + PR #65 (RNG cleanup) = 23 — Phase 4 adds 23 PR rows; was 91 post-Phase-3 with B5-T1b, now 114 post-Phase-4) |
 | Block count | 4 | 5 pilot blocks + Block 6 post-pilot maturity (v1.1 batch, per Phase 2 Fix 2.1) |
 | Effort (focused, single-engineer days) | 5–7 | **30–45 working days realistic solo (~6-9 weeks calendar) per [AUTO-APPLIED — Decision 3.3 / pending user override]**; prior optimistic 11–14 estimate dropped — assumed 1 PR/hour throughput at 6h focus/day with no review/surprises. Two-engineer estimate dropped (out of scope; would require hiring). |
 | Critical-path length | 5 PRs (#1→#2→#3→#4→#5) | 6 PRs (#1→#2→#3→#4→#5b→#11) |
@@ -1800,9 +1800,9 @@ Tile-seam contract correctness, concurrency safety in pipeline parallel-merge, D
 
 **Block 3 totals: 11 PRs, ~2 days.** Critical path: #38 → #39 → #40 → {#41, #42, #43, #44, #48}; #45-#47 independent.
 
-### 11.4 Block 4 — Polish + rescue + infra + ecology demoted (~2 days, 11 PRs after Phase 2 fixes)
+### 11.4 Block 4 — Polish + rescue + infra + ecology demoted (~2 days, 12 PRs after Phase 4 fixes)
 
-Per-biome ecology demoted from B1 to B4 polish (P3 severity for dark-fantasy game), rescue PRs, scope-relocation infra. **Phase 2 Fix 2.2** added 3 polish PRs (#6, #7, #10) moved from Block 1; **Phase 2 Fix 2.3** then deferred 5 refactor PRs (#49-#52, #54) to v1.1, leaving Block 4 net at 11 active PRs (13 baseline + 3 added by Fix 2.2 − 5 deferred by Fix 2.3 = 11).
+Per-biome ecology demoted from B1 to B4 polish (P3 severity for dark-fantasy game), rescue PRs, scope-relocation infra. **Phase 2 Fix 2.2** added 3 polish PRs (#6, #7, #10) moved from Block 1; **Phase 2 Fix 2.3** then deferred 5 refactor PRs (#49-#52, #54) to v1.1; **Phase 4 Fix 4.10** added PR #65 (dead-RNG cleanup), leaving Block 4 net at 12 active PRs (13 baseline + 3 added by Fix 2.2 − 5 deferred by Fix 2.3 + 1 added by Fix 4.10 = 12).
 
 | PR # | Title | Files (file:line) | Acceptance | Validation | Effort | Deps |
 |------|-------|-------------------|------------|------------|--------|------|
@@ -1839,7 +1839,7 @@ Block 5 is a separate workstream from Block 1-4 bake-side PRs. Requires **Unity 
 
 PR rows in §11.5.1-§11.5.7 carry a **Sub-block** column tagged `5a`, `5b`, or `6`. The annotation does not change PR identity or count; it only routes work to pilot vs post-pilot calendars.
 
-#### 11.5a Pilot-blocking Unity parity (Block 5a — 5 PRs)
+#### 11.5a Pilot-blocking Unity parity (Block 5a — 6 PRs)
 
 These are the 5 BLOCKING gaps from §11.7 #2 — pilot Unity ingestion fails without them.
 
@@ -1963,7 +1963,7 @@ Per Phase 2 Fix 2.1: all doc-rot PRs are post-pilot maturity → Block 6.
 | B5-DOC3 | 6 | docs(spec-fix): remove 3 nonexistent build script citations from spec body | spec body lines 7 + 27 (currently cite `coastal_build_v3d_vegetation_v2.py`, `mountain_build_v1_full.py`, `grassland_full_build.py` — verified deleted by V3 forensic) | • Lines 7 and 27 reference superseded scripts as historical context only<br>• `CODEBASE_STRUCTURE.md` refreshed post-providers/, post-Batch14 export-wiring, post-`terrain_texture_layer_stack.py` | Manual: review spec body cites | S | none |
 | B5-DOC4 | 6 | docs(refresh): commit dirty-tree docs (already modified, not committed) | `docs/BLENDER_AGENT_USAGE_GUIDE.md`, `docs/TERRAIN_CALLABLE_USAGE_GUARDRAIL.md` (per `git status`); add chunk-aware sections to BLENDER guide; add chunk-pass wiring contract to GUARDRAIL | • Both files committed<br>• Chunk-aware sections present<br>• Chunk-pass wiring contract documented | Manual: review docs | S | #4 |
 
-**Block 5 totals (after Phase 2 Fix 2.1 severity split + Phase 2.5 Fix B B5-C1 re-tag + Phase 3 Decision 3.4 deferring B5-CI1/DEP4/DEP5 + Phase 3 Theme 3.8 adding B5-T1b + Phase 4 adding 21 net-new PR rows): 48 PR groups (was 27 post-Phase-3) split into Block 5a (6 pilot-blocking Unity parity PRs: B5-U1 through B5-U5 + B5-U-NAV [Fix 4.1]) + Block 5b (pilot-supporting infra: 9 baseline §11.5.1 + 8 Phase 4 §11.5.1 [B5-U15-U22] + B5-C1 + B5-C2 + B5-C6 + 6 Phase 4 §11.5.2 [B5-C7-C12] + 3 of §11.5.3 + 4 Phase 4 §11.5.3 [B5-D5-D8] + 4 of §11.5.5 + B5-T1 + B5-T1b + B5-T4 + 3 Phase 4 §11.5.4 [B5-T8-T10]) + Block 6 (post-pilot maturity: B5-C3 + B5-C5 + B5-T2/T3/T5/T6/T7 + B5-DEP2 + B5-DEP3 + B5-DOC1-4 = 13 deferred = 2+5+2+4) + DEFERRED-by-Decision-3.4 (B5-CI1 + B5-DEP4 + B5-DEP5 do not ship in v1 pilot). Block 5a + Block 5b land during pilot calendar (within the 30-45 working days [Decision 3.3] envelope). Block 6 deferred to v1.1 (see §11.6.1). Phase 4 net-new sub-block tag distribution: 5a = +1 (B5-U-NAV); 5b = +20 (8 §11.5.1 + 6 §11.5.2 + 4 §11.5.3 + 3 §11.5.4 — but adjusted: 21 total Phase 4 rows = 1 for 5a + 20 for 5b).**
+**Block 5 totals (after Phase 2 Fix 2.1 severity split + Phase 2.5 Fix B B5-C1 re-tag + Phase 3 Decision 3.4 deferring B5-CI1/DEP4/DEP5 + Phase 3 Theme 3.8 adding B5-T1b + Phase 4 adding 22 net-new PR rows in Block 5; 23 total Phase 4 PRs counting #65 in Block 4): 49 PR groups (was 27 post-Phase-3) split into Block 5a (6 pilot-blocking Unity parity PRs: B5-U1 through B5-U5 + B5-U-NAV [Fix 4.1]) + Block 5b (pilot-supporting infra: 9 baseline §11.5.1 + 8 Phase 4 §11.5.1 [B5-U15-U22] + B5-C1 + B5-C2 + B5-C6 + 6 Phase 4 §11.5.2 [B5-C7-C12] + 3 of §11.5.3 + 4 Phase 4 §11.5.3 [B5-D5-D8] + 4 of §11.5.5 + B5-T1 + B5-T1b + B5-T4 + 3 Phase 4 §11.5.4 [B5-T8-T10]) + Block 6 (post-pilot maturity: B5-C3 + B5-C5 + B5-T2/T3/T5/T6/T7 + B5-DEP2 + B5-DEP3 + B5-DOC1-4 = 13 deferred = 2+5+2+4) + DEFERRED-by-Decision-3.4 (B5-CI1 + B5-DEP4 + B5-DEP5 do not ship in v1 pilot). Block 5a + Block 5b land during pilot calendar (within the 30-45 working days [Decision 3.3] envelope). Block 6 deferred to v1.1 (see §11.6.1). Phase 4 net-new sub-block tag distribution: 5a = +1 (B5-U-NAV); 5b = +20 (8 §11.5.1 + 6 §11.5.2 + 4 §11.5.3 + 3 §11.5.4 — but adjusted: 21 total Phase 4 rows = 1 for 5a + 20 for 5b).**
 
 ### 11.6 Cross-PR dependency graph
 
