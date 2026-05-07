@@ -1452,13 +1452,26 @@ def _toposort_passes(
     """Return a topological ordering of pass definitions by channel dependency.
 
     Algorithm: Kahn's BFS.  An edge A→B exists when pass B requires a channel
-    that pass A produces.  Raises ``ValueError`` on a cycle (which would
-    indicate a circular channel dependency — impossible to execute).
+    that pass A produces — UNLESS pass B also declares ``overrides=(c, ...)``
+    for that channel, in which case the edge is suppressed.  Rationale: a
+    pass that overrides a channel is the authoritative writer for it (per the
+    ``ChannelOwnershipError`` registration check at line ~470); requiring
+    that channel as input plus declaring it as overridden tells the DAG
+    "I read whatever value happens to be there, then replace it." Treating
+    the producer as a hard prerequisite would force a strict ordering where
+    the spec only intends a soft "if a producer ran, fine" semantic, and
+    this is what creates dual-cycles when two passes both override the same
+    channel and require each other's primary channel (e.g.
+    ``terrain_banded`` ↔ ``terrain_morphology`` on ``height``).
 
     Passes with no channel dependencies appear first; passes that only consume
     channels produced by earlier passes appear after their producers.  Within
     the same dependency level, original registration order is preserved
     (stable sort).
+
+    Raises ``ValueError`` on a cycle that survives override suppression —
+    which indicates a circular dependency the override mechanism cannot
+    resolve.
     """
     name_to_def: "dict[str, PassDefinition]" = {d.name: d for d in definitions}
 
@@ -1468,10 +1481,19 @@ def _toposort_passes(
         for ch in d.produces_channels:
             channel_producers.setdefault(ch, []).append(d.name)
 
-    # Build adjacency list: for each pass, which passes must run before it
+    # Build adjacency list: for each pass, which passes must run before it.
+    # Per §11.1 PR #3: when pass B requires channel c AND c is in B.overrides,
+    # suppress the edge A→B for that channel — B is the authoritative writer
+    # and accepts whatever input value exists rather than blocking on a
+    # specific producer's output. Other edges (via channels not in overrides)
+    # are still added, so a producer that B genuinely depends on through a
+    # different channel still orders before B.
     in_edges: "dict[str, set[str]]" = {d.name: set() for d in definitions}
     for d in definitions:
+        overridden_channels = frozenset(d.overrides)
         for ch in d.requires_channels:
+            if ch in overridden_channels:
+                continue
             for producer in channel_producers.get(ch, []):
                 if producer != d.name:
                     in_edges[d.name].add(producer)
