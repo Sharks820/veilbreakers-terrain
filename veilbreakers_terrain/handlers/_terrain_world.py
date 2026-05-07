@@ -933,24 +933,65 @@ def pass_macro_world(
                 normalize=False,
             ).astype(np.float32)
 
-            # Fix 7.20b: raw noise output is in ~[-0.5, 0.5] (normalized noise
-            # basis), but world-space heights need to be in metres. Scale to a
-            # meaningful range per terrain type. Mountains → 200 m vertical range,
-            # desert → 80 m, coastal → 60 m. This keeps the tile-safe,
-            # seam-consistent coordinate contract while producing useful elevations.
-            _HEIGHT_SCALE = {
+            # B15-P0-01 / Phase A D6-7: single canonical rescale.
+            #
+            # Resolution order (hint always wins when valid, regardless of magnitude):
+            #   1. ``intent.composition_hints["target_height_range_m"]``  (canonical authoring path)
+            #   2. ``_HEIGHT_SCALE_DEFAULTS[terrain_type]``               (per-type fallback)
+            #
+            # Prior to this fix the per-type ``_HEIGHT_SCALE`` was applied
+            # unconditionally and the FIX-B14-9 block at :994 then RE-rescaled
+            # when ``target_height_range_m`` was provided. That double-rescale
+            # invalidated any height-dependent channel derived between the two
+            # rescales, and made the per-type scale the de-facto canonical even
+            # though the spec calls ``target_height_range_m`` the canonical
+            # authoring knob (B15-P0-01).
+            #
+            # Now: when ``target_height_range_m`` is provided AND parses to a
+            # positive float, it wins (even if smaller than the per-type
+            # default). Anything else — None, missing, non-numeric, zero,
+            # negative — falls back to the per-type default. The FIX-B14-9
+            # block at :994 below remains as a downstream rescale event
+            # emitter for telemetry; with the canonical rescale already
+            # applied here it is effectively idempotent on identical inputs.
+            #
+            # Per-type fallback ranges (Fix 7.20b lineage): mountains 200m,
+            # desert 80m, coastal 60m, default 150m. Raw noise basis is
+            # ~[-0.5, 0.5]; affine remap brings it to [0, _height_scale].
+            _HEIGHT_SCALE_DEFAULTS = {
                 "mountains": 200.0,
                 "desert": 80.0,
                 "coastal": 60.0,
-            }.get(terrain_type, 150.0)
+            }
+            # Note: ``intent`` is already non-None at this point (guarded by
+            # the enclosing ``if heightmap_source is None`` branch reached only
+            # when intent was bound and noise generation is the live path).
+            # Pyright strict knows this, so we elide the redundant
+            # ``is not None`` check that would otherwise add a
+            # ``reportUnnecessaryComparison`` to the strict baseline.
+            _intent_hints = intent.composition_hints or {}
+            _intent_target_range = _intent_hints.get("target_height_range_m")
+            # Defensive parse: composition_hints is `Dict[str, Any]` so the
+            # value may be a non-numeric string, list, dict, etc. Treat any
+            # parse failure or non-positive result as "not provided" and fall
+            # back to the per-type default rather than letting the pass crash
+            # with TypeError/ValueError on malformed authoring input.
+            _height_scale = _HEIGHT_SCALE_DEFAULTS.get(terrain_type, 150.0)
+            if _intent_target_range is not None:
+                try:
+                    _parsed_target = float(_intent_target_range)
+                except (TypeError, ValueError):
+                    _parsed_target = -1.0
+                if _parsed_target > 0.0:
+                    _height_scale = _parsed_target
             h_range_raw = float(hmap.max()) - float(hmap.min())
             if h_range_raw > 1e-9:
-                # Affine remap: [min, max] → [0, _HEIGHT_SCALE]
-                hmap = ((hmap - float(hmap.min())) / h_range_raw * _HEIGHT_SCALE).astype(np.float32)
+                # Affine remap: [min, max] → [0, _height_scale]
+                hmap = ((hmap - float(hmap.min())) / h_range_raw * _height_scale).astype(np.float32)
             else:
                 # Degenerate flat output — generate minimal relief via seed-based offset
                 rng_fb = np.random.default_rng(seed ^ 0xDEAD)
-                hmap = rng_fb.uniform(0.0, _HEIGHT_SCALE, hmap.shape).astype(np.float32)
+                hmap = rng_fb.uniform(0.0, _height_scale, hmap.shape).astype(np.float32)
 
             stack.set("height", hmap, "macro_world")
             # Fix 12.1 backward compat: macro_world also populates hmap_low_freq
