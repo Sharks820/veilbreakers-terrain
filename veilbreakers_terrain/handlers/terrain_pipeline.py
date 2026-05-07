@@ -204,6 +204,26 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     if validation_pass == "validation_full":
         insert_at = pass_sequence.index("validation_full")
         for prereq in (
+            # Phase A D8-9: explicitly schedule the 2 determinism-safe Bundle I
+            # orphan passes whose deltas are otherwise stranded. R1.5 verifier
+            # confirmed 3 real omissions (stratigraphy, wind_erosion, coastline);
+            # this PR lands ``wind_erosion`` + ``coastline`` only. Stratigraphy
+            # is DEFERRED to Phase B because it currently writes 4 undeclared
+            # channels (bedrock_height, height, sediment_height, strata_height)
+            # without ``overrides=("height",)`` — a pre-existing
+            # produces_channels gap discovered while writing this PR's
+            # determinism test (test_terrain_deep_qa::test_determinism_check
+            # fails when stratigraphy is scheduled because its height
+            # overwrite is non-determinism-safe today).
+            #
+            # karst + glacial are already scheduled (glacial via has_scene_read
+            # insert at :199; karst is consumed via optional_channels by
+            # downstream passes per R1.5 verifier).
+            #
+            # Both selected passes are gated on has_scene_read because their
+            # delta outputs (wind_erosion_delta, coastline_delta) need
+            # ``integrate_deltas`` (also has_scene_read-gated) to apply.
+            *(("wind_erosion", "coastline") if has_scene_read else ()),
             # C-7: terrain feature carving before scatter
             "pass_terrain_features",
             # C-8: sightline framing before scatter
