@@ -12,7 +12,12 @@ from __future__ import annotations
 import pytest
 
 from veilbreakers_terrain.handlers.terrain_pipeline import _toposort_passes
-from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
+from veilbreakers_terrain.handlers.terrain_semantics import (
+    BBox,
+    PassDefinition,
+    PassResult,
+    TerrainPipelineState,
+)
 
 
 def _make_pass(
@@ -24,10 +29,11 @@ def _make_pass(
 ) -> PassDefinition:
     """Build a no-op PassDefinition with only contract metadata populated."""
 
-    def _noop(_state, _bbox=None):  # pragma: no cover — never invoked in toposort tests
-        from veilbreakers_terrain.handlers.terrain_semantics import PassResult
-
-        return PassResult(name=name, status="ok")
+    def _noop(
+        _state: TerrainPipelineState,
+        _bbox: BBox | None = None,
+    ) -> PassResult:  # pragma: no cover — never invoked in toposort tests
+        return PassResult(pass_name=name, status="ok", duration_seconds=0.0)
 
     return PassDefinition(
         name=name,
