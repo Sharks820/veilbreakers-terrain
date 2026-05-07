@@ -107,6 +107,44 @@ BIOME_CLIMATE_PARAMS: dict[str, dict] = {
 CANONICAL_BIOME_IDS: frozenset[str] = frozenset(BIOME_CLIMATE_PARAMS.keys())
 
 
+# B15-P0-02 / Phase A D6-7: cross-module canonical biome invariant.
+#
+# `terrain_biome_registry.CANONICAL_BIOME_IDS` is a SEPARATE source of truth —
+# a dict with display labels imported across the catalog, foliage, and
+# registrar layers. The two MUST stay in lockstep. Drift between them
+# historically produced zero foliage placements (P0-S2 in the old audit)
+# because the catalog reads names that the climate params don't recognise.
+#
+# This module-level invariant fires on first import and raises AssertionError
+# if the two sets diverge. Pre-runtime catch of biome-vocab fragmentation;
+# cheaper than runtime debugging silent-zero-placement output. Per §17 D6-7
+# GATE D5. Wrapped in a try/except for partial-import bootstrap edge cases —
+# the dedicated test in tests/test_b15_p0_02_biome_canonical_invariant.py
+# is the explicit ratchet that runs even if the import-time check is skipped.
+try:
+    from veilbreakers_terrain.handlers.terrain_biome_registry import (
+        CANONICAL_BIOME_IDS as _REGISTRY_CANONICAL_IDS,
+    )
+
+    _params_keys = set(BIOME_CLIMATE_PARAMS.keys())
+    _registry_keys = set(_REGISTRY_CANONICAL_IDS.keys())
+    if _params_keys != _registry_keys:
+        _missing_from_params = _registry_keys - _params_keys
+        _missing_from_registry = _params_keys - _registry_keys
+        raise AssertionError(
+            "B15-P0-02 invariant violated: BIOME_CLIMATE_PARAMS keys diverge from "
+            "terrain_biome_registry.CANONICAL_BIOME_IDS. "
+            f"missing_from_params={sorted(_missing_from_params)!r}, "
+            f"missing_from_registry={sorted(_missing_from_registry)!r}. "
+            "Add the missing biome to BOTH dicts before re-importing."
+        )
+    del _params_keys, _registry_keys
+except ImportError:
+    # Registry module not yet importable (partial-import bootstrap). Defer to
+    # the dedicated test ratchet — the assertion re-fires on full import.
+    pass
+
+
 # ---------------------------------------------------------------------------
 # WorldMapSpec dataclass
 # ---------------------------------------------------------------------------
