@@ -1826,7 +1826,10 @@ def pass_road_network(
             dx = ex - sx
             dy = ey - sy
             seg_len_sq = dx * dx + dy * dy
-            if seg_len_sq < 1e-12:
+            # Match _closest_point_on_segment's exact `len_sq == 0.0` semantic
+            # so byte-identity with the pre-PR loop is preserved even for
+            # extremely short non-zero segments.
+            if seg_len_sq == 0.0:
                 # Degenerate segment: distance from a single point.
                 dist_sq = (wx_grid - sx) ** 2 + (wy_grid - sy) ** 2
             else:
@@ -1838,8 +1841,10 @@ def pass_road_network(
                 cpx = sx + t * dx
                 cpy = sy + t * dy
                 dist_sq = (wx_grid - cpx) ** 2 + (wy_grid - cpy) ** 2
-            # Mark cells inside the swept rectangle. OR-equal preserves prior
-            # segments' marks so wider/narrower segments compose correctly.
+            # Mark cells inside the segment's capsule (swept-disc) corridor —
+            # the half-width threshold against the closest-point distance gives
+            # a circular cap at each endpoint, not a sharp rectangle. OR-equal
+            # preserves prior segments' marks so wider/narrower segments compose.
             road_mask |= (dist_sq <= half_w_sq).astype(np.uint8)
 
     # SDF: Euclidean distance transform from road boundary (in world-metres)

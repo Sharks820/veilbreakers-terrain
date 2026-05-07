@@ -32,7 +32,9 @@ def _reference_road_mask(
             for ci in range(cols):
                 wx = ox + (ci + 0.5) * cell_size
                 cp = _closest_point_on_segment_ref((wx, wy), seg_start, seg_end)
-                dist = math.sqrt((wx - cp[0]) ** 2 + (wy - cp[1]) ** 2)
+                # math.hypot avoids overflow on intermediate squares — and
+                # is what CodeQL recommends for Pythagorean distance.
+                dist = math.hypot(wx - cp[0], wy - cp[1])
                 if dist <= half_w:
                     road_mask[ri, ci] = 1
     return road_mask
@@ -43,13 +45,19 @@ def _closest_point_on_segment_ref(
     seg_start: tuple[float, float],
     seg_end: tuple[float, float],
 ) -> tuple[float, float]:
-    """Match the prod ``_closest_point_on_segment`` semantics for the reference."""
+    """Match the prod ``_closest_point_on_segment`` semantics for the reference.
+
+    Production helper at ``road_network.py:_closest_point_on_segment`` uses
+    ``len_sq == 0.0`` (exact zero) to detect degenerate segments; matching it
+    here keeps the test a faithful ground-truth even for extremely short
+    non-zero segments.
+    """
     sx, sy = seg_start
     ex, ey = seg_end
     dx = ex - sx
     dy = ey - sy
     seg_len_sq = dx * dx + dy * dy
-    if seg_len_sq < 1e-12:
+    if seg_len_sq == 0.0:
         return (sx, sy)
     t = ((p[0] - sx) * dx + (p[1] - sy) * dy) / seg_len_sq
     t = max(0.0, min(1.0, t))
@@ -78,7 +86,7 @@ def _vectorized_road_mask(
         dx = ex - sx
         dy = ey - sy
         seg_len_sq = dx * dx + dy * dy
-        if seg_len_sq < 1e-12:
+        if seg_len_sq == 0.0:
             dist_sq = (wx_grid - sx) ** 2 + (wy_grid - sy) ** 2
         else:
             t = ((wx_grid - sx) * dx + (wy_grid - sy) * dy) / seg_len_sq
