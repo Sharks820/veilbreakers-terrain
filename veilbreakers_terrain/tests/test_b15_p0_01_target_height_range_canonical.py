@@ -3,14 +3,15 @@
 Verifies that ``intent.composition_hints["target_height_range_m"]`` is the
 canonical authoring path for heightmap rescale, and that the per-type
 ``_HEIGHT_SCALE_DEFAULTS`` is the FALLBACK applied only when the hint is
-absent.
+absent / non-positive / non-numeric.
 
 Prior to this fix the per-type scale was applied unconditionally and a
 later FIX-B14-9 block re-rescaled when ``target_height_range_m`` was
 provided — that double-rescale invalidated any height-dependent channel
 derived between the two rescales. After the fix, a single canonical
-rescale picks the larger of (target_range_m, per-type fallback) before
-any downstream channel is computed.
+rescale uses the hint when it parses to a positive float (even if smaller
+than the per-type default) and falls back to the per-type default
+otherwise, before any downstream channel is computed.
 """
 
 from __future__ import annotations

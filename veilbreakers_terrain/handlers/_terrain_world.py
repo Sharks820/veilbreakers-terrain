@@ -935,7 +935,7 @@ def pass_macro_world(
 
             # B15-P0-01 / Phase A D6-7: single canonical rescale.
             #
-            # Resolution order:
+            # Resolution order (hint always wins when valid, regardless of magnitude):
             #   1. ``intent.composition_hints["target_height_range_m"]``  (canonical authoring path)
             #   2. ``_HEIGHT_SCALE_DEFAULTS[terrain_type]``               (per-type fallback)
             #
@@ -947,11 +947,13 @@ def pass_macro_world(
             # though the spec calls ``target_height_range_m`` the canonical
             # authoring knob (B15-P0-01).
             #
-            # Now: when ``target_height_range_m`` is provided we use it directly
-            # and skip the per-type scale. The FIX-B14-9 block at :994 below
-            # is retained as a no-op safety net (it short-circuits when the
-            # raw range already matches the target) so older callers that
-            # rely on the rescale event being emitted do not regress.
+            # Now: when ``target_height_range_m`` is provided AND parses to a
+            # positive float, it wins (even if smaller than the per-type
+            # default). Anything else — None, missing, non-numeric, zero,
+            # negative — falls back to the per-type default. The FIX-B14-9
+            # block at :994 below remains as a downstream rescale event
+            # emitter for telemetry; with the canonical rescale already
+            # applied here it is effectively idempotent on identical inputs.
             #
             # Per-type fallback ranges (Fix 7.20b lineage): mountains 200m,
             # desert 80m, coastal 60m, default 150m. Raw noise basis is
@@ -961,12 +963,27 @@ def pass_macro_world(
                 "desert": 80.0,
                 "coastal": 60.0,
             }
-            _intent_hints = (intent.composition_hints if intent is not None else {}) or {}
+            # Note: ``intent`` is already non-None at this point (guarded by
+            # the enclosing ``if heightmap_source is None`` branch reached only
+            # when intent was bound and noise generation is the live path).
+            # Pyright strict knows this, so we elide the redundant
+            # ``is not None`` check that would otherwise add a
+            # ``reportUnnecessaryComparison`` to the strict baseline.
+            _intent_hints = intent.composition_hints or {}
             _intent_target_range = _intent_hints.get("target_height_range_m")
-            if _intent_target_range is not None and float(_intent_target_range) > 0.0:
-                _height_scale = float(_intent_target_range)
-            else:
-                _height_scale = _HEIGHT_SCALE_DEFAULTS.get(terrain_type, 150.0)
+            # Defensive parse: composition_hints is `Dict[str, Any]` so the
+            # value may be a non-numeric string, list, dict, etc. Treat any
+            # parse failure or non-positive result as "not provided" and fall
+            # back to the per-type default rather than letting the pass crash
+            # with TypeError/ValueError on malformed authoring input.
+            _height_scale = _HEIGHT_SCALE_DEFAULTS.get(terrain_type, 150.0)
+            if _intent_target_range is not None:
+                try:
+                    _parsed_target = float(_intent_target_range)
+                except (TypeError, ValueError):
+                    _parsed_target = -1.0
+                if _parsed_target > 0.0:
+                    _height_scale = _parsed_target
             h_range_raw = float(hmap.max()) - float(hmap.min())
             if h_range_raw > 1e-9:
                 # Affine remap: [min, max] → [0, _height_scale]

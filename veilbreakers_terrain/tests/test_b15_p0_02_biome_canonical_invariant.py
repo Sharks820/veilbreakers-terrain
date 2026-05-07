@@ -7,9 +7,10 @@ Verifies the cross-module canonical-biome invariant:
 
 If these two sets diverge, foliage catalog reads names that the climate
 params don't recognise — silent zero placements at runtime (P0-S2 in the
-old audit). The import-time `_assert_biome_canonical_invariant()` in
-`_biome_grammar.py` catches this on import; this test is the explicit
-ratchet that the invariant remains held.
+old audit). The module-level invariant in ``_biome_grammar.py`` (try/except
+ImportError block immediately after ``CANONICAL_BIOME_IDS``) raises
+``AssertionError`` on first import when the sets drift; this test is the
+explicit ratchet that the invariant remains held.
 """
 
 from __future__ import annotations
@@ -17,8 +18,10 @@ from __future__ import annotations
 import importlib
 import sys
 
-from veilbreakers_terrain.handlers._biome_grammar import BIOME_CLIMATE_PARAMS
+from veilbreakers_terrain.handlers import _biome_grammar
 from veilbreakers_terrain.handlers.terrain_biome_registry import CANONICAL_BIOME_IDS
+
+BIOME_CLIMATE_PARAMS = _biome_grammar.BIOME_CLIMATE_PARAMS
 
 
 def test_biome_climate_params_matches_canonical_registry():
@@ -46,20 +49,23 @@ def test_invariant_has_expected_18_biomes():
     assert len(CANONICAL_BIOME_IDS) == 18
 
 
-def test_module_import_does_not_raise():
-    """Importing _biome_grammar must not raise — module-level invariant passes today."""
-    # Fresh import — if the module-level invariant fires AssertionError, this
-    # test fails. Implicit: existing import at top of this file already proves
-    # this passes, but the explicit assertion documents the contract.
-    import veilbreakers_terrain.handlers._biome_grammar as _bg_mod
+def test_module_exposes_canonical_attributes():
+    """The _biome_grammar module exposes BIOME_CLIMATE_PARAMS + CANONICAL_BIOME_IDS publicly.
 
-    assert hasattr(_bg_mod, "BIOME_CLIMATE_PARAMS")
-    assert hasattr(_bg_mod, "CANONICAL_BIOME_IDS")
+    The module is already imported at file-load time; if its module-level
+    invariant raised, the import at the top of this test file would have
+    failed and pytest collection would already be red. This test documents
+    the public contract that downstream callers depend on.
+    """
+    assert hasattr(_biome_grammar, "BIOME_CLIMATE_PARAMS")
+    assert hasattr(_biome_grammar, "CANONICAL_BIOME_IDS")
 
 
 def test_module_reimport_still_passes():
-    """Reimporting _biome_grammar must not raise (idempotent invariant)."""
-    # Force reimport to re-run the module-level invariant.
+    """Forcing a fresh reimport must re-run the module-level invariant cleanly."""
+    # importlib.reload re-executes the module body, so the try/except invariant
+    # block fires again. If BIOME_CLIMATE_PARAMS and terrain_biome_registry
+    # have drifted between the original import and now, this raises.
     if "veilbreakers_terrain.handlers._biome_grammar" in sys.modules:
         importlib.reload(sys.modules["veilbreakers_terrain.handlers._biome_grammar"])
 

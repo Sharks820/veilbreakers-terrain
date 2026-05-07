@@ -139,10 +139,12 @@ try:
             "Add the missing biome to BOTH dicts before re-importing."
         )
     del _params_keys, _registry_keys
-except ImportError:
-    # Registry module not yet importable (partial-import bootstrap). Defer to
-    # the dedicated test ratchet — the assertion re-fires on full import.
-    pass
+except ImportError as _exc:
+    # Only suppress the bootstrap-order failure (registry module not yet
+    # importable). Re-raise any unexpected ImportError from inside the
+    # registry module or its transitive deps so real bugs aren't masked.
+    if getattr(_exc, "name", None) != "veilbreakers_terrain.handlers.terrain_biome_registry":
+        raise
 
 
 # ---------------------------------------------------------------------------
