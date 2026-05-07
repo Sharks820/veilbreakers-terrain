@@ -15,13 +15,16 @@ from scripts.verify_pr_cites import (
     STATUS_OUT_OF_FILE,
     STATUS_STALE,
     STATUS_VALID,
+    UNITY_EDITOR_FILES,
     _classify,
+    _expand_line_spec,
     _extract_cites,
     _extract_pr_rows,
     _extract_pr_title,
     _resolve_path,
     _slice_runway,
     audit_spec,
+    main,
 )
 
 
@@ -37,8 +40,35 @@ def test_resolve_path_providers_shorthand():
     assert _resolve_path("providers/meshy_provider.py") == "veilbreakers_terrain/providers/meshy_provider.py"
 
 
-def test_resolve_path_unity_shorthand():
-    assert _resolve_path("unity_project/Assets/Scripts/VbTerrainImporter.cs") == "unity_plugin/VbTerrainImporter.cs"
+def test_resolve_path_unity_runtime_script_lands_at_top_level():
+    """Runtime Unity scripts (e.g. VbFoliageManifestRenderer) live at unity_plugin/ top level."""
+    assert (
+        _resolve_path("unity_project/Assets/Scripts/VbFoliageManifestRenderer.cs")
+        == "unity_plugin/VbFoliageManifestRenderer.cs"
+    )
+
+
+def test_resolve_path_unity_editor_script_lands_in_editor_subdir():
+    """Editor-only scripts route through Editor/ even when cited via Scripts/ shorthand.
+
+    Unity AssetPostprocessor types must physically live in an Editor folder. The
+    spec sometimes cites VbTerrainImporter.cs via Assets/Scripts/ shorthand, but
+    the file actually lives at unity_plugin/Editor/VbTerrainImporter.cs. Resolver
+    consults UNITY_EDITOR_FILES carve-out to route correctly.
+    """
+    assert "VbTerrainImporter.cs" in UNITY_EDITOR_FILES
+    assert (
+        _resolve_path("unity_project/Assets/Scripts/VbTerrainImporter.cs")
+        == "unity_plugin/Editor/VbTerrainImporter.cs"
+    )
+
+
+def test_resolve_path_unity_editor_shorthand_passthrough():
+    """Cites already using Assets/Editor/ resolve directly to unity_plugin/Editor/."""
+    assert (
+        _resolve_path("unity_project/Assets/Editor/VbTerrainImporter.cs")
+        == "unity_plugin/Editor/VbTerrainImporter.cs"
+    )
 
 
 def test_resolve_path_already_absolute_passthrough():
@@ -51,13 +81,23 @@ def test_resolve_path_chunks_new_directory():
 
 
 def test_path_namespace_map_is_ordered_longest_first():
-    """Longer prefixes must come before shorter ones to avoid collision."""
+    """A later (potentially shorter) entry must not be a prefix of an earlier one.
+
+    ``_resolve_path`` walks ``PATH_NAMESPACE_MAP`` top-to-bottom and returns on
+    first match. If a later entry's shorthand is a prefix of an earlier entry's
+    shorthand, the earlier (longer) rule shadows the later one and the later
+    rule is unreachable. Equivalently: every later shorthand must NOT start
+    with any earlier shorthand.
+    """
     prefixes = [shorthand for shorthand, _ in PATH_NAMESPACE_MAP]
-    # unity_project/Assets/Scripts/ contains 'Scripts/' so must come before
-    # any future 'Scripts/' entry — sentinel test ensures we don't drift.
     for idx, prefix in enumerate(prefixes):
         for later in prefixes[idx + 1 :]:
-            assert not prefix.startswith(later), f"{later} sorts before its prefix-superset {prefix}"
+            assert not later.startswith(prefix), (
+                f"PATH_NAMESPACE_MAP[{idx + 1}+]={later!r} extends "
+                f"PATH_NAMESPACE_MAP[{idx}]={prefix!r}; the earlier rule would "
+                f"match first and the later rule would be unreachable. "
+                f"Reorder so the longer/more-specific entry comes first."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -85,12 +125,42 @@ def test_extract_cites_multiple_in_one_row():
     assert paths == {"providers/meshy_provider.py", "providers/hunyuan3d2_provider.py"}
 
 
+def test_extract_cites_expands_comma_separated_lines():
+    """``foo.py:N,M`` produces two distinct cites — one per line — not just N."""
+    row = "| 5b | fix(water) | terrain_water_variants.py:781,878 | acc | val | M | #5a |"
+    cites = _extract_cites(row)
+    paths_lines = [(c[1], c[2]) for c in cites]
+    assert ("terrain_water_variants.py", 781) in paths_lines
+    assert ("terrain_water_variants.py", 878) in paths_lines
+    assert len(cites) == 2
+
+
 def test_extract_cites_dedupes_repeated_pair():
     row = "| 5b | fix(water) | terrain_water_variants.py:781,878 and again terrain_water_variants.py:781 | acc | val | M | #5a |"
     cites = _extract_cites(row)
     paths_lines = [(c[1], c[2]) for c in cites]
-    # First occurrence of (path, 781) wins; the duplicate is dropped
-    assert (("terrain_water_variants.py", 781) in paths_lines)
+    # First occurrence of (path, 781) wins; the comma-list expands to 781 + 878
+    # while the trailing standalone 781 is deduped.
+    assert ("terrain_water_variants.py", 781) in paths_lines
+    assert ("terrain_water_variants.py", 878) in paths_lines
+    assert len(cites) == 2  # 781, 878 — repeated 781 deduped
+
+
+def test_extract_cites_mixed_range_and_list():
+    """``foo.py:1-5,10-12`` yields the start of each chunk: [1, 10]."""
+    row = "| X | demo | terrain_pipeline.py:1-5,10-12 | acc | val | S | none |"
+    cites = _extract_cites(row)
+    lines = sorted(c[2] for c in cites)
+    assert lines == [1, 10]
+
+
+def test_expand_line_spec_pure_unit():
+    """Direct unit test of the line-spec expansion helper."""
+    assert _expand_line_spec("42") == [42]
+    assert _expand_line_spec("42-50") == [42]
+    assert _expand_line_spec("42,50") == [42, 50]
+    assert _expand_line_spec("42-50,60-70") == [42, 60]
+    assert _expand_line_spec("1,2,3,4") == [1, 2, 3, 4]
 
 
 def test_extract_cites_skips_rows_without_cite():
@@ -246,7 +316,8 @@ def test_audit_result_fail_count_excludes_no_cite_and_new_file():
     result.records.append(_make_rec(STATUS_OUT_OF_FILE))
     result.records.append(_make_rec(STATUS_NEW_FILE))
     result.records.append(_make_rec(STATUS_NO_CITE))
-    # fail_count = STALE + OUT_OF_FILE + RESOLVE_FAIL
+    # fail_count = STALE + OUT_OF_FILE only; NEW_FILE is expected for Phase 4 PRs
+    # that introduce files not yet on main, NO_CITE is documentation breadcrumbs.
     assert result.fail_count == 2
 
 
@@ -265,8 +336,17 @@ def _make_rec(status: str) -> CiteRecord:
 # End-to-end against a tiny spec on disk
 # ---------------------------------------------------------------------------
 
-def test_audit_spec_handles_no_runway_gracefully(tmp_path: Path):
-    """audit_spec raises a clear RuntimeError if §11 runway is absent."""
+def test_audit_spec_handles_no_runway_gracefully(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """audit_spec raises a clear RuntimeError if §11 runway is absent.
+
+    Monkeypatches ``_ref_exists`` to True so the test is isolated from the
+    surrounding git environment — we want to verify the runway-not-found
+    branch, not the ref-resolution branch (which would mask intent if HEAD
+    is undefined, e.g. on a fresh repo with no commits).
+    """
+    monkeypatch.setattr("scripts.verify_pr_cites._ref_exists", lambda _ref: True)
     bad_spec = tmp_path / "no_runway.md"
     bad_spec.write_text("# Just a header\n\nNo §11 here.\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="runway section not found"):
@@ -274,6 +354,44 @@ def test_audit_spec_handles_no_runway_gracefully(tmp_path: Path):
 
 
 def test_audit_spec_missing_file_raises_filenotfound(tmp_path: Path):
+    """File-existence check runs before _ref_exists; no monkeypatch needed."""
     bogus = tmp_path / "does_not_exist.md"
     with pytest.raises(FileNotFoundError):
         audit_spec(bogus, ref="HEAD")
+
+
+# ---------------------------------------------------------------------------
+# --from-json / --check-fail-count ratchet path
+# ---------------------------------------------------------------------------
+
+def test_main_from_json_passes_when_under_baseline(tmp_path: Path, capsys):
+    """--from-json + --check-fail-count exits 0 when fail_count ≤ baseline."""
+    json_path = tmp_path / "audit.json"
+    import json as _json
+    json_path.write_text(
+        _json.dumps({"fail_count": 10, "total": 100, "counts": {}, "records": []}),
+        encoding="utf-8",
+    )
+    rc = main(["--from-json", str(json_path), "--check-fail-count", "25"])
+    assert rc == 0
+
+
+def test_main_from_json_fails_when_over_baseline(tmp_path: Path, capsys):
+    """--from-json + --check-fail-count exits 1 when fail_count > baseline."""
+    json_path = tmp_path / "audit.json"
+    import json as _json
+    json_path.write_text(
+        _json.dumps({"fail_count": 30, "total": 100, "counts": {}, "records": []}),
+        encoding="utf-8",
+    )
+    rc = main(["--from-json", str(json_path), "--check-fail-count", "25"])
+    assert rc == 1
+
+
+def test_main_from_json_handles_missing_file(tmp_path: Path, capsys):
+    """Missing JSON exits 2, not 1, so CI distinguishes ratchet violation from infra error."""
+    rc = main([
+        "--from-json", str(tmp_path / "nope.json"),
+        "--check-fail-count", "0",
+    ])
+    assert rc == 2

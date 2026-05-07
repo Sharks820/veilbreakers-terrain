@@ -34,7 +34,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import TextIO, Sequence
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -65,6 +65,12 @@ PATH_NAMESPACE_MAP: tuple[tuple[str, str], ...] = (
     ("src/veilbreakers_mcp/", "veilbreakers_terrain/src/veilbreakers_mcp/"),
 )
 
+# Per-file Unity carve-out: Editor-only scripts (e.g. AssetPostprocessor importers)
+# physically live at ``unity_plugin/Editor/`` even when the spec cites them via the
+# ``unity_project/Assets/Scripts/`` shorthand — this is a Unity convention, not a
+# resolver bug. Add filenames here as Editor-only Unity scripts land.
+UNITY_EDITOR_FILES: frozenset[str] = frozenset({"VbTerrainImporter.cs"})
+
 # Section anchors that delimit the runway. Treat as substrings in
 # ``# `` / ``## `` / ``### `` markdown headings.
 RUNWAY_BEGIN_PREFIXES: tuple[str, ...] = (
@@ -79,10 +85,12 @@ RUNWAY_END_PREFIXES: tuple[str, ...] = (
 )
 
 # Cite extractor: matches ``handlers/foo.py:NN``, ``foo.py:NN-MM``,
-# ``foo.py:NN,MM``. Captures path and the first numeric line.
+# ``foo.py:NN,MM,PP``. Captures path and the full ``lines`` token; the caller
+# expands ``-`` ranges (first line only) and ``,`` lists (each line) via
+# :func:`_expand_line_spec`.
 CITE_RE = re.compile(
     r"`?(?P<path>[A-Za-z0-9_./\-]+\.(?:py|cs|md|json|toml|yml|yaml|csv|txt|hlsl|shader|shadergraph))`?"
-    r":(?P<line>\d+)(?:[-,](?:\d+))?"
+    r":(?P<lines>\d+(?:[-,]\d+)*)"
 )
 
 # PR row sniffer: any markdown row whose first cell is a PR id token like
@@ -113,7 +121,6 @@ STATUS_STALE = "STALE"
 STATUS_OUT_OF_FILE = "OUT_OF_FILE"
 STATUS_NEW_FILE = "NEW_FILE_NOT_ON_MAIN"
 STATUS_NO_CITE = "NO_CITE"
-STATUS_RESOLVE_FAIL = "RESOLVE_FAIL"
 
 ALL_STATUSES = (
     STATUS_VALID,
@@ -121,11 +128,11 @@ ALL_STATUSES = (
     STATUS_OUT_OF_FILE,
     STATUS_NEW_FILE,
     STATUS_NO_CITE,
-    STATUS_RESOLVE_FAIL,
 )
 
-# Statuses that fail a strict run.
-STRICT_FAIL_STATUSES = frozenset({STATUS_STALE, STATUS_OUT_OF_FILE, STATUS_RESOLVE_FAIL})
+# Statuses that fail a strict run. ``NEW_FILE`` is intentionally excluded —
+# Phase 4 PRs that add new files produce that status by design.
+STRICT_FAIL_STATUSES = frozenset({STATUS_STALE, STATUS_OUT_OF_FILE})
 
 
 # ---------------------------------------------------------------------------
@@ -231,23 +238,48 @@ def _extract_pr_rows(runway_text: str) -> list[tuple[str, str]]:
     return rows
 
 
+def _expand_line_spec(lines_str: str) -> list[int]:
+    """Expand a ``lines`` token into the list of distinct line numbers it cites.
+
+    Examples:
+        ``"1449"``         → ``[1449]``
+        ``"1449-1510"``    → ``[1449]``      (range; only the start is the surgical cite)
+        ``"781,878"``      → ``[781, 878]``  (list; each is an independent cite)
+        ``"1-5,10-12"``    → ``[1, 10]``     (mixed; each chunk's first line)
+    """
+
+    out: list[int] = []
+    for chunk in lines_str.split(","):
+        chunk = chunk.strip()
+        if "-" in chunk:
+            chunk = chunk.split("-", 1)[0]
+        try:
+            out.append(int(chunk))
+        except ValueError:  # pragma: no cover — regex guarantees digits
+            continue
+    return out
+
+
 def _extract_cites(row_text: str) -> list[tuple[str, str, int]]:
-    """Return ``[(raw_cite, path, line)]`` from a PR row."""
+    """Return ``[(raw_cite, path, line)]`` from a PR row.
+
+    A single ``foo.py:1,2,3`` cite expands to three records — one per line —
+    so each lands as an independent surgical cite in the audit. The ``raw_cite``
+    field on each record retains the full original token so the TSV/JSON
+    output is traceable back to the spec source.
+    """
 
     cites: list[tuple[str, str, int]] = []
     seen: set[tuple[str, int]] = set()
     for match in CITE_RE.finditer(row_text):
         raw = match.group(0)
         path = match.group("path")
-        try:
-            line = int(match.group("line"))
-        except ValueError:  # pragma: no cover — regex guarantees digits
-            continue
-        key = (path, line)
-        if key in seen:
-            continue
-        seen.add(key)
-        cites.append((raw, path, line))
+        for line in _expand_line_spec(match.group("lines")):
+            key = (path, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            cites.append((raw, path, line))
     return cites
 
 
@@ -266,12 +298,24 @@ def _extract_pr_title(row_text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _resolve_path(raw_path: str) -> str:
-    """Apply path-namespace shorthand resolution per spec §11.0.3."""
+    """Apply path-namespace shorthand resolution per spec §11.0.3.
+
+    Includes a Unity Editor carve-out: ``unity_project/Assets/Scripts/<file>``
+    cites for files in :data:`UNITY_EDITOR_FILES` route to ``unity_plugin/Editor/``
+    rather than ``unity_plugin/`` because Unity's `AssetPostprocessor` types
+    must physically live in an Editor folder. This matches actual on-disk layout.
+    """
 
     for shorthand, real in PATH_NAMESPACE_MAP:
         if raw_path.startswith(shorthand):
-            return real + raw_path[len(shorthand) :]
+            tail = raw_path[len(shorthand) :]
+            if shorthand == "unity_project/Assets/Scripts/" and tail in UNITY_EDITOR_FILES:
+                return "unity_plugin/Editor/" + tail
+            return real + tail
     return raw_path
+
+
+_GIT_TIMEOUT_S = 30
 
 
 def _git_show_lines(ref: str, path: str) -> list[str] | None:
@@ -279,13 +323,21 @@ def _git_show_lines(ref: str, path: str) -> list[str] | None:
 
     Reads as bytes and decodes UTF-8 with replacement so cross-platform
     encodings (Windows cp1252 default) don't blow up on non-ASCII bytes.
+    Anchored to :data:`REPO_ROOT` so the caller's cwd cannot misroute the
+    lookup to a different repo, and bounded by a wall-clock timeout so a
+    hung remote cannot stall CI indefinitely.
     """
 
-    proc = subprocess.run(
-        ["git", "show", f"{ref}:{path}"],
-        capture_output=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"{ref}:{path}"],
+            capture_output=True,
+            check=False,
+            cwd=REPO_ROOT,
+            timeout=_GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if proc.returncode != 0:
         return None
     text = proc.stdout.decode("utf-8", errors="replace")
@@ -293,13 +345,18 @@ def _git_show_lines(ref: str, path: str) -> list[str] | None:
 
 
 def _ref_exists(ref: str) -> bool:
-    """Return True if git can resolve ``ref``."""
+    """Return True if git can resolve ``ref`` (anchored to repo root)."""
 
-    proc = subprocess.run(
-        ["git", "rev-parse", "--verify", ref],
-        capture_output=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", ref],
+            capture_output=True,
+            check=False,
+            cwd=REPO_ROOT,
+            timeout=_GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return proc.returncode == 0
 
 
@@ -451,7 +508,7 @@ def audit_spec(spec_path: Path, ref: str) -> AuditResult:
 # Output emitters
 # ---------------------------------------------------------------------------
 
-def _emit_summary(result: AuditResult, *, file=sys.stdout) -> None:
+def _emit_summary(result: AuditResult, *, file: TextIO = sys.stdout) -> None:
     counts = result.counts()
     print(
         f"verify_pr_cites: spec={result.spec_path} ref={result.ref} total={result.total}",
@@ -515,7 +572,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Exit 1 if any STALE/OUT_OF_FILE/RESOLVE_FAIL cites detected",
+        help="Exit 1 if any STALE/OUT_OF_FILE cites detected",
     )
     parser.add_argument(
         "--max-stale",
@@ -541,11 +598,65 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="json_path",
         help="Write JSON report to this path",
     )
+    parser.add_argument(
+        "--from-json",
+        type=Path,
+        default=None,
+        dest="from_json",
+        help=(
+            "Skip the spec walk and read a precomputed AuditResult JSON "
+            "(produced by an earlier --json run). Pair with --check-fail-count "
+            "to ratchet without re-running every git show — see ci/spec_cite_verify.yml."
+        ),
+    )
+    parser.add_argument(
+        "--check-fail-count",
+        type=int,
+        default=None,
+        dest="check_fail_count",
+        help=(
+            "With --from-json, exit 1 if precomputed JSON's fail_count exceeds "
+            "this baseline (default: never). Cheap ratchet that reuses the audit "
+            "JSON instead of repeating ~hundreds of git show calls."
+        ),
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+
+    # Fast path: ratchet check against a precomputed JSON. Skips the spec
+    # walk entirely so the workflow doesn't double the verifier's git-show
+    # cost just to compare fail-count against a baseline.
+    if args.from_json is not None:
+        try:
+            payload = json.loads(args.from_json.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError) as exc:
+            print(f"verify_pr_cites: --from-json read failed: {exc}", file=sys.stderr)
+            return 2
+        try:
+            fail_count = int(payload.get("fail_count", 0))
+        except (TypeError, ValueError):
+            print(
+                "verify_pr_cites: --from-json payload missing/invalid 'fail_count'",
+                file=sys.stderr,
+            )
+            return 2
+        baseline = args.check_fail_count if args.check_fail_count is not None else args.max_stale
+        if fail_count > baseline:
+            print(
+                f"verify_pr_cites: STRICT FAIL — fail-count {fail_count} "
+                f"exceeds baseline {baseline} (from {args.from_json}); cite-refresh required",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"verify_pr_cites: OK -- fail-count {fail_count} <= baseline {baseline} "
+            f"(from {args.from_json})"
+        )
+        return 0
+
     try:
         result = audit_spec(args.spec, args.ref)
     except FileNotFoundError as exc:
@@ -553,6 +664,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except RuntimeError as exc:
         print(f"verify_pr_cites: {exc}", file=sys.stderr)
+        if "ref not resolvable" in str(exc):
+            print(
+                "verify_pr_cites: hint — fetch the ref locally "
+                "(`git fetch origin main:refs/remotes/origin/main`) "
+                "or pass `--ref HEAD` to verify against current checkout",
+                file=sys.stderr,
+            )
         return 2
 
     if args.tsv:
