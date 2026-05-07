@@ -13,13 +13,44 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "Pillow>=10.0",
+    # CVE pins:
+    #   Pillow >=10.4 picks up CVE-2023-50447 (PIL.ImageMath.eval RCE, fixed 10.2.0)
+    #   and CVE-2024-28219 (_imagingcms.c buffer overflow, fixed 10.3.0).
+    "Pillow>=10.4",
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0",
     "pytest-timeout>=2.3",
     "pre-commit>=4.0",
+    # Pinned to match the CI lane in .github/workflows/type-check.yml so local
+    # developer pyright matches what CI sees. Bump in a single PR that touches
+    # both this line and the workflow.
+    "pyright==1.1.408",
     "ruff>=0.8.0",
+    "pip-audit>=2.7",
+]
+bake = [
+    # Heightmap/erosion compute kernel; capped <2.0 because Taichi 2.x ships
+    # breaking type API changes and our golden tests pin to 1.x output bytes.
+    "taichi>=1.7,<2.0",
+    "PyYAML>=6.0",
+    "Pillow>=10.4",
+]
+geo = [
+    # DEM ingest for procedural overlay foundation (Block 3 PR #38+).
+    "rasterio>=1.4",
+]
+providers = [
+    # External AI asset providers (Hunyuan3D-2 primary, Meshy/Tripo fallback).
+    # Absorbs former B5-DEP1 split per spec §11.1 PR #2.
+    "gradio_client>=1.0",
+    "huggingface_hub>=0.24",
+    "requests>=2.32",
+]
+blender = [
+    # Blender 4.5 ships NumPy 1.x; keep this lane installable inside Blender's
+    # bundled Python. Other lanes (bake/dev) may resolve to NumPy 2.x.
+    "numpy>=1.26.0,<2.0",
 ]
 mcp = [
     "veilbreakers-mcp @ git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git@35815ea7f1caf078de551378ab85e6c1f34b8750#subdirectory=Tools/mcp-toolkit ; python_version >= '3.12'",
