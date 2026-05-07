@@ -8,9 +8,21 @@ name: Spec Cite Verify Gate
 
 on:
   push:
+    # House style: gate runs on every branch push so the prereq is checked
+    # BEFORE a §11 surgical PR opens (per spec §11.0.5). PRs to main/master
+    # also trigger via pull_request below. A paths filter scopes work to
+    # files that can change verifier behavior or cite ground truth.
     branches: ["**"]
+    paths:
+      - "docs/superpowers/specs/**"
+      - "scripts/verify_pr_cites.py"
+      - ".github/workflows/spec_cite_verify.yml"
   pull_request:
     branches: ["main", "master"]
+    paths:
+      - "docs/superpowers/specs/**"
+      - "scripts/verify_pr_cites.py"
+      - ".github/workflows/spec_cite_verify.yml"
 
 jobs:
   spec-cite-verify:
@@ -22,7 +34,13 @@ jobs:
         with:
           fetch-depth: 0
       - name: Ensure origin/main is fetched
-        run: git fetch origin main:refs/remotes/origin/main || true
+        # Fail loudly if origin/main can't be reached: a missing ref would
+        # otherwise mark every cite as NEW_FILE and produce a misleading
+        # all-green audit. fetch-depth=0 above usually populates this; the
+        # explicit fetch is belt-and-suspenders for unusual checkout configs.
+        run: |
+          git rev-parse --verify origin/main 2>/dev/null \
+            || git fetch origin main:refs/remotes/origin/main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -48,9 +66,10 @@ jobs:
         # main. Tighten as surgical PRs land cite corrections.
         # NOTE: not in branch-protection required-checks list per CLAUDE.md
         # until the cite-cleanup wave completes.
+        # Reads the precomputed JSON from the audit step instead of re-walking
+        # the spec — saves ~hundreds of duplicate `git show` calls per run.
         run: |
           python scripts/verify_pr_cites.py \
-            --spec docs/superpowers/specs/2026-05-05-biome-render-rebuild-design.md \
-            --ref origin/main \
-            --strict \
-            --max-stale 25 || echo "verify_pr_cites: ratchet exceeded; surface in PR comments before tightening to 0"
+            --from-json /tmp/cite_audit.json \
+            --check-fail-count 25 \
+            || echo "verify_pr_cites: ratchet exceeded; surface in PR comments before tightening to 0"
