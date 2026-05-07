@@ -204,17 +204,29 @@ def test_register_default_passes_loads_without_cycle_error():
     ``terrain_morphology``, ``terrain_glacial`` all override ``height`` and
     require it — a dual-cycle the old toposort could not resolve. With the
     override-aware edge build this is now a clean DAG.
+
+    Snapshots PASS_REGISTRY before clearing and restores it in a finally block
+    to prevent state leakage to subsequent tests in the same session
+    (CodeRabbit nitpick — test was leaving ~10–20 default passes registered).
     """
     from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
     )
 
-    # Reset the registry so this test is hermetic regardless of import order.
-    TerrainPassController.PASS_REGISTRY.clear()
+    snapshot = dict(TerrainPassController.PASS_REGISTRY)
+    try:
+        # Reset the registry so this test is hermetic regardless of import order.
+        TerrainPassController.PASS_REGISTRY.clear()
 
-    # Should not raise. Specifically must not raise ValueError("cycle detected").
-    register_default_passes(strict=False)
+        # Should not raise. Specifically must not raise ValueError("cycle detected").
+        register_default_passes(strict=False)
 
-    # And the registry should actually contain passes after a successful load.
-    assert len(TerrainPassController.PASS_REGISTRY) > 0
+        # And the registry should actually contain passes after a successful load.
+        assert len(TerrainPassController.PASS_REGISTRY) > 0
+    finally:
+        # Restore registry state so subsequent tests see the original snapshot,
+        # not the post-default-load population. Prevents ValueError on next
+        # `register_pass(strict=True)` call in unrelated tests.
+        TerrainPassController.PASS_REGISTRY.clear()
+        TerrainPassController.PASS_REGISTRY.update(snapshot)
