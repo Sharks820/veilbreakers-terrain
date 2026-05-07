@@ -346,7 +346,10 @@ def test_audit_spec_handles_no_runway_gracefully(
     branch, not the ref-resolution branch (which would mask intent if HEAD
     is undefined, e.g. on a fresh repo with no commits).
     """
-    monkeypatch.setattr("scripts.verify_pr_cites._ref_exists", lambda _ref: True)
+    def _always_true(_ref: str) -> bool:
+        return True
+
+    monkeypatch.setattr("scripts.verify_pr_cites._ref_exists", _always_true)
     bad_spec = tmp_path / "no_runway.md"
     bad_spec.write_text("# Just a header\n\nNo §11 here.\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="runway section not found"):
@@ -364,10 +367,11 @@ def test_audit_spec_missing_file_raises_filenotfound(tmp_path: Path):
 # --from-json / --check-fail-count ratchet path
 # ---------------------------------------------------------------------------
 
-def test_main_from_json_passes_when_under_baseline(tmp_path: Path, capsys):
-    """--from-json + --check-fail-count exits 0 when fail_count ≤ baseline."""
-    json_path = tmp_path / "audit.json"
+def test_main_from_json_passes_when_under_baseline(tmp_path: Path) -> None:
+    """--from-json + --check-fail-count exits 0 when fail_count <= baseline."""
     import json as _json
+
+    json_path = tmp_path / "audit.json"
     json_path.write_text(
         _json.dumps({"fail_count": 10, "total": 100, "counts": {}, "records": []}),
         encoding="utf-8",
@@ -376,10 +380,11 @@ def test_main_from_json_passes_when_under_baseline(tmp_path: Path, capsys):
     assert rc == 0
 
 
-def test_main_from_json_fails_when_over_baseline(tmp_path: Path, capsys):
+def test_main_from_json_fails_when_over_baseline(tmp_path: Path) -> None:
     """--from-json + --check-fail-count exits 1 when fail_count > baseline."""
-    json_path = tmp_path / "audit.json"
     import json as _json
+
+    json_path = tmp_path / "audit.json"
     json_path.write_text(
         _json.dumps({"fail_count": 30, "total": 100, "counts": {}, "records": []}),
         encoding="utf-8",
@@ -388,7 +393,7 @@ def test_main_from_json_fails_when_over_baseline(tmp_path: Path, capsys):
     assert rc == 1
 
 
-def test_main_from_json_handles_missing_file(tmp_path: Path, capsys):
+def test_main_from_json_handles_missing_file(tmp_path: Path) -> None:
     """Missing JSON exits 2, not 1, so CI distinguishes ratchet violation from infra error."""
     rc = main([
         "--from-json", str(tmp_path / "nope.json"),
