@@ -113,7 +113,7 @@
 13. `meta.json` keys missing in `VbTerrainTileMetadata`: `version_hash`, `character_spawn_safe_pos`, `addressable_deps`, `neighbor_prefetch_hints`, `memory_budget_mb`, `audio_zones`, `navmesh_hints`, `seed`, foliage `is_landmark`, water `basin_id/segment_id`
 14. Unknown-key warning only fires on descriptor — raw manifest sidecars (audio/decals/water JSON) blob-attached without schema validation
 
-**Memory correction**: `VbTerrainTileMetadata` is **28 fields**, NOT 3-field stub.
+**Memory correction**: `VbTerrainTileMetadata` declares **28 atomic public fields + 1 `ChannelBound[]` array field = 29 declared MonoBehaviour members** (`unity_plugin/VbTerrainTileMetadata.cs:11-49`), NOT a 3-field stub. Use this canonical phrasing wherever the count is referenced — see also §E.1 below.
 
 ### B.5 End-to-end determinism — **CLOSE** (4 PRs to byte-identical)
 
@@ -278,7 +278,7 @@ This is a separate workstream from bake-side PRs. Requires Unity project setup +
 
 ## §E. Memory updates (5 stale items)
 
-1. `VbTerrainTileMetadata 3-field stub` → **25 fields** (`unity_plugin/VbTerrainTileMetadata.cs`)
+1. `VbTerrainTileMetadata 3-field stub` → **28 atomic public fields + 1 `ChannelBound[]` array field = 29 declared MonoBehaviour members** (`unity_plugin/VbTerrainTileMetadata.cs:11-49`). Matches §B.4 above; supersedes earlier "25-field" / "26-field" claims that reflected partial counts at intermediate states.
 2. `127 random.Random sites` → **47 handlers + 11 tests = 58 production**
 3. `coverage floor 40%` → **72%** (`.github/workflows/python-package.yml:83`)
 4. `branch protection protected=false` → **protected=true** (live API check)

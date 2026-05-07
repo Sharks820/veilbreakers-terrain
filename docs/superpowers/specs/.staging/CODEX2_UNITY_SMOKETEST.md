@@ -3,7 +3,16 @@
 Date: 2026-05-06  
 Scope: `unity_plugin/Editor/VbTerrainImporter.cs`, `unity_plugin/VbTerrainTileMetadata.cs`, §11.5.1 B5-U1..B5-U14 in `docs/superpowers/specs/2026-05-05-biome-render-rebuild-design.md`.
 
-Unity Editor validation was not run. Repo has `unity_plugin/` only; no `Assets/`, `Packages/`, `ProjectSettings/`, `.shadergraph`, `.mat`, or full Unity project exists.
+Unity Editor validation was not run. As of commit `0a20f7d` (`feat(spec): Fix 1.0 cite-refresh prereq — verify_pr_cites.py + CI gate`, 2026-05-06), the repo contains only `unity_plugin/` at the top level — no `Assets/`, `Packages/`, `ProjectSettings/`, `.shadergraph`, `.mat`, or full Unity project exists. Reproducible:
+
+```text
+$ git -C <repo> rev-parse --short HEAD
+0a20f7d
+$ git -C <repo> ls-tree --name-only HEAD | grep -E '^(Assets|Packages|ProjectSettings|unity_project|unity_plugin)'
+unity_plugin
+```
+
+Re-anchor this section if the snapshot changes.
 
 ## Current Import Contract
 
@@ -217,9 +226,9 @@ Bug: `audio_zones.json`, `decals.json`, `water_shader_manifest.json`, etc. can d
 
 Ship impact: runtime binders receive malformed schemas later, far from import-time root cause.
 
-### U-023: `meta.json` / 25-field metadata missing
+### U-023: `meta.json` consumer + ~10 additional metadata fields missing
 
-Evidence: metadata component has fields through snow/primary biome plus `ChannelBounds` only (`VbTerrainTileMetadata.cs:11-49`). B5-U13 requires `version_hash`, `character_spawn_safe_pos`, `addressable_deps`, `neighbor_prefetch_hints`, `memory_budget_mb`, `audio_zones`, `navmesh_hints`, `seed`, `is_landmark`, `basin_id/segment_id`, and migration (`biome-render-rebuild-design.md:1787`).
+Evidence: metadata component currently declares **28 atomic public fields + 1 `ChannelBound[]` array field = 29 declared MonoBehaviour members** through snow/primary biome plus `ChannelBounds` (`VbTerrainTileMetadata.cs:11-49`). B5-U13 requires `version_hash`, `character_spawn_safe_pos`, `addressable_deps`, `neighbor_prefetch_hints`, `memory_budget_mb`, `audio_zones`, `navmesh_hints`, `seed`, `is_landmark`, `basin_id/segment_id`, and migration (`biome-render-rebuild-design.md:1787`).
 
 Bug: target runtime metadata is not deserialized or stored.
 
