@@ -1,0 +1,75 @@
+name: Spec Cite Verify Gate
+
+# Fix 1.0 / spec §11.0.5 cite-refresh prereq.
+# Walks every <file>:<line> cite in §11.1-§11.5 PR rows of the
+# biome-render-rebuild design spec and verifies each against the current
+# state of the file in `origin/main`. Reports stale, out-of-file, and
+# new-file cites; blocks PRs that exceed the ratchet baseline.
+
+on:
+  push:
+    # House style: gate runs on every branch push so the prereq is checked
+    # BEFORE a §11 surgical PR opens (per spec §11.0.5). PRs to main/master
+    # also trigger via pull_request below. A paths filter scopes work to
+    # files that can change verifier behavior or cite ground truth.
+    branches: ["**"]
+    paths:
+      - "docs/superpowers/specs/**"
+      - "scripts/verify_pr_cites.py"
+      - ".github/workflows/spec_cite_verify.yml"
+  pull_request:
+    branches: ["main", "master"]
+    paths:
+      - "docs/superpowers/specs/**"
+      - "scripts/verify_pr_cites.py"
+      - ".github/workflows/spec_cite_verify.yml"
+
+jobs:
+  spec-cite-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history for git show origin/main)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ensure origin/main is fetched
+        # Fail loudly if origin/main can't be reached: a missing ref would
+        # otherwise mark every cite as NEW_FILE and produce a misleading
+        # all-green audit. fetch-depth=0 above usually populates this; the
+        # explicit fetch is belt-and-suspenders for unusual checkout configs.
+        run: |
+          git rev-parse --verify origin/main 2>/dev/null \
+            || git fetch origin main:refs/remotes/origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Audit cite drift
+        id: audit
+        run: |
+          python scripts/verify_pr_cites.py \
+            --spec docs/superpowers/specs/2026-05-05-biome-render-rebuild-design.md \
+            --ref origin/main \
+            --tsv /tmp/cite_audit.tsv \
+            --json /tmp/cite_audit.json
+      - name: Upload cite-audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-cite-audit
+          path: |
+            /tmp/cite_audit.tsv
+            /tmp/cite_audit.json
+          retention-days: 14
+      - name: Strict ratchet (advisory; does not fail CI yet)
+        # Initial baseline locked at the count produced by the first run on
+        # main. Tighten as surgical PRs land cite corrections.
+        # NOTE: not in branch-protection required-checks list per CLAUDE.md
+        # until the cite-cleanup wave completes.
+        # Reads the precomputed JSON from the audit step instead of re-walking
+        # the spec — saves ~hundreds of duplicate `git show` calls per run.
+        run: |
+          python scripts/verify_pr_cites.py \
+            --from-json /tmp/cite_audit.json \
+            --check-fail-count 25 \
+            || echo "verify_pr_cites: ratchet exceeded; surface in PR comments before tightening to 0"

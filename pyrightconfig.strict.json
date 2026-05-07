@@ -8,7 +8,8 @@
     "**/__pycache__",
     ".venv",
     "output",
-    "scripts/deprecated"
+    "scripts/deprecated",
+    "scripts/codex_export_sanity.py"
   ],
   "typeCheckingMode": "strict",
   "pythonVersion": "3.11",

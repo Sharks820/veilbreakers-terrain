@@ -5,7 +5,15 @@ Do not run from normal Python. Intended command shape:
     blender --background --python scripts/codex_export_sanity.py -- /tmp/vb_chunk_sanity.glb
 
 The script synthesizes a small chunk mesh from a heightmap, exports GLB,
-re-imports it, and asserts vertex count plus UV channel count survive.
+re-imports it, and asserts a strict round-trip:
+    - vertex count parity
+    - UV channel count parity
+    - per-loop UV coordinate parity (catches glTF V-flip drift)
+    - per-loop vertex-color RGBA parity (catches Draco color corruption)
+
+This file is excluded from `pyrightconfig.strict.json` because it can only
+run inside Blender's bundled Python (the `bpy` module is not pip-installable
+and `bpy.ops.*` calls would otherwise trip every strict member-type check).
 """
 
 from __future__ import annotations
@@ -22,6 +30,12 @@ GRID_SIZE = 9
 CELL_SIZE_M = 2.0
 EXPECTED_UV_CHANNELS = 2
 
+# Tolerances tuned for glTF lossy round-trip (float32 quantization on UVs;
+# 8-bit color channels go through float→u8→float so quantize at 1/255).
+UV_EPS = 1e-5
+COLOR_EPS = 1.5 / 255.0  # one-LSB tolerance after 8-bit quantization
+COLOR_ATTR_NAME = "VB_DebugColor"
+
 
 def _clear_scene() -> None:
     """Remove every object from the active Blender scene."""
@@ -36,8 +50,14 @@ def _height_at(row: int, col: int) -> float:
     return 1.25 * math.sin(x * math.pi) * math.cos(y * math.pi * 0.5)
 
 
-def _build_chunk_mesh() -> tuple[bpy.types.Object, int, int]:
-    """Build a synthetic chunk mesh; return ``(obj, vertex_count, uv_channels)``."""
+def _build_chunk_mesh() -> tuple[bpy.types.Object, int, int, dict[str, list[tuple[float, ...]]]]:
+    """Build a synthetic chunk mesh.
+
+    Returns ``(obj, vertex_count, uv_channels, snapshots)`` where ``snapshots``
+    captures pre-export per-loop UV and color data so the round-trip caller
+    can compare against the imported mesh and detect glTF V-flip / Draco
+    color corruption.
+    """
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int]] = []
 
@@ -74,7 +94,7 @@ def _build_chunk_mesh() -> tuple[bpy.types.Object, int, int]:
             uv1.data[loop_index].uv = (u, v)
 
     color_attr = mesh.color_attributes.new(
-        name="VB_DebugColor",
+        name=COLOR_ATTR_NAME,
         type="FLOAT_COLOR",
         domain="CORNER",
     )
@@ -93,6 +113,15 @@ def _build_chunk_mesh() -> tuple[bpy.types.Object, int, int]:
     mesh.validate(clean_customdata=False)
     mesh.update(calc_edges=True)
 
+    # Snapshot per-loop UV + color for round-trip comparison. Order is stable
+    # within Blender's loop indexing so the post-import indices align 1:1.
+    loop_count = len(mesh.loops)
+    snapshots: dict[str, list[tuple[float, ...]]] = {
+        "uv0": [tuple(uv0.data[i].uv) for i in range(loop_count)],
+        "uv1": [tuple(uv1.data[i].uv) for i in range(loop_count)],
+        "color": [tuple(color_attr.data[i].color) for i in range(loop_count)],
+    }
+
     obj = bpy.data.objects.new("VB_SynthChunk", mesh)
     bpy.context.collection.objects.link(obj)
     bpy.context.view_layer.objects.active = obj
@@ -101,7 +130,7 @@ def _build_chunk_mesh() -> tuple[bpy.types.Object, int, int]:
     for poly in mesh.polygons:
         poly.use_smooth = True
 
-    return obj, len(vertices), EXPECTED_UV_CHANNELS
+    return obj, len(vertices), EXPECTED_UV_CHANNELS, snapshots
 
 
 def _export_glb(path: Path) -> None:
@@ -138,8 +167,81 @@ def _import_glb(path: Path) -> bpy.types.Object:
     return meshes[0]
 
 
+def _assert_uv_round_trip(
+    layer_name: str,
+    pre_uvs: list[tuple[float, ...]],
+    post_layer: bpy.types.MeshUVLoopLayer,
+) -> None:
+    """Compare pre-export UVs to post-import UVs; surface V-flip explicitly.
+
+    glTF's spec inverts V relative to Blender's convention; the Blender
+    exporter normally compensates, but a regression there or in a downstream
+    consumer would manifest as ``post_v ≈ 1.0 - pre_v``. We detect that
+    pattern explicitly to give a clearer assertion than a generic drift error.
+    """
+    if len(post_layer.data) != len(pre_uvs):
+        raise AssertionError(
+            f"{layer_name}: loop count drift — expected {len(pre_uvs)}, got {len(post_layer.data)}"
+        )
+
+    flip_hits = 0
+    for loop_idx, (pre_u, pre_v) in enumerate(pre_uvs):
+        post_u, post_v = post_layer.data[loop_idx].uv
+        if abs(pre_u - post_u) > UV_EPS:
+            raise AssertionError(
+                f"{layer_name} U drift at loop {loop_idx}: pre={pre_u:.6f}, post={post_u:.6f}"
+            )
+        if abs(pre_v - post_v) > UV_EPS:
+            if abs((1.0 - pre_v) - post_v) < UV_EPS:
+                flip_hits += 1
+            else:
+                raise AssertionError(
+                    f"{layer_name} V drift at loop {loop_idx}: "
+                    f"pre={pre_v:.6f}, post={post_v:.6f} "
+                    f"(not consistent with V-flip)"
+                )
+    if flip_hits:
+        raise AssertionError(
+            f"{layer_name}: detected V-flip on {flip_hits}/{len(pre_uvs)} loops "
+            f"(post_v == 1 - pre_v); glTF Y-flip compensation regressed"
+        )
+
+
+def _assert_color_round_trip(
+    pre_colors: list[tuple[float, ...]],
+    imported_mesh: bpy.types.Mesh,
+) -> None:
+    """Compare per-loop COLOR_0 RGBA pre-export vs post-import.
+
+    Draco compression can quantize or strip vertex colors; a count-only
+    check would miss that. We assert per-channel parity within COLOR_EPS.
+    """
+    color_attr = imported_mesh.color_attributes.get(COLOR_ATTR_NAME)
+    if color_attr is None and len(imported_mesh.color_attributes) > 0:
+        # Some glTF importers rename the active color layer to COLOR_0/Color.
+        color_attr = imported_mesh.color_attributes[0]
+    if color_attr is None:
+        raise AssertionError(
+            f"imported_mesh has no color attribute (expected {COLOR_ATTR_NAME!r}); "
+            f"Draco compression may have stripped vertex colors"
+        )
+    if len(color_attr.data) != len(pre_colors):
+        raise AssertionError(
+            f"COLOR_0 loop count drift — expected {len(pre_colors)}, got {len(color_attr.data)}"
+        )
+    for loop_idx, pre_rgba in enumerate(pre_colors):
+        post_rgba = tuple(color_attr.data[loop_idx].color)
+        for ch_idx, (pre_v, post_v) in enumerate(zip(pre_rgba, post_rgba)):
+            if abs(pre_v - post_v) > COLOR_EPS:
+                raise AssertionError(
+                    f"COLOR_0 channel {ch_idx} drift at loop {loop_idx}: "
+                    f"pre={pre_v:.4f}, post={post_v:.4f} "
+                    f"(tolerance {COLOR_EPS:.4f})"
+                )
+
+
 def main() -> int:
-    """Run the build/export/import sanity round-trip and assert vertex/UV parity."""
+    """Run the build/export/import sanity round-trip and assert vertex/UV/color parity."""
     if "--" in sys.argv:
         args = sys.argv[sys.argv.index("--") + 1 :]
     else:
@@ -151,7 +253,7 @@ def main() -> int:
         glb_path = Path(tempfile.gettempdir()) / "vb_chunk_export_sanity.glb"
 
     _clear_scene()
-    _obj, expected_vertices, expected_uv_channels = _build_chunk_mesh()
+    _obj, expected_vertices, expected_uv_channels, pre_snapshots = _build_chunk_mesh()
     glb_path.parent.mkdir(parents=True, exist_ok=True)
     _export_glb(glb_path)
     imported = _import_glb(glb_path)
@@ -170,9 +272,14 @@ def main() -> int:
             f"expected {expected_uv_channels}, got {actual_uv_channels}"
         )
 
+    _assert_uv_round_trip("UV0", pre_snapshots["uv0"], imported_mesh.uv_layers[0])
+    _assert_uv_round_trip("UV1", pre_snapshots["uv1"], imported_mesh.uv_layers[1])
+    _assert_color_round_trip(pre_snapshots["color"], imported_mesh)
+
     print(
         "PASS codex_export_sanity: "
-        f"{actual_vertices} vertices, {actual_uv_channels} UV channels, {glb_path}"
+        f"{actual_vertices} vertices, {actual_uv_channels} UV channels, "
+        f"COLOR_0 + UV0/UV1 round-trip parity verified -- {glb_path}"
     )
     return 0
 
