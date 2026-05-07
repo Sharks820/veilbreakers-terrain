@@ -15,9 +15,6 @@ explicit ratchet that the invariant remains held.
 
 from __future__ import annotations
 
-import importlib
-import sys
-
 from veilbreakers_terrain.handlers import _biome_grammar
 from veilbreakers_terrain.handlers.terrain_biome_registry import CANONICAL_BIOME_IDS
 
@@ -56,18 +53,15 @@ def test_module_exposes_canonical_attributes():
     invariant raised, the import at the top of this test file would have
     failed and pytest collection would already be red. This test documents
     the public contract that downstream callers depend on.
+
+    NOTE: We deliberately do NOT use ``importlib.reload(_biome_grammar)``
+    to "re-fire the invariant" — reload rebinds module-level class objects
+    (e.g. ``WorldMapSpec``) so any other test holding a reference to the
+    pre-reload class fails ``isinstance`` checks. The single import-time
+    invariant + this attribute-presence ratchet are the durable contract.
     """
     assert hasattr(_biome_grammar, "BIOME_CLIMATE_PARAMS")
     assert hasattr(_biome_grammar, "CANONICAL_BIOME_IDS")
-
-
-def test_module_reimport_still_passes():
-    """Forcing a fresh reimport must re-run the module-level invariant cleanly."""
-    # importlib.reload re-executes the module body, so the try/except invariant
-    # block fires again. If BIOME_CLIMATE_PARAMS and terrain_biome_registry
-    # have drifted between the original import and now, this raises.
-    if "veilbreakers_terrain.handlers._biome_grammar" in sys.modules:
-        importlib.reload(sys.modules["veilbreakers_terrain.handlers._biome_grammar"])
 
 
 def test_each_canonical_biome_has_climate_params_with_required_keys():
