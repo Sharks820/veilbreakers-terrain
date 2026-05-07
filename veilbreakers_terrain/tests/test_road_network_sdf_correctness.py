@@ -189,6 +189,8 @@ def test_empty_segments_yields_zero_mask():
 def test_sdf_round_trip_matches_reference():
     """road_sdf_dist derived from the vectorized mask is identical to the reference."""
     pytest.importorskip("scipy.ndimage")
+    from typing import cast
+
     from scipy.ndimage import distance_transform_edt
 
     rows, cols = 24, 24
@@ -199,8 +201,11 @@ def test_sdf_round_trip_matches_reference():
     ]
     ref_mask = _reference_road_mask(rows, cols, ox, oy, cell, segments)
     vec_mask = _vectorized_road_mask(rows, cols, ox, oy, cell, segments)
-    ref_sdf = distance_transform_edt(ref_mask == 0).astype(np.float32) * cell
-    vec_sdf = distance_transform_edt(vec_mask == 0).astype(np.float32) * cell
+    # distance_transform_edt returns `ndarray | tuple | None` per stubs (depends
+    # on return_indices/return_distances kwargs); the default-args call always
+    # produces an ndarray. Narrow explicitly so pyright sees ``.astype``.
+    ref_sdf = cast(np.ndarray, distance_transform_edt(ref_mask == 0)).astype(np.float32) * cell
+    vec_sdf = cast(np.ndarray, distance_transform_edt(vec_mask == 0)).astype(np.float32) * cell
     np.testing.assert_array_equal(ref_sdf, vec_sdf)
 
 
