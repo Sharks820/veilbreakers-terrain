@@ -1,25 +1,25 @@
 # Industry Best-Practice Callable Matrix
 
-- Generated: 2026-05-08T22:42:52.102379+00:00
+- Generated: 2026-05-08T23:27:29.347623+00:00
 - Tool: `scripts/build_industry_best_practice_callable_matrix.py`
 - Coverage scope: `industry_best_practice_matrix`
 - Inclusion rules: one row per live callable discovered by `collect_callables()` and joined to grade/verification evidence; generated output folders are excluded.
 - Grade source: `docs/aaa-audit/GRADES_VERIFIED.csv`
 - Source inventory artifact: `output/verification/TERRAIN_BEST_PRACTICE_GUARDRAIL_REPORT.json`
-- Source inventory fingerprint: `sha256:4c7fad62cd88b34e5c21f664bb1d08349ac1f971c0d02198eb18626e29db4cb0`
-- Total callables covered: **1903**
+- Source inventory fingerprint: `sha256:1b2b07580c5cd6e34150efa72f85561e03b1727bff6eeb5e5c6c12a516cb7b33`
+- Total callables covered: **1904**
 - Output CSV: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_08.csv`
-- Output CSV fingerprint: `sha256:50bab058e5658cce0562173a833de979e1e9e272c4b0b5ca590b9b102fcfc8a7`
+- Output CSV fingerprint: `sha256:7c0cdbb6dedb8b59a54ea6d72597df2c717705299655bd7bdd97cc3025a70409`
 - Reconciliation note: callable-census and guardrail totals can differ when non-matrix or generated callables are excluded by their own scopes.
 
 ## Upgrade Tiers
 
-- P3: 1903
+- P3: 1904
 
 ## Grade Status
 
 - VERIFIED_LOW_RISK: 1901
-- LOCK_WITH_REGRESSION_GATES: 2
+- LOCK_WITH_REGRESSION_GATES: 3
 
 ## Domain Coverage
 
@@ -31,7 +31,7 @@
 - validation_qa: 156 callables; gates `issue_codes|golden_visual|performance_budget|determinism|low_spec|artifact_schema`; phase Phase 11-12
 - terrain_pipeline: 153 callables; gates `contract_tests|dispatch_tests|callable_census|determinism|manifest_schema`; phase Phase 0-1
 - export_runtime: 137 callables; gates `manifest_schema|unity_contract|scale_factor|roundtrip_read|artifact_presence`; phase Phase 10
-- terrain_texturing: 132 callables; gates `pbr_channel_presence|weight_sum|texel_density|color_space|normal_map|height_blend|visual_debug_maps`; phase Phase 6,9C,9D
+- terrain_texturing: 133 callables; gates `pbr_channel_presence|weight_sum|texel_density|color_space|normal_map|height_blend|visual_debug_maps`; phase Phase 6,9C,9D
 - pathing_roads: 65 callables; gates `path_cost_tests|cell_size_tests|slope_budget|water_crossing|determinism`; phase Phase 8
 - external_ai_assets: 47 callables; gates `async_state_tests|download_schema|mesh_validation|pbr_validation|scale_axis|license_metadata`; phase Phase 9E
 - foliage_assets: 19 callables; gates `asset_schema|lod_paths|impostor_presence|wind_profile|scale_axis_validation|catalog_resolution`; phase Phase 5
