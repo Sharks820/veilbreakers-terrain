@@ -47,7 +47,7 @@ def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
     # Lazy import to avoid CodeQL py/cyclic-import on the
     # terrain_pipeline ↔ _biome_grammar edge.
     from .terrain_pipeline import derive_pass_seed  # noqa: F401
-    
+
     return np.random.default_rng(
         derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
     )

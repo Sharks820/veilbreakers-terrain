@@ -1680,7 +1680,7 @@ from .lod_pipeline import (  # noqa: F401,E402  -- intentional re-export
     _TREE_VEG_TYPES,
     _setup_billboard_lod,
 )
-from .terrain_pipeline import derive_pass_seed
+from .terrain_pipeline import derive_pass_seed  # noqa: E402  — placed below the late re-export block above
 
 
 # ---------------------------------------------------------------------------

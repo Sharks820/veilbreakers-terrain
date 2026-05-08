@@ -423,7 +423,20 @@ def generate_cave_entrance_mesh(
         overhang_scale = max(0.0, 1.0 - depth_frac * 2.5)
 
         ring: list[tuple[float, float, float]] = []
-        arch_rng = random.Random(derive_pass_seed(seed, "terrain_depth.generate_cave_entrance_mesh.arch_rng", 0, 0, None))
+        # Per-ring seed: include depth_i in the namespace so each tunnel
+        # ring gets DIFFERENT noise. Without depth_i in the namespace,
+        # arch_rng would be reseeded with an identical derived seed on
+        # every depth_segs iteration, producing identical per-ring
+        # noise (PR #43 Codex/Copilot regression review).
+        arch_rng = random.Random(
+            derive_pass_seed(
+                seed,
+                f"terrain_depth.generate_cave_entrance_mesh.arch_rng.{depth_i}",
+                0,
+                0,
+                None,
+            )
+        )
 
         side_segs = 3
         # Left side: bottom to left spring-line foot (-half_w, spring_z)

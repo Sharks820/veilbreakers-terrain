@@ -19,8 +19,7 @@ import math
 import random
 from typing import Any
 
-from .terrain_rng import derive_pass_seed  # noqa: F401 — re-exported for scatter callers
-from .terrain_pipeline import derive_pass_seed
+from .terrain_rng import derive_pass_seed  # noqa: F401 — re-exports canonical terrain_pipeline.derive_pass_seed (Bug-A fix)
 
 try:
     import numpy as _np_engine
