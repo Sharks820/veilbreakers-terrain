@@ -33,8 +33,10 @@ import numpy as np  # noqa: E402
 
 
 def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
+    # Lazy import: terrain_pipeline transitively imports terrain_advanced;
+    # a module-level `from .terrain_pipeline import` would create a
+    # CodeQL py/cyclic-import alert.
     from .terrain_pipeline import derive_pass_seed
-
     return np.random.default_rng(
         derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
     )
@@ -1477,7 +1479,10 @@ def compute_erosion_brush(
     min_c = max(1, int(cx - rx) - 1)
     max_c = min(cols - 1, int(cx + rx) + 2)
 
-    rng = _random.Random(seed)
+    # Lazy import: see _rng_from_seed at top of module — avoids
+    # CodeQL py/cyclic-import on terrain_pipeline edge.
+    from .terrain_pipeline import derive_pass_seed
+    rng = _random.Random(derive_pass_seed(seed, "terrain_advanced.compute_erosion_brush", 0, 0, None))
 
     if erosion_type == "hydraulic":
         # -----------------------------------------------------------------------
