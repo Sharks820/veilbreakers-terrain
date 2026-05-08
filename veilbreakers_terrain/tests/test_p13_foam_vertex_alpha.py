@@ -1,7 +1,20 @@
 """Tests for Fix 13.1: foam vertex alpha baking formula.
 
 REQ-P13-001: Foam vertex alpha baked into water mesh export.
-Formula: (1 - saturate(obstacle_proximity / foam_radius)) * (1 - flow_speed / max_foam_speed)
+
+Formula (Beaufort/Monahan 1986 whitecap model — D14-15 corrected):
+    prox_ratio    = 1 - saturate(obstacle_proximity / foam_radius)
+    speed_ratio   = saturate(flow_speed / max_foam_speed)
+    whitecap_term = 0.3 * saturate((flow_speed / 3.4) ** 3)
+    foam          = saturate(prox_ratio * speed_ratio + whitecap_term)
+
+Pre-D14 the formula used `speed_ratio = 1 - flow_speed / max_foam_speed`
+which inverted the physics — high flow suppressed obstacle foam instead
+of producing whitecaps. The previous tests pinned the broken formula.
+This rewrite pins the corrected physics: foam requires MOTION (still
+water near obstacles produces no foam) and adds an open-water whitecap
+term that scales with the cube of flow speed independent of obstacle
+proximity.
 """
 import inspect
 import re
@@ -33,61 +46,105 @@ class TestSaturate:
 
 
 class TestFoamVertexAlpha:
-    """REQ-P13-001 — bake_foam_vertex_alpha formula verification."""
+    """REQ-P13-001 — bake_foam_vertex_alpha Beaufort/Monahan whitecap formula."""
 
-    def test_zero_proximity_zero_speed_gives_one(self):
+    def test_zero_proximity_zero_speed_gives_zero(self):
+        # Still water against a rock cannot produce foam — foam requires
+        # motion. Pre-D14 returned 1.0; that was the inverted formula bug.
         result = bake_foam_vertex_alpha(
             obstacle_proximity=0.0,
             flow_speed=0.0,
         )
-        assert abs(result - 1.0) < 1e-6, f"Expected 1.0, got {result}"
+        assert abs(result - 0.0) < 1e-6, f"Expected 0.0, got {result}"
 
-    def test_radius_proximity_gives_zero(self):
-        result = bake_foam_vertex_alpha(obstacle_proximity=FOAM_RADIUS_DEFAULT, flow_speed=0.0)
+    def test_radius_proximity_zero_speed_gives_zero(self):
+        # Far from obstacle, no flow → no foam.
+        result = bake_foam_vertex_alpha(
+            obstacle_proximity=FOAM_RADIUS_DEFAULT, flow_speed=0.0
+        )
         assert abs(result - 0.0) < 1e-6
 
-    def test_max_speed_gives_zero(self):
+    def test_zero_proximity_max_speed_saturates_to_one(self):
+        # Direct rock contact at max flow → maximum foam.
+        # prox_ratio=1, speed_ratio=1, whitecap≈0.3 → saturate(1+0.3)=1.0
+        result = bake_foam_vertex_alpha(
+            obstacle_proximity=0.0,
+            flow_speed=MAX_FOAM_SPEED_DEFAULT,
+        )
+        assert abs(result - 1.0) < 1e-6, f"Expected ~1.0, got {result}"
+
+    def test_far_from_obstacle_max_speed_gives_whitecap_only(self):
+        # Open water at high flow → only the whitecap term contributes.
+        # prox_ratio=0, whitecap=0.3 (saturated cubic), foam=0.3.
         result = bake_foam_vertex_alpha(
             obstacle_proximity=FOAM_RADIUS_DEFAULT,
             flow_speed=MAX_FOAM_SPEED_DEFAULT,
         )
-        assert abs(result - 0.0) < 1e-6
+        assert abs(result - 0.3) < 1e-6, f"Expected 0.3 (whitecap only), got {result}"
 
-    def test_above_max_speed_clamped_to_zero(self):
+    def test_above_max_speed_stays_in_unit_interval(self):
+        # Cubic term grows past saturate cap; output must remain clamped.
         result = bake_foam_vertex_alpha(
             obstacle_proximity=FOAM_RADIUS_DEFAULT,
-            flow_speed=MAX_FOAM_SPEED_DEFAULT * 2,
+            flow_speed=MAX_FOAM_SPEED_DEFAULT * 4,
         )
-        assert result >= 0.0, "Foam must not be negative"
-        assert result == 0.0
+        assert 0.0 <= float(result) <= 1.0
 
-    def test_half_proximity_zero_speed(self):
-        result = bake_foam_vertex_alpha(
-            obstacle_proximity=FOAM_RADIUS_DEFAULT / 2,
-            flow_speed=0.0,
-        )
-        assert abs(result - 0.5) < 1e-6
-
-    def test_half_proximity_half_speed(self):
-        # (1 - saturate(1.0/2.0)) * (1 - 2.5/5.0) = 0.5 * 0.5 = 0.25
+    def test_half_proximity_half_speed_combines_both_terms(self):
+        # prox=1, speed=2.5
+        # prox_ratio = 1 - 0.5 = 0.5
+        # speed_ratio = 0.5
+        # whitecap = 0.3 * saturate((2.5/3.4)^3) ≈ 0.3 * 0.397 ≈ 0.119
+        # foam ≈ 0.5*0.5 + 0.119 = 0.369
         result = bake_foam_vertex_alpha(
             obstacle_proximity=FOAM_RADIUS_DEFAULT / 2,
             flow_speed=MAX_FOAM_SPEED_DEFAULT / 2,
         )
-        assert abs(result - 0.25) < 1e-6
+        # Compute the exact expected value via the formula so the
+        # assertion stays correct if the constants are tuned later.
+        ref_speed = 3.4
+        whitecap = 0.3 * min(1.0, ((MAX_FOAM_SPEED_DEFAULT / 2) / ref_speed) ** 3)
+        expected = 0.5 * 0.5 + whitecap
+        assert abs(result - expected) < 1e-6, (
+            f"Expected {expected:.6f}, got {result:.6f}"
+        )
 
-    def test_numpy_array_input(self):
+    def test_low_flow_at_obstacle_produces_proportional_foam(self):
+        # prox=0 (full obstacle contact), speed=1.0 (well below ref).
+        # prox_ratio=1, speed_ratio=0.2, whitecap=0.3*(1/3.4)^3 ≈ 0.00763.
+        # foam ≈ 1*0.2 + 0.00763 ≈ 0.208.
+        result = bake_foam_vertex_alpha(
+            obstacle_proximity=0.0,
+            flow_speed=1.0,
+        )
+        ref_speed = 3.4
+        expected = 1.0 * (1.0 / MAX_FOAM_SPEED_DEFAULT) + 0.3 * (1.0 / ref_speed) ** 3
+        assert abs(result - expected) < 1e-6
+
+    def test_numpy_array_input_zero_speed_gives_all_zeros(self):
+        # All zero flow → no foam regardless of proximity.
         prox = np.array([0.0, 1.0, 2.0], dtype=np.float32)
         speed = np.array([0.0, 0.0, 0.0], dtype=np.float32)
         result = bake_foam_vertex_alpha(prox, speed)
         assert isinstance(result, np.ndarray)
         assert result.shape == (3,)
-        np.testing.assert_allclose(result, [1.0, 0.5, 0.0], atol=1e-6)
+        np.testing.assert_allclose(result, [0.0, 0.0, 0.0], atol=1e-6)
 
-    def test_custom_foam_radius(self):
-        # obstacle_proximity=0.0, foam_radius=4.0, flow_speed=0 -> 1.0
+    def test_numpy_array_input_constant_speed_gradient(self):
+        # Constant speed, varying proximity → varying foam.
+        prox = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+        speed = np.full((3,), MAX_FOAM_SPEED_DEFAULT, dtype=np.float32)
+        result = bake_foam_vertex_alpha(prox, speed)
+        assert isinstance(result, np.ndarray)
+        # Closer cells must have ≥ foam than farther cells (monotone).
+        assert result[0] >= result[1] >= result[2] - 1e-6
+
+    def test_custom_foam_radius_at_obstacle(self):
+        # Direct contact + max speed should saturate regardless of foam_radius.
         result = bake_foam_vertex_alpha(
-            obstacle_proximity=0.0, flow_speed=0.0, foam_radius=4.0
+            obstacle_proximity=0.0,
+            flow_speed=MAX_FOAM_SPEED_DEFAULT,
+            foam_radius=4.0,
         )
         assert abs(result - 1.0) < 1e-6
 
@@ -98,6 +155,25 @@ class TestFoamVertexAlpha:
         result = bake_foam_vertex_alpha(prox, speed)
         assert np.all(result >= 0.0), "Foam alpha must be >= 0"
         assert np.all(result <= 1.0), "Foam alpha must be <= 1"
+
+    def test_whitecap_term_grows_with_flow_speed_cube(self):
+        # Beaufort/Monahan: whitecap fraction ∝ wind_speed^~3.
+        # Far from obstacle, foam == whitecap term only. Doubling flow
+        # near the reference speed must multiply foam by approximately 8.
+        far = FOAM_RADIUS_DEFAULT  # prox_ratio = 0
+        ref_speed = 3.4 / 4.0  # well below ref to stay in cubic regime
+        foam_low = bake_foam_vertex_alpha(
+            obstacle_proximity=far, flow_speed=ref_speed,
+        )
+        foam_high = bake_foam_vertex_alpha(
+            obstacle_proximity=far, flow_speed=ref_speed * 2,
+        )
+        # Cubic: ratio should be ~8 (allow ±10% tolerance for float).
+        ratio = foam_high / max(foam_low, 1e-9)
+        assert 7.2 < ratio < 8.8, (
+            f"Whitecap term should scale ~cube of flow speed; got "
+            f"low={foam_low:.6f}, high={foam_high:.6f}, ratio={ratio:.3f}"
+        )
 
 
 class TestFoamFormulaInSource:
