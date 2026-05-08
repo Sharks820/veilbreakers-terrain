@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover
 _NUMPY_AVAILABLE = np is not None
 
 from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState  # noqa: E402
+from .terrain_pipeline import derive_pass_seed
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +345,7 @@ def compute_atmospheric_placements(
         canopy_mask = _coerce_mask(canopy_mask, "canopy_mask")
         heightmap = heightmap_arr
 
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "atmospheric_volumes.compute_atmospheric_placements", 0, 0, None))
     rules = BIOME_ATMOSPHERE_RULES.get(biome_name, _DEFAULT_ATMOSPHERE)
     _whints = weather_hints or {}
 

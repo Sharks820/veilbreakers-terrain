@@ -39,6 +39,7 @@ from numpy.typing import NDArray
 from .terrain_biome_registry import CANONICAL_BIOME_IDS  # noqa: F401 — re-exported for callers
 from .terrain_math import stack_world_to_cell
 from .terrain_rng import make_rng as _make_rng
+from .terrain_pipeline import derive_pass_seed
 
 _world_to_cell = partial(stack_world_to_cell, rounding="floor")
 
@@ -394,7 +395,7 @@ def compute_vegetation_placement(
         )
 
     biome = BIOME_VEGETATION_SETS[biome_name]
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "vegetation_system.compute_vegetation_placement", 0, 0, None))
 
     min_x, min_y, max_x, max_y = area_bounds
     width = max_x - min_x

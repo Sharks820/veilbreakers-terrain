@@ -27,6 +27,7 @@ import copy
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
+from .terrain_pipeline import derive_pass_seed
 
 if TYPE_CHECKING:
     from .terrain_semantics import (
@@ -408,7 +409,7 @@ def _place_features(
     """
     config = COASTLINE_STYLES[style]
     feature_types = list(config["features"])
-    rng = random.Random(seed + 100)
+    rng = random.Random(derive_pass_seed(seed, "coastline._place_features.rng", 0, 0, None))
 
     # Inject new coastal biology features for styles that expose open water
     if style in ("rocky", "cliffs"):
