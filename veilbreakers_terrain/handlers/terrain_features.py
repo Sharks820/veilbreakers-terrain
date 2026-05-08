@@ -18,6 +18,7 @@ import time
 from typing import Any, cast
 
 from ._terrain_noise import _make_noise_generator
+from .terrain_pipeline import derive_pass_seed
 from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState
 
 
@@ -259,7 +260,7 @@ def generate_canyon(
         - "dimensions": dict
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.canyon", 0, 0, None))
 
     # Resolution: enough segments to capture the winding and strata detail.
     res_along = max(8, int(length / 1.5))
@@ -758,7 +759,7 @@ def generate_waterfall(
         - "facing_direction": normalized direction tuple
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.waterfall", 0, 0, None))
     vertices: list[Vec3] = []
     uvs: list[tuple[float, float]] = []    # per-vertex (u, v)
     faces: list[tuple[int, ...]] = []
@@ -1293,7 +1294,7 @@ def generate_cliff_face(
         - "dimensions": dict
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.cliff_face", 0, 0, None))
     vertices: list[Vec3] = []
     uvs: list[tuple[float, float]] = []   # world-space triplanar XZ per vertex
     faces: list[tuple[int, ...]] = []
@@ -1344,7 +1345,7 @@ def generate_cliff_face(
     num_cracks = max(3, int(width / 2.5))
     crack_spacing = width / max(num_cracks, 1)
     # Crack centre X positions with small random jitter
-    crack_rng = random.Random(seed + 9001)
+    crack_rng = random.Random(derive_pass_seed(seed, "terrain_features.cliff_face.crack", 0, 0, None))
     crack_xs = [
         -half_w + (ci + 0.5) * crack_spacing + crack_rng.uniform(-crack_spacing * 0.3, crack_spacing * 0.3)
         for ci in range(num_cracks)
@@ -1658,7 +1659,7 @@ def generate_cliff_face(
     #    cliff base (positive Y = away from cliff face).
     #    Output feeds scatter system for physical boulder mesh placement.
     # ------------------------------------------------------------------
-    boulder_rng = random.Random(seed + 77777)
+    boulder_rng = random.Random(derive_pass_seed(seed, "terrain_features.cliff_face.boulder", 0, 0, None))
     boulders_per_10m = boulder_rng.uniform(5.0, 15.0)
     n_boulders = max(1, int(boulders_per_10m * width / 10.0))
     cliff_boulder_placements: list[dict[str, Any]] = []
@@ -1786,7 +1787,7 @@ def generate_swamp_terrain(
         - "water_coverage": float
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.swamp_terrain", 0, 0, None))
     # Fixed minimum resolution: size/2 gives only 25 quads for a 50 m terrain.
     # Clamp to at least 32 so there is enough geometry for believable channel carving.
     resolution = max(32, int(size / 2))
@@ -2165,7 +2166,7 @@ def generate_natural_arch(
         - "dimensions": dict
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.natural_arch", 0, 0, None))
     _ = rng  # reserved for future jitter
 
     vertices: list[Vec3] = []
@@ -3079,7 +3080,7 @@ def generate_sinkhole(
         - "dimensions": dict
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.sinkhole", 0, 0, None))
     vertices: list[Vec3] = []
     faces: list[tuple[int, ...]] = []
     mat_indices: list[int] = []
@@ -3353,7 +3354,7 @@ def generate_sinkhole(
     num_limestone_layers = max(3, int(depth / 1.8))
     limestone_layer_thickness = depth / max(num_limestone_layers, 1)
     limestone_layers: list[dict[str, Any]] = []
-    _layer_rng = random.Random(seed + 9999)
+    _layer_rng = random.Random(derive_pass_seed(seed, "terrain_features.sinkhole.layer", 0, 0, None))
     for li in range(num_limestone_layers):
         z_top_l = -li * limestone_layer_thickness
         z_bot_l = -(li + 1) * limestone_layer_thickness
@@ -3471,7 +3472,7 @@ def generate_floating_rocks(
         - "dimensions": dict
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.floating_rocks", 0, 0, None))
     vertices: list[Vec3] = []
     faces: list[tuple[int, ...]] = []
     mat_indices: list[int] = []
@@ -3771,7 +3772,7 @@ def generate_ice_formation(
         - "dimensions": dict
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.ice_formation", 0, 0, None))
     vertices: list[Vec3] = []
     uvs: list[tuple[float, float]] = []   # per-vertex (u, v) cubemap/planar
     faces: list[tuple[int, ...]] = []
@@ -4058,7 +4059,7 @@ def generate_ice_formation(
     # ------------------------------------------------------------------
     voronoi_crack_seeds: list[dict[str, Any]] = []
     num_voronoi_cells = max(6, stalactite_count + 4)
-    _vcr = random.Random(seed + 7777)
+    _vcr = random.Random(derive_pass_seed(seed, "terrain_features.basalt_column.vcr", 0, 0, None))
     for _voronoi_idx in range(num_voronoi_cells):
         vox = _vcr.uniform(-half_w, half_w)
         voy = _vcr.uniform(-half_d, half_d)
@@ -4175,7 +4176,7 @@ def generate_lava_flow(
         - "dimensions": dict
         - "vertex_count", "face_count"
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_features.lava_flow", 0, 0, None))
     vertices: list[Vec3] = []
     faces: list[tuple[int, ...]] = []
     mat_indices: list[int] = []
@@ -4507,7 +4508,7 @@ def generate_lava_flow(
     # ------------------------------------------------------------------
     num_voronoi_cells = max(8, flow_segments * 2)
     voronoi_cooling_cracks: list[dict[str, Any]] = []
-    _vcr2 = random.Random(seed + 4444)
+    _vcr2 = random.Random(derive_pass_seed(seed, "terrain_features.lava_flow.vcr2", 0, 0, None))
     for _voronoi_idx in range(num_voronoi_cells):
         t_along = _vcr2.random()
         seg_idx = int(t_along * flow_segments)
