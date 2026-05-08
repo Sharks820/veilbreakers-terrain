@@ -346,16 +346,29 @@ def apply_hydraulic_erosion_masks(
         speed = 1.0
         water = 1.0
         sediment = 0.0
+        # B15-P0-08: track last in-bounds (ix, iy, fx, fy) so we can
+        # re-deposit any remaining sediment when the droplet crosses the
+        # boundary band. Prior to this fix, droplets that exited through
+        # the boundary dropped their entire payload — a 64x64 pyramid
+        # stress with 2000 droplets lost 75% of total mass at edges.
+        last_in_bounds: tuple[int, int, float, float] | None = None
 
         for _step in range(max_lifetime):
             ix = int(px)
             iy = int(py)
 
             if ix < 1 or ix >= cols - 2 or iy < 1 or iy >= rows - 2:
+                # B15-P0-08: deposit remaining sediment at the last
+                # in-bounds cell instead of losing it overboard.
+                if sediment > 0.0 and last_in_bounds is not None:
+                    li_ix, li_iy, li_fx, li_fy = last_in_bounds
+                    _deposit(result, li_ix, li_iy, li_fx, li_fy, sediment)
+                    _deposit(deposition_amount, li_ix, li_iy, li_fx, li_fy, sediment)
                 break
 
             fx = px - ix
             fy = py - iy
+            last_in_bounds = (ix, iy, fx, fy)
 
             h00 = result[iy, ix]
             h10 = result[iy, ix + 1]
@@ -383,6 +396,14 @@ def apply_hydraulic_erosion_masks(
             nix = int(new_px)
             niy = int(new_py)
             if nix < 0 or nix >= cols - 1 or niy < 0 or niy >= rows - 1:
+                # B15-P0-08: deposit remaining sediment at the current
+                # cell (which just passed the working-range check above)
+                # before exiting. Without this re-deposit, droplets that
+                # would step off the grid lose their full payload at the
+                # boundary — the dominant contributor to the 75% mass leak.
+                if sediment > 0.0:
+                    _deposit(result, ix, iy, fx, fy, sediment)
+                    _deposit(deposition_amount, ix, iy, fx, fy, sediment)
                 break
 
             new_fx = new_px - nix
@@ -476,6 +497,14 @@ def apply_hydraulic_erosion_masks(
                 # used (ix, iy, fx, fy) which are still the PRE-move indices,
                 # silently shifting mass one cell upstream each evaporation
                 # and producing cumulative drift at high iteration counts.
+                #
+                # B15-P0-08: if the post-move position drifted into the
+                # buffer band (final 1-cell ring) the strict working-range
+                # check would silently drop the sediment. Clamp the
+                # post-move position into the working range and deposit
+                # there — mass is preserved without violating the P2-3
+                # contract that evaporation deposits use new-position
+                # derived names rather than pre-move (ix/iy/fx/fy).
                 if sediment > 0.0:
                     fix_i = int(new_px)
                     fiy_i = int(new_py)
@@ -484,6 +513,27 @@ def apply_hydraulic_erosion_masks(
                         ffy = new_py - fiy_i
                         _deposit(result, fix_i, fiy_i, ffx, ffy, sediment)
                         _deposit(deposition_amount, fix_i, fiy_i, ffx, ffy, sediment)
+                    else:
+                        # B15-P0-08 fallback: post-move drifted into the
+                        # buffer band. Clamp the *post-move* position into
+                        # the working range and deposit there. Names are
+                        # derived from new_px / new_py — must NOT reuse
+                        # the pre-move (ix/iy/fx/fy) per P2-3 contract.
+                        clamped_px = max(1.0, min(float(cols) - 2.0001, new_px))
+                        clamped_py = max(1.0, min(float(rows) - 2.0001, new_py))
+                        clamp_ix = int(clamped_px)
+                        clamp_iy = int(clamped_py)
+                        clamp_fx = clamped_px - clamp_ix
+                        clamp_fy = clamped_py - clamp_iy
+                        _deposit(result, clamp_ix, clamp_iy, clamp_fx, clamp_fy, sediment)
+                        _deposit(
+                            deposition_amount,
+                            clamp_ix,
+                            clamp_iy,
+                            clamp_fx,
+                            clamp_fy,
+                            sediment,
+                        )
                 break
 
     # drainage → log1p of droplet count

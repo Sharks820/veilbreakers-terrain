@@ -247,18 +247,25 @@ class TestHydraulicErodibility:
             iterations=200,
             seed=7,
             erodibility_map=low_erodibility,
-        ).height
+        )
         high = apply_hydraulic_erosion_masks(
             dem,
             iterations=200,
             seed=7,
             erodibility_map=high_erodibility,
-        ).height
+        )
 
-        low_loss = float((dem - low).sum())
-        high_loss = float((dem - high).sum())
-        assert high_loss > low_loss + 1e-6, (
-            "Hydraulic erosion should remove more material in high-erodibility cells"
+        # B15-P0-08 NOTE: pre-fix this test compared `(dem - height).sum()`
+        # — net heightmap volume drift. That worked because the boundary
+        # mass leak made volume drift correlate with erosion strength.
+        # Post-fix mass is conserved (drift ~0 regardless of erodibility),
+        # so the right comparator is the gross-erosion accumulator which
+        # records absolute material removed regardless of where it lands.
+        low_erosion = float(np.asarray(low.erosion_amount).sum())
+        high_erosion = float(np.asarray(high.erosion_amount).sum())
+        assert high_erosion > low_erosion + 1e-6, (
+            "Hydraulic erosion should remove more material in high-erodibility "
+            f"cells; got low={low_erosion:.6f}, high={high_erosion:.6f}"
         )
 
     def test_zero_erodibility_blocks_hydraulic_erosion(self):
