@@ -85,13 +85,218 @@ def test_water_manifest_default_backend_and_upgrade_compat_locked():
     assert "hand_authored_urp" in d["upgrade_compat"]
 
 
+# ---------------------------------------------------------------------------
+# Hardening PR B Fix #4 — backend / version / upgrade_compat strict validation
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_backend_raises_at_construction():
+    """Unknown backend strings die loudly at __post_init__ time."""
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="not in canonical registry"):
+        WaterSurfaceManifest(backend="not_real")
+    with _pytest.raises(ValueError, match="not in canonical registry"):
+        SkyManifest(backend="HDRP_volumetric_clouds")
+    with _pytest.raises(ValueError, match="not in canonical registry"):
+        AtmosphericManifest(backend="HDRP_volumetric_fog")
+    with _pytest.raises(ValueError, match="not in canonical registry"):
+        UpscalerManifest(backend="DLSS_99")
+
+
+def test_invalid_upgrade_compat_entry_raises():
+    """Unknown upgrade_compat alts die loudly at __post_init__ time."""
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="upgrade_compat entry"):
+        WaterSurfaceManifest(
+            backend="boat_attack",
+            upgrade_compat=("stylized_water_2", "made_up_water"),
+        )
+    with _pytest.raises(ValueError, match="upgrade_compat entry"):
+        UpscalerManifest(
+            backend="stp_1_0",
+            upgrade_compat=("fsr_3_1", "made_up_upscaler"),
+        )
+
+
+def test_schema_version_major_mismatch_raises():
+    """from_dict rejects a v2.x manifest because this build is v1.x only."""
+    import pytest as _pytest
+
+    base_dict = WaterSurfaceManifest().to_dict()
+    base_dict["schema_version"] = "2.0"
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        WaterSurfaceManifest.from_dict(base_dict)
+
+    sky_dict = SkyManifest().to_dict()
+    sky_dict["schema_version"] = "9.5"
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        SkyManifest.from_dict(sky_dict)
+
+
+def test_schema_version_minor_bump_accepted():
+    """Forward-compat: v1.99 still loads on this v1.x build."""
+    base_dict = WaterSurfaceManifest().to_dict()
+    base_dict["schema_version"] = "1.99"
+    m = WaterSurfaceManifest.from_dict(base_dict)
+    assert m.schema_version == "1.99"
+    # Round-trip preserves the bumped version string.
+    assert m.to_dict()["schema_version"] == "1.99"
+
+
+def test_recursive_self_in_upgrade_compat_rejected():
+    """A backend listing itself as an alt is a config bug — reject."""
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="recursive self-reference"):
+        WaterSurfaceManifest(
+            backend="crest_5",
+            upgrade_compat=("crest_5", "stylized_water_2"),
+        )
+
+
+# Direct tests for the module-level helpers — names referenced explicitly so
+# the verification matrix can match callable -> test by text-content scan
+# (Hardening PR B follow-up to grade-status promotion).
+
+
+def test_check_major_helper_accepts_v1_minor_and_rejects_v2():
+    """Direct unit test for the ``_check_major`` schema-version helper."""
+    import pytest as _pytest
+
+    from veilbreakers_terrain.handlers.terrain_unity_backends import _check_major
+
+    # v1.x family — must accept silently.
+    _check_major("1.0")
+    _check_major("1.99")
+    _check_major("v1.0")  # leading-v tolerated
+
+    # v2+ — must raise.
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        _check_major("2.0")
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        _check_major("9.0")
+
+
+def test_validate_backend_helper_accepts_canonical_and_rejects_unknown():
+    """Direct unit test for the ``_validate_backend`` registry helper."""
+    import pytest as _pytest
+
+    from veilbreakers_terrain.handlers.terrain_unity_backends import (
+        _validate_backend,
+    )
+
+    # All canonical backends accepted.
+    _validate_backend("water", "boat_attack")
+    _validate_backend("sky", "skybox_cubemap")
+    _validate_backend("fog", "urp_fog_volume_plus_cards")
+    _validate_backend("upscaler", "stp_1_0")
+
+    # Typos / unknown values rejected with the canonical-list hint.
+    with _pytest.raises(ValueError, match="not in canonical registry"):
+        _validate_backend("water", "not_a_real_backend")
+
+
+def test_validate_upgrade_compat_helper_rejects_unknown_and_self_ref():
+    """Direct unit test for the ``_validate_upgrade_compat`` helper."""
+    import pytest as _pytest
+
+    from veilbreakers_terrain.handlers.terrain_unity_backends import (
+        _validate_upgrade_compat,
+    )
+
+    # OK case — alts are canonical and not self-referential.
+    _validate_upgrade_compat(
+        "water", "boat_attack", ("stylized_water_2", "crest_5")
+    )
+
+    # Unknown alt — rejected.
+    with _pytest.raises(ValueError, match="upgrade_compat entry"):
+        _validate_upgrade_compat("water", "boat_attack", ("not_real",))
+
+    # Self-reference — rejected.
+    with _pytest.raises(ValueError, match="recursive self-reference"):
+        _validate_upgrade_compat(
+            "water", "crest_5", ("crest_5", "stylized_water_2")
+        )
+
+
+def test_canonical_alt_order_is_permutation_of_backend_registry():
+    """Codex review fix on Hardening PR B PR #52 thread 5.
+
+    ``CANONICAL_ALT_ORDER`` must contain exactly the same set of backend
+    strings as ``BACKEND_REGISTRY`` for every slot.  This is enforced at
+    module import time by ``_validate_canonical_alt_order``; this test
+    pins the contract so a future PR that adds a backend to one map and
+    forgets the other fails fast.
+    """
+    from veilbreakers_terrain.handlers.terrain_unity_backends import (
+        BACKEND_REGISTRY,
+        CANONICAL_ALT_ORDER,
+        _validate_canonical_alt_order,
+    )
+
+    # Same slot set in both maps.
+    assert set(CANONICAL_ALT_ORDER.keys()) == set(BACKEND_REGISTRY.keys())
+    for slot, registry in BACKEND_REGISTRY.items():
+        assert set(CANONICAL_ALT_ORDER[slot]) == set(registry), (
+            f"slot {slot!r} permutation mismatch: "
+            f"CANONICAL_ALT_ORDER={CANONICAL_ALT_ORDER[slot]!r} vs "
+            f"BACKEND_REGISTRY={registry!r}"
+        )
+
+    # The validator itself runs at import; calling it directly here
+    # documents the failure mode for future readers and pins the helper
+    # against accidental signature changes.
+    _validate_canonical_alt_order()
+
+
+def test_canonical_alt_order_upscaler_substitution_priority_pinned():
+    """Upscaler alt ordering is locked in substitution-priority order.
+
+    The pinned default of ``UpscalerManifest.upgrade_compat`` is
+    ``("fsr_3_1", "fsr_1_0", "dlss_4_5", "off")``.  The
+    ``build_unity_urp_manifest_section`` helper must derive the SAME
+    order (with the active backend filtered out) when no explicit
+    manifest is supplied.  Pinning this avoids the regression Codex
+    flagged on PR #52: registry order would yield
+    ``("fsr_1_0", "fsr_3_1", "dlss_4_5", "off")`` — different priority.
+    """
+    from veilbreakers_terrain.handlers.terrain_unity_backends import (
+        CANONICAL_ALT_ORDER,
+        UpscalerManifest,
+    )
+
+    # CANONICAL_ALT_ORDER pins substitution priority WITH default first.
+    assert CANONICAL_ALT_ORDER["upscaler"] == (
+        "stp_1_0", "fsr_3_1", "fsr_1_0", "dlss_4_5", "off"
+    )
+
+    # UpscalerManifest pinned default upgrade_compat = priority order
+    # WITH the default removed.
+    assert UpscalerManifest().upgrade_compat == (
+        "fsr_3_1", "fsr_1_0", "dlss_4_5", "off"
+    )
+
+    # build_unity_urp_manifest_section must emit the same order.
+    section = build_unity_urp_manifest_section()
+    assert section["upscaler"]["upgrade_compat"] == [
+        "fsr_3_1", "fsr_1_0", "dlss_4_5", "off"
+    ]
+
+
 def test_water_manifest_custom_field_overrides_persist():
+    # Hardening PR B Fix #2: when backend != default, supply an
+    # upgrade_compat tuple that doesn't list the active backend (recursive
+    # self-reference is now rejected at __post_init__).
     m = WaterSurfaceManifest(
         backend="crest_5",
         elevation_m=12.5,
         wave_amplitude_m=1.2,
         foam_threshold_normalized=0.6,
         shore_reaction_enabled=False,
+        upgrade_compat=("boat_attack", "stylized_water_2", "hand_authored_urp"),
     )
     d = m.to_dict()
     assert d["backend"] == "crest_5"
@@ -121,8 +326,10 @@ def test_sky_manifest_roundtrip_default():
 def test_sky_manifest_default_backend_and_upgrade_compat_locked():
     m = SkyManifest()
     assert m.backend == "skybox_cubemap"
-    # Pinned upgrade_compat alternates.
-    assert m.upgrade_compat == ("volume_cloud_urp", "volumetric_clouds_native")
+    # Pinned upgrade_compat alternates.  Hardening PR B Fix #9: dropped
+    # ``volumetric_clouds_native`` because URP 17.3 has no native volumetric
+    # cloud pass roadmap.
+    assert m.upgrade_compat == ("volume_cloud_urp",)
 
 
 def test_sky_manifest_quaternion_roundtrip():
@@ -151,7 +358,9 @@ def test_atmospheric_manifest_roundtrip_default():
 def test_atmospheric_manifest_default_backend_and_upgrade_compat_locked():
     m = AtmosphericManifest()
     assert m.backend == "urp_fog_volume_plus_cards"
-    assert m.upgrade_compat == ("atmospheric_height_fog", "volumetric_fog_native")
+    # Hardening PR B Fix #9: dropped ``volumetric_fog_native`` (URP 17.3
+    # has no native volumetric fog roadmap).
+    assert m.upgrade_compat == ("atmospheric_height_fog",)
 
 
 def test_atmospheric_manifest_height_density_curve_roundtrip():
@@ -181,8 +390,10 @@ def test_upscaler_manifest_roundtrip_default():
 
 def test_upscaler_manifest_default_backend_and_upgrade_compat_locked():
     m = UpscalerManifest()
-    assert m.backend == "fsr_3_1"
-    assert m.upgrade_compat == ("dlss_4_5", "stp_native", "off")
+    # Hardening PR B Fix #1 (VA + VD critical bug): default backend is now
+    # ``stp_1_0`` (URP 17.3 native), not ``fsr_3_1`` (external package).
+    assert m.backend == "stp_1_0"
+    assert m.upgrade_compat == ("fsr_3_1", "fsr_1_0", "dlss_4_5", "off")
     assert m.quality == "balanced"
     assert m.mip_bias == -1.0
 
@@ -200,7 +411,8 @@ def test_unity_export_config_default_profile():
     assert cfg.water_backend == "boat_attack"
     assert cfg.sky_backend == "skybox_cubemap"
     assert cfg.fog_backend == "urp_fog_volume_plus_cards"
-    assert cfg.upscaler_backend == "fsr_3_1"
+    # Hardening PR B Fix #1: URP-native STP 1.0 is the default upscaler.
+    assert cfg.upscaler_backend == "stp_1_0"
     assert cfg.legacy_hdrp_filename is False
 
 
@@ -211,7 +423,7 @@ def test_unity_export_config_aaa_16gb_profile():
     assert cfg.water_backend == "boat_attack"
     assert cfg.sky_backend == "skybox_cubemap"
     assert cfg.fog_backend == "urp_fog_volume_plus_cards"
-    assert cfg.upscaler_backend == "fsr_3_1"
+    assert cfg.upscaler_backend == "stp_1_0"
 
 
 def test_unity_export_config_to_dict_contains_all_keys():
@@ -359,23 +571,36 @@ def test_export_manifest_unity_urp_default_backends_match_phase_d1_decisions():
     assert urp["water"]["backend"] == "boat_attack"
     assert urp["sky"]["backend"] == "skybox_cubemap"
     assert urp["atmospheric"]["backend"] == "urp_fog_volume_plus_cards"
-    assert urp["upscaler"]["backend"] == "fsr_3_1"
+    # Hardening PR B Fix #1: URP-native STP 1.0 default (was fsr_3_1 external).
+    assert urp["upscaler"]["backend"] == "stp_1_0"
 
 
 def test_export_manifest_accepts_overridden_backend_manifests():
     """Caller-supplied manifest dataclasses propagate into the unity_urp block."""
     stack = _make_min_stack()
+    # Hardening PR B Fix #2: when overriding backend, supply a tailored
+    # upgrade_compat that does NOT list the active backend (otherwise the
+    # __post_init__ self-reference guard fires).
     custom_water = WaterSurfaceManifest(
         backend="crest_5",
         elevation_m=42.0,
         wave_amplitude_m=2.5,
+        upgrade_compat=("boat_attack", "stylized_water_2", "hand_authored_urp"),
     )
     custom_sky = SkyManifest(
-        backend="volumetric_clouds_native",
+        backend="volume_cloud_urp",
         cloud_density=0.6,
+        upgrade_compat=(),
     )
-    custom_atm = AtmosphericManifest(backend="volumetric_fog_native")
-    custom_up = UpscalerManifest(backend="dlss_4_5", quality="quality")
+    custom_atm = AtmosphericManifest(
+        backend="atmospheric_height_fog",
+        upgrade_compat=(),
+    )
+    custom_up = UpscalerManifest(
+        backend="dlss_4_5",
+        quality="quality",
+        upgrade_compat=("stp_1_0", "fsr_3_1", "fsr_1_0", "off"),
+    )
     with tempfile.TemporaryDirectory() as td:
         out = pathlib.Path(td)
         manifest = export_unity_manifest(
@@ -392,9 +617,9 @@ def test_export_manifest_accepts_overridden_backend_manifests():
     assert urp["water"]["backend"] == "crest_5"
     assert urp["water"]["elevation_m"] == 42.0
     assert urp["water"]["wave_amplitude_m"] == 2.5
-    assert urp["sky"]["backend"] == "volumetric_clouds_native"
+    assert urp["sky"]["backend"] == "volume_cloud_urp"
     assert urp["sky"]["cloud_density"] == 0.6
-    assert urp["atmospheric"]["backend"] == "volumetric_fog_native"
+    assert urp["atmospheric"]["backend"] == "atmospheric_height_fog"
     assert urp["upscaler"]["backend"] == "dlss_4_5"
     assert urp["upscaler"]["quality"] == "quality"
 
@@ -405,13 +630,13 @@ def test_build_unity_urp_manifest_section_helper_uses_config_backend_strings():
         water_backend="stylized_water_2",
         sky_backend="volume_cloud_urp",
         fog_backend="atmospheric_height_fog",
-        upscaler_backend="stp_native",
+        upscaler_backend="fsr_3_1",
     )
     section = build_unity_urp_manifest_section(config=cfg)
     assert section["water"]["backend"] == "stylized_water_2"
     assert section["sky"]["backend"] == "volume_cloud_urp"
     assert section["atmospheric"]["backend"] == "atmospheric_height_fog"
-    assert section["upscaler"]["backend"] == "stp_native"
+    assert section["upscaler"]["backend"] == "fsr_3_1"
 
 
 # ---------------------------------------------------------------------------

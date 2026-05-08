@@ -31,10 +31,9 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Union
 
 import numpy as np
 
@@ -270,6 +269,17 @@ def assert_finite_array(
     non-array values are also skipped (callers that need to assert
     presence should do so explicitly first).
 
+    No-op classes (intentional contract — Hardening PR B Fix #6, VC finding):
+        * ``None`` (the channel is absent — caller must check separately).
+        * ``np.integer`` / ``np.bool_`` arrays (cannot hold NaN/Inf — the
+          IEEE-754 special values only exist in floating-point dtypes).
+        * Object-dtype arrays containing Python ints / bools (same reason).
+
+    Float arrays — the load-bearing case — are checked exhaustively via
+    ``np.isfinite``.  ``np.float16`` / ``np.float32`` / ``np.float64`` /
+    ``np.float128`` (where available) are all covered by the
+    ``np.issubdtype(..., np.floating)`` check.
+
     The error message includes the channel name, the pass that produced
     it, and a breakdown of NaN / +Inf / -Inf counts so the corruption
     site is unambiguous.
@@ -312,8 +322,3 @@ def assert_finite_array(
         posinf_count=posinf_count,
         neginf_count=neginf_count,
     )
-
-
-# Quiet "tempfile / Mapping unused" warnings — they are part of the public
-# API surface used by tests and callers importing helper types.
-_ = (tempfile, Mapping)

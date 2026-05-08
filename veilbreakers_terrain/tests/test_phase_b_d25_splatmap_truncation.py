@@ -127,6 +127,48 @@ def test_truncate_rejects_non_3d_input():
         _truncate_splatmap_to_top_k(bad)
 
 
+# Hardening PR B Fix #5 (VC finding): NaN-input contract test.
+def test_truncate_handles_nan_input_weights_gracefully():
+    """NaN-bearing weights must raise FiniteArrayError, not silently corrupt.
+
+    np.argpartition's NaN-handling is platform-dependent (Windows CRT vs
+    glibc differ on NaN ordering), so silently top-K capping a tensor that
+    contains NaN produces non-deterministic RGBA splatmap bytes that
+    break the GATE D25 subprocess-determinism matrix.  The safer contract
+    is "fail loudly at the truncation boundary so the caller can attribute
+    the corruption back to the pass that produced the NaN".
+    """
+    from veilbreakers_terrain.handlers.terrain_io import FiniteArrayError
+
+    H, W, L = 2, 2, 8
+    weights = np.full((H, W, L), 0.125, dtype=np.float32)
+    # Inject NaN at a single (row, col, layer) — defines expected behaviour
+    # for any NaN regardless of count.
+    weights[0, 0, 3] = np.float32(np.nan)
+
+    with pytest.raises(FiniteArrayError) as excinfo:
+        _truncate_splatmap_to_top_k(weights, max_layers_per_pixel=4)
+    err = excinfo.value
+    assert err.channel == "splatmap_weights_layer"
+    assert err.pass_name == "_truncate_splatmap_to_top_k"
+    assert err.nan_count == 1
+    assert err.posinf_count == 0
+    assert err.neginf_count == 0
+
+
+def test_truncate_handles_inf_input_weights_gracefully():
+    """+Inf must also raise FiniteArrayError (finiteness is the contract)."""
+    from veilbreakers_terrain.handlers.terrain_io import FiniteArrayError
+
+    weights = np.full((1, 1, 8), 0.125, dtype=np.float32)
+    weights[0, 0, 5] = np.float32(np.inf)
+
+    with pytest.raises(FiniteArrayError) as excinfo:
+        _truncate_splatmap_to_top_k(weights, max_layers_per_pixel=4)
+    assert excinfo.value.posinf_count == 1
+    assert excinfo.value.nan_count == 0
+
+
 # ---------------------------------------------------------------------------
 # 2. _write_splatmap_groups poison-input integration
 # ---------------------------------------------------------------------------
