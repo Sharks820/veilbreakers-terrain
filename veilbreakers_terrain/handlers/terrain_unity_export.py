@@ -10,8 +10,6 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
-import os
-import tempfile
 import time
 from pathlib import Path
 from collections.abc import Mapping, Sequence
@@ -19,6 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, TypeAlias, cast, overloa
 
 import numpy as np
 
+from .terrain_io import atomic_write_bytes, atomic_write_text
 from .terrain_semantics import (
     BBox,
     PassDefinition,
@@ -837,7 +836,10 @@ def _write_json(
     payload: Dict[str, Any],
 ) -> str:
     target = output_dir / filename
-    target.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    # FIX-D24-PR12: route every JSON sidecar through the shared atomic
+    # writer so a crash mid-bake can't leave a half-written sidecar that
+    # Unity's AssetPostprocessor would reject as corrupt.
+    atomic_write_text(target, json.dumps(payload, indent=2, sort_keys=True))
     files[target.name] = {
         "sha256": _sha256(target),
         "size": int(target.stat().st_size),
@@ -2492,23 +2494,17 @@ def export_unity_manifest(
             "(atomic write — no partial bundle on disk)."
         )
 
-    # Write manifest.json atomically.
+    # FIX-D24-PR12: route both files through the shared ``atomic_write_bytes``
+    # helper which writes to a unique adjacent ``.tmp`` path, fsyncs the
+    # fd, then ``os.replace``s into place. Replaces the prior
+    # ``tempfile.NamedTemporaryFile`` pattern (which did NOT fsync, so a
+    # crash between rename and journal flush could still leave the new
+    # inode pointing at unflushed bytes on Linux ext4 / Windows NTFS).
     _manifest_path = output_dir / "manifest.json"
-    with tempfile.NamedTemporaryFile(
-        dir=output_dir, suffix=".tmp", delete=False
-    ) as _tf:
-        _tf.write(manifest_bytes)
-        _tf_manifest = _tf.name
-    os.replace(_tf_manifest, _manifest_path)
+    atomic_write_bytes(_manifest_path, manifest_bytes)
 
-    # Write unity_import_descriptor.json atomically.
     _descriptor_path = output_dir / "unity_import_descriptor.json"
-    with tempfile.NamedTemporaryFile(
-        dir=output_dir, suffix=".tmp", delete=False
-    ) as _tf:
-        _tf.write(descriptor_bytes)
-        _tf_descriptor = _tf.name
-    os.replace(_tf_descriptor, _descriptor_path)
+    atomic_write_bytes(_descriptor_path, descriptor_bytes)
 
     # Update files index with descriptor metadata.
     files["unity_import_descriptor.json"] = {

@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .terrain_io import atomic_write_text
 from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import (
     TerrainIntentState,
@@ -138,7 +139,10 @@ def save_golden_snapshot(
     npz_path = json_path.with_suffix(".npz")
     stack.to_npz(npz_path)
     snap.npz_path = str(npz_path)
-    json_path.write_text(json.dumps(snap.to_dict(), sort_keys=True, indent=2))
+    # FIX-D24-PR12: atomic write so a crash mid-bake can never leave a
+    # half-written golden manifest that downstream comparators would
+    # parse as corrupt.
+    atomic_write_text(json_path, json.dumps(snap.to_dict(), sort_keys=True, indent=2))
     return snap
 
 
@@ -407,7 +411,10 @@ def seed_golden_library(
         )
 
     manifest_path = output_dir / "golden_library_manifest.json"
-    manifest_path.write_text(
+    # FIX-D24-PR12: atomic write so partial library-bake crashes don't
+    # leave a corrupt golden_library_manifest.json on disk.
+    atomic_write_text(
+        manifest_path,
         json.dumps(
             {
                 "pipeline_version": PIPELINE_VERSION,
@@ -418,7 +425,7 @@ def seed_golden_library(
             },
             sort_keys=True,
             indent=2,
-        )
+        ),
     )
     return snapshots
 

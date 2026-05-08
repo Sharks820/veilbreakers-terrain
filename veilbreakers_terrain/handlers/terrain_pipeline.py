@@ -31,6 +31,7 @@ import weakref
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .terrain_io import assert_finite_array
 from .terrain_semantics import (
     BBox,
     ChannelOwnershipError,
@@ -757,6 +758,35 @@ class TerrainPassController:
                 f"Pass '{pass_name}' declared produces_channels={definition.produces_channels} "
                 f"but did not populate {missing_outputs}"
             )
+
+        # FIX-D24-PR13: NaN/Inf assertion on every produced channel.
+        # Catches numerical corruption (e.g. erosion divide-by-slope-zero,
+        # uninitialised float buffers, hydraulic accumulation overflow) at
+        # the boundary that produced it, instead of letting the poison
+        # silently propagate downstream into water depth / scatter / Unity
+        # heightmap export. Skipped on failed/dry-run passes because their
+        # channel state is not part of the success contract. Integer and
+        # boolean channels are skipped automatically by ``assert_finite_array``
+        # because those dtypes cannot represent NaN/Inf.
+        if result.status == "ok":
+            for _produced_ch in definition.produces_channels:
+                _arr = self.state.mask_stack.get(_produced_ch)
+                # ``assert_finite_array`` is a no-op on None / non-float arrays.
+                assert_finite_array(
+                    _arr,
+                    channel=_produced_ch,
+                    pass_name=pass_name,
+                )
+            # Also verify any channels declared as overrides (secondary
+            # writes) to catch in-place mutation that introduces NaN/Inf
+            # without being declared in produces_channels.
+            for _override_ch in definition.overrides:
+                _arr = self.state.mask_stack.get(_override_ch)
+                assert_finite_array(
+                    _arr,
+                    channel=_override_ch,
+                    pass_name=pass_name,
+                )
 
         # Warn on channels written but not declared in produces_channels
         # Full dict comparison catches both new keys AND silent overwrites of
