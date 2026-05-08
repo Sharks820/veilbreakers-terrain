@@ -1,11 +1,14 @@
 """BLAKE2b-based deterministic chunk-seed primitives.
 
-Replaces SHA-256 in `terrain_pipeline.derive_pass_seed` and
-`terrain_rng.derive_pass_seed` for chunk-level work where the
-input space is small (intent-seed + namespace + tile coords + region
-bbox). BLAKE2b is ~1.23×-1.5× faster than SHA-256 in CPython 3.12 on
-small (<32-byte) inputs, fully deterministic, no PYTHONHASHSEED
-randomization, and provides cryptographic-quality avalanche.
+Provides a NEW alternative-pathway BLAKE2b chunk-seed API alongside
+the existing SHA-256 ``terrain_pipeline.derive_pass_seed``. This
+module does NOT replace the SHA-256 helpers in this PR — both still
+exist; future PRs may opt-in migrate consumers via
+``derive_pass_seed_blake2b`` (the drop-in replacement signature).
+
+BLAKE2b is ~1.23×-1.5× faster than SHA-256 in CPython 3.12 on small
+(<32-byte) inputs, fully deterministic, no PYTHONHASHSEED randomization,
+and provides cryptographic-quality avalanche.
 
 Length-prefixed framing
 -----------------------
@@ -31,17 +34,18 @@ Output formats
 - ``chunk_seed_bytes(...)`` returns the full 16-byte BLAKE2b digest
   for callers that need >32 bits of entropy (e.g. SeedSequence).
 - ``derive_pass_seed_blake2b(...)`` matches the public signature of
-  ``terrain_pipeline.derive_pass_seed`` so callers can swap the import
-  without renaming kwargs.
+  ``terrain_pipeline.derive_pass_seed`` so future callers can opt-in
+  migrate to BLAKE2b by changing the import line only.
 
 Bug-A canonical fix
 -------------------
-``terrain_rng.py`` previously defined a SECOND `derive_pass_seed` that
-used plain string concatenation (collision-prone) instead of the
-``terrain_pipeline.py`` JSON-encoded SHA-256 path. This module is the
-canonical single-source replacement; both old definitions delegate to
-it (or re-export from it) so all 22 importers converge on a shared
-hash payload.
+``terrain_rng.py`` previously defined a SECOND ``derive_pass_seed``
+that used plain string concatenation (collision-prone) instead of the
+``terrain_pipeline.py`` JSON-encoded SHA-256 path. This PR also
+deletes the duplicate body and re-exports the canonical helper via
+a thin lazy-loading wrapper in ``terrain_rng.py``. All 22+ importers
+now converge on a shared SHA-256 hash payload (terrain_pipeline.py
+remains the canonical surface; this BLAKE2b module is opt-in).
 """
 
 from __future__ import annotations
@@ -101,8 +105,13 @@ def chunk_seed_bytes(
     `numpy.random.SeedSequence`) can splice it themselves. Most callers
     want :func:`chunk_seed` which masks to 32 bits.
     """
+    # Pack intent_seed as UNSIGNED 32-bit (`<I`) to accept the full
+    # uint32 range that callers may legitimately pass. Signed `<i`
+    # would raise struct.error on values >= 2**31. Mask negative
+    # input via & 0xFFFFFFFF so signed-int callers (e.g. -1 used as
+    # sentinel) still pack cleanly.
     payload = (
-        struct.pack("<i", int(intent_seed))
+        struct.pack("<I", int(intent_seed) & 0xFFFFFFFF)
         + _frame_namespace(namespace)
         + struct.pack("<qq", int(tile_x), int(tile_y))
         + _frame_region(region_bounds)

@@ -94,15 +94,24 @@ def derive_pass_seed(
     global _canonical_derive_pass_seed_cache
     if _canonical_derive_pass_seed_cache is None:
         _canonical_derive_pass_seed_cache = _resolve_canonical_derive_pass_seed()
+    # Historical terrain_rng.derive_pass_seed accepted ``region: str = ""``
+    # and folded the string INTO the SHA-256 payload, providing seed
+    # separation between e.g. ``region="biome_alpine"`` and
+    # ``region="biome_desert"``. The canonical terrain_pipeline helper
+    # expects ``Optional[BBox]`` and would call ``.to_tuple()`` on a
+    # str. To preserve the legacy seed-separation behaviour we fold a
+    # non-empty str region INTO the namespace so the resulting hash
+    # still differentiates by region (Codex / Copilot PR #41 review).
+    effective_namespace = str(pass_name)
     canonical_region: _Any = region
     if isinstance(region, str):
-        # Historical str regions were never meaningful; treat as None
-        # to avoid the canonical helper trying to call .to_tuple().
+        if region:
+            effective_namespace = f"{effective_namespace}.{region}"
         canonical_region = None
     return int(
         _canonical_derive_pass_seed_cache(
             int(seed),
-            str(pass_name),
+            effective_namespace,
             int(tile_x),
             int(tile_y),
             canonical_region,
