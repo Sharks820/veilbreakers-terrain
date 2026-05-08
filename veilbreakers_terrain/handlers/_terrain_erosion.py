@@ -386,6 +386,14 @@ def apply_hydraulic_erosion_masks(
         # stress with 2000 droplets lost 75% of total mass at edges.
         last_in_bounds: tuple[int, int, float, float] | None = None
 
+        # D15.5 hotfix (Phase A V2 verifier P0): the inner for-loop's
+        # `else` clause runs only when no `break` fires. With default
+        # max_lifetime=30 and evaporation=0.01, water decays only to
+        # 0.99^30 ~= 0.74 — far above the 0.001 evaporation threshold —
+        # so a droplet wandering interior cells through all 30 steps
+        # exits the for-loop naturally without depositing, leaking
+        # 60-95% of carried sediment on gentle slopes. The else block
+        # below catches that path and deposits residual sediment.
         for _step in range(max_lifetime):
             ix = int(px)
             iy = int(py)
@@ -602,6 +610,32 @@ def apply_hydraulic_erosion_masks(
                                 sediment,
                             )
                 break
+        else:
+            # D15.5 hotfix (Phase A V2 verifier P0): inner for-loop
+            # completed naturally without break. With max_lifetime=30
+            # and evaporation=0.01, water decays only to ~0.74 across
+            # 30 steps — far above the 0.001 evaporation threshold —
+            # so a droplet wandering interior cells exits the for-loop
+            # naturally without ever hitting any of the 3 break-site
+            # deposit paths. On gentle slopes this leaks 60-95% of
+            # carried sediment (`steepest pyramid` test geometry hides
+            # the failure mode because droplets escape the boundary
+            # within ~5 steps). Deposit residual sediment at the last
+            # in-bounds cell, matching the line-393 working-range exit
+            # semantics. Honours deposition_mask / hero_mask via the
+            # same closure used by the other 3 exit paths.
+            if (
+                sediment > 0.0
+                and last_in_bounds is not None
+                and not _boundary_deposit_blocked(
+                    last_in_bounds[0], last_in_bounds[1]
+                )
+            ):
+                eol_ix, eol_iy, eol_fx, eol_fy = last_in_bounds
+                _deposit(result, eol_ix, eol_iy, eol_fx, eol_fy, sediment)
+                _deposit(
+                    deposition_amount, eol_ix, eol_iy, eol_fx, eol_fy, sediment
+                )
 
     # drainage → log1p of droplet count
     drainage = np.log1p(drainage_count)

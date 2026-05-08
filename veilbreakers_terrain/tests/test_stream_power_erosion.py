@@ -287,23 +287,30 @@ class TestHydraulicErodibility:
         np.testing.assert_allclose(result, dem, rtol=1e-9, atol=1e-9)
 
     def test_hydraulic_erodibility_map_is_normalized_multiplier(self):
-        """Hydraulic erodibility is a [0,1] multiplier, not stream-power K."""
+        """Hydraulic erodibility is a [0,1] multiplier, not stream-power K.
+
+        D15.5 NOTE: pre-mass-conservation this test compared
+        ``(dem - height).sum()`` (net heightmap drift). With both
+        boundary deposit and end-of-lifetime deposit hooks closing
+        all leak paths, drift ≈ 0 regardless of erodibility — the
+        right comparator is the gross-erosion accumulator.
+        """
         from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion_masks
 
         dem = _make_sloped_dem(32).astype(np.float64)
 
         baseline = apply_hydraulic_erosion_masks(
             dem, iterations=500, seed=11,
-        ).height
-        baseline_loss = float((dem - baseline).sum())
+        )
+        baseline_erosion = float(np.asarray(baseline.erosion_amount).sum())
 
         half = apply_hydraulic_erosion_masks(
             dem,
             iterations=500,
             seed=11,
             erodibility_map=np.full_like(dem, 0.5),
-        ).height
-        half_loss = float((dem - half).sum())
+        )
+        half_erosion = float(np.asarray(half.erosion_amount).sum())
 
         overbright = apply_hydraulic_erosion_masks(
             dem,
@@ -312,11 +319,16 @@ class TestHydraulicErodibility:
             erodibility_map=np.full_like(dem, 500.0),
         ).height
 
-        assert baseline_loss > 1e-3, (
+        assert baseline_erosion > 1e-3, (
             "baseline hydraulic erosion on sloped DEM should remove measurable material"
         )
-        assert 0.0 < half_loss < baseline_loss
-        np.testing.assert_allclose(overbright, baseline, rtol=1e-7, atol=1e-7)
+        assert 0.0 < half_erosion < baseline_erosion, (
+            f"erodibility_map=0.5 should reduce erosion below baseline; "
+            f"got baseline={baseline_erosion:.6f}, half={half_erosion:.6f}"
+        )
+        # Out-of-range erodibility (500.0) is clamped to 1.0 internally
+        # so it must produce identical heightmap output to the baseline.
+        np.testing.assert_allclose(overbright, baseline.height, rtol=1e-7, atol=1e-7)
 
 
 # ---------------------------------------------------------------------------
