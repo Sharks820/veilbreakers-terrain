@@ -589,6 +589,18 @@ class UnityExportConfig:
                 "streaming_mipmaps_memory_budget_mb out of plausible range "
                 f"[256, 16384] MB: got {budget}"
             )
+        # Phase C D34 — same runtime type guard for the streaming_active
+        # flag.  ``bool(non_empty_string)`` is True, so a dynamic config
+        # passing ``"False"`` or ``"0"`` would otherwise be silently flipped
+        # to True at to_dict() time and disable a caller's explicit opt-out.
+        # Pin the runtime type via ``type(...) is bool`` so int subclasses
+        # (and ints in general) can't slip through either.
+        active_obj: object = self.streaming_mipmaps_active
+        if type(active_obj) is not bool:
+            raise ValueError(
+                "streaming_mipmaps_active must be bool (got "
+                f"{type(active_obj).__name__}={active_obj!r})"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -152,6 +152,36 @@ def test_streaming_budget_bool_rejected():
         UnityExportConfig(streaming_mipmaps_memory_budget_mb=False)  # type: ignore[arg-type]
 
 
+def test_streaming_active_non_bool_rejected():
+    """Codex review: dynamic configs that ship ``streaming_mipmaps_active``
+    as a string (``"False"`` / ``"0"``) or int (``0`` / ``1``) must die at
+    __post_init__ time, otherwise ``bool(non_empty_str)`` silently flips an
+    explicit opt-out back to True before it reaches the manifest.
+    """
+    with pytest.raises(ValueError, match="must be bool"):
+        UnityExportConfig(streaming_mipmaps_active="False")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="must be bool"):
+        UnityExportConfig(streaming_mipmaps_active="0")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="must be bool"):
+        UnityExportConfig(streaming_mipmaps_active="True")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="must be bool"):
+        UnityExportConfig(streaming_mipmaps_active=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="must be bool"):
+        UnityExportConfig(streaming_mipmaps_active=1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="must be bool"):
+        UnityExportConfig(streaming_mipmaps_active=None)  # type: ignore[arg-type]
+
+
+def test_streaming_active_bool_accepted():
+    """True and False round-trip cleanly through __post_init__ and to_dict()."""
+    cfg_on = UnityExportConfig(streaming_mipmaps_active=True)
+    assert cfg_on.streaming_mipmaps_active is True
+    assert cfg_on.to_dict()["streaming_mipmaps_active"] is True
+    cfg_off = UnityExportConfig(streaming_mipmaps_active=False)
+    assert cfg_off.streaming_mipmaps_active is False
+    assert cfg_off.to_dict()["streaming_mipmaps_active"] is False
+
+
 # ---------------------------------------------------------------------------
 # 3. UnityExportConfig.to_dict() includes the D34 fields
 # ---------------------------------------------------------------------------
