@@ -2550,8 +2550,13 @@ def pass_waterfalls(
     if caustic_map is not None:
         produced.append("caustic_atlas_path")
     produced.append("water_depth_atlas_path")
-    if particle_emitter_specs:
-        produced.append("particle_emitter_specs")
+    # Spec PR #21 (Phase C D28-29): ``particle_emitter_specs`` is always
+    # written to the stack at line ~2526 above (empty list is downstream-safe
+    # — the ``emit_particle_systems`` bridge tolerates an empty input). Report
+    # it unconditionally so PassResult metadata stays consistent with the
+    # PassDefinition.produces_channels contract — previously this was only
+    # appended when the list was truthy, which lied about the pass output.
+    produced.append("particle_emitter_specs")
 
     return PassResult(
         pass_name="waterfalls",

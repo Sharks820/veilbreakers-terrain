@@ -10,10 +10,16 @@ PR #21 — pass contracts:
       ``optional_channels`` (was empty).
     * ``waterfalls`` declares ``particle_emitter_specs`` in both
       ``produces_channels`` and ``overrides`` (was missing entirely).
-    * ``quixel_ingest`` declares all 6 channels it actually writes
+    * ``quixel_ingest`` declares the 6 channels it can write
       (splatmap_weights_layer + macro_color + roughness_variation +
-      terrain_normals + terrain_ao + terrain_displacement) in BOTH
-      ``produces_channels`` and ``overrides`` (was only splatmap).
+      terrain_normals + terrain_ao + terrain_displacement) split between
+      ``produces_channels`` (only ``splatmap_weights_layer`` — the single
+      always-populated output via the no-asset fallback at pass body
+      ~line 931-945) and ``overrides`` (all 6 — declares secondary-writer
+      intent for the 5 conditional Megascans-texture-driven outputs as
+      well as the guaranteed splatmap). Was previously only splatmap in
+      both. See ``test_quixel_ingest_declares_all_six_channels_written``
+      below for the pinned contract.
 
 PR #31 — macro_color 8-channel consumed declaration:
     * ``compute_macro_color`` reads 8 channels (height + biome_id + wetness +
@@ -42,6 +48,7 @@ from veilbreakers_terrain.handlers.terrain_macro_color import (
     DEFAULT_BIOME_ID,
     MACRO_COLOR_CONSUMED_CHANNELS,
     PALETTE_BUCKET_COUNT,
+    _build_voronoi_to_bucket_lut,
     compute_macro_color,
     pass_macro_color,
 )
@@ -375,6 +382,168 @@ class TestMacroColorIntegration:
         assert float(result.mean()) > 0.4, (
             "Snowcap bucket 5 should average bright (>0.4)"
         )
+
+
+# ---------------------------------------------------------------------------
+# PR #55 review fix (threads #1 / #4) — Voronoi-index -> palette-bucket remap
+# ---------------------------------------------------------------------------
+
+
+class TestPR55BiomeBucketRemap:
+    """Pin the Voronoi-index → 14-bucket palette translation (PR #55 review).
+
+    Codex (#1) and Copilot (#4) both flagged that ``stack.biome_id`` carries
+    Voronoi-cell indices into ``stack.biome_names`` (0..biome_count-1), NOT
+    canonical 14-bucket palette IDs. Without translation a default tile
+    whose Voronoi cell 0 maps to ``thornwood_forest`` paints with palette
+    bucket 0 (umber) instead of bucket 1 (forest mossy green), and 18-biome
+    runs silently fall through for IDs 14-17.
+    """
+
+    def test_lut_translates_default_six_biomes(self) -> None:
+        """The default 6-biome list maps each Voronoi index to its
+        canonical palette bucket via BIOME_BUCKET_MAP_18_TO_14."""
+        from veilbreakers_terrain.handlers._biome_grammar import (
+            _DEFAULT_BIOMES,
+        )
+        lut = _build_voronoi_to_bucket_lut(_DEFAULT_BIOMES)
+        assert lut is not None
+        assert lut.dtype == np.int32
+        assert lut.shape == (6,)
+        # _DEFAULT_BIOMES = [thornwood_forest, corrupted_swamp, mountain_pass,
+        #                    desert, grasslands, deep_forest]
+        # Buckets =        [1,                6,               4,
+        #                    10,     2,          1]
+        expected = [
+            BIOME_BUCKET_MAP_18_TO_14["thornwood_forest"],
+            BIOME_BUCKET_MAP_18_TO_14["corrupted_swamp"],
+            BIOME_BUCKET_MAP_18_TO_14["mountain_pass"],
+            BIOME_BUCKET_MAP_18_TO_14["desert"],
+            BIOME_BUCKET_MAP_18_TO_14["grasslands"],
+            BIOME_BUCKET_MAP_18_TO_14["deep_forest"],
+        ]
+        assert lut.tolist() == expected
+
+    def test_lut_returns_none_when_names_absent(self) -> None:
+        """Legacy contract: no names -> None -> caller uses raw biome_id."""
+        assert _build_voronoi_to_bucket_lut(None) is None
+        assert _build_voronoi_to_bucket_lut([]) is None
+
+    def test_lut_unknown_name_falls_back_to_default(self) -> None:
+        """Non-canonical biome names fall back to DEFAULT_BIOME_ID (umber)."""
+        lut = _build_voronoi_to_bucket_lut(
+            ["thornwood_forest", "definitely_not_a_real_biome", "desert"]
+        )
+        assert lut is not None
+        assert lut[0] == BIOME_BUCKET_MAP_18_TO_14["thornwood_forest"]
+        assert lut[1] == DEFAULT_BIOME_ID
+        assert lut[2] == BIOME_BUCKET_MAP_18_TO_14["desert"]
+
+    def test_macro_color_remaps_voronoi_index_to_bucket(self) -> None:
+        """Direct API: passing biome_names + biome_id=0-everywhere should
+        paint with the bucket for biome_names[0], not palette[0] (umber)."""
+        stack = _build_stack(tile_size=16)
+        # biome_id channel = all zeros (Voronoi cell 0 across the tile).
+        biome = np.zeros((17, 17), dtype=np.int32)
+        stack.set("biome_id", biome, "test")
+
+        # Biome 0 -> "thornwood_forest" -> palette bucket 1 (mossy green)
+        result = compute_macro_color(
+            stack, biome_names=["thornwood_forest"]
+        )
+        # Mossy green is G-dominant (bucket 1: 0.22, 0.30, 0.18).
+        mean_r = float(result[..., 0].mean())
+        mean_g = float(result[..., 1].mean())
+        mean_b = float(result[..., 2].mean())
+        # Without the remap, bucket 0 (umber) would have R > G ≈ 0.32 vs
+        # 0.30. With the remap, bucket 1 (mossy green) has G > R.
+        assert mean_g > mean_r, (
+            f"biome_id=0 + biome_names=['thornwood_forest'] should remap "
+            f"to bucket 1 (mossy green, G-dominant); got "
+            f"R={mean_r:.3f} G={mean_g:.3f} B={mean_b:.3f}. "
+            f"Without remap fix, bucket 0 (umber) would be R-dominant."
+        )
+
+    def test_macro_color_consumes_stack_biome_names(self) -> None:
+        """``pass_macro_color`` reads ``stack.biome_names`` automatically."""
+        stack = _build_stack(tile_size=16)
+        biome = np.zeros((17, 17), dtype=np.int32)
+        stack.set("biome_id", biome, "test")
+        # Stamp the Voronoi name list (mimics pass_compute_biome_channels).
+        setattr(stack, "biome_names", ["frozen_hollows"])  # bucket 5 (snow)
+
+        # No biome_names arg → must read off stack.
+        result = compute_macro_color(stack)
+        # Snowcap (bucket 5) is the brightest entry; mean > 0.4.
+        assert float(result.mean()) > 0.4, (
+            "macro_color must read stack.biome_names and remap; "
+            "frozen_hollows -> bucket 5 (snowcap) -> bright result"
+        )
+
+    def test_macro_color_clamps_out_of_range_biome_id(self) -> None:
+        """biome_id >= len(biome_names) is clamped to last LUT entry,
+        not silently fall-through to palette default."""
+        stack = _build_stack(tile_size=8)
+        # Single biome name, but biome_id values 0..5 — must not crash.
+        biome = np.full((9, 9), 5, dtype=np.int32)
+        stack.set("biome_id", biome, "test")
+
+        # biome_names length 1 -> clamp(5, 0, 0) -> index 0 -> bucket 5.
+        result = compute_macro_color(
+            stack, biome_names=["frozen_hollows"]
+        )
+        # Should produce snowcap-bright output, NOT default umber.
+        assert float(result.mean()) > 0.4
+
+    def test_pass_macro_color_metric_records_remap_applied(self) -> None:
+        """PassResult.metrics surfaces whether the bucket remap ran —
+        helps debugging stack states post-PR #55."""
+        stack = _build_stack(tile_size=16)
+        biome = np.zeros((17, 17), dtype=np.int32)
+        stack.set("biome_id", biome, "test")
+        setattr(stack, "biome_names", ["thornwood_forest"])
+
+        state = _build_state(stack)
+        result = pass_macro_color(state, region=None)
+        assert result.metrics.get("biome_bucket_remap_applied") is True
+
+    def test_pass_macro_color_metric_records_remap_skipped(self) -> None:
+        """When no biome_names is available, metric records the legacy
+        path — biome_id is used as raw palette index."""
+        stack = _build_stack(tile_size=16)
+        biome = np.zeros((17, 17), dtype=np.int32)
+        stack.set("biome_id", biome, "test")
+        # No biome_names attribute on the stack.
+
+        state = _build_state(stack)
+        result = pass_macro_color(state, region=None)
+        assert result.metrics.get("biome_bucket_remap_applied") is False
+
+    def test_biome_channels_pass_stamps_biome_names(self) -> None:
+        """Integration: the upstream producer must publish biome_names
+        onto the stack so macro_color (and other consumers) can find it."""
+        from veilbreakers_terrain.handlers.terrain_pipeline import (
+            pass_compute_biome_channels,
+        )
+
+        stack = _build_stack(tile_size=16)
+        state = _build_state(stack)
+        pass_compute_biome_channels(state, region=None)
+        names = getattr(stack, "biome_names", None)
+        assert names is not None, (
+            "pass_compute_biome_channels must stamp stack.biome_names "
+            "(PR #55 review fix — required by macro_color bucket remap)"
+        )
+        assert isinstance(names, list)
+        assert all(isinstance(n, str) for n in names)
+        # Every emitted name must be canonical / in the bucket map (no
+        # silent fall-through to default umber for default tiles).
+        for nm in names:
+            assert nm in BIOME_BUCKET_MAP_18_TO_14, (
+                f"biome_names entry '{nm}' is not in "
+                f"BIOME_BUCKET_MAP_18_TO_14 — would silently fall back "
+                f"to DEFAULT_BIOME_ID at macro_color time."
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover

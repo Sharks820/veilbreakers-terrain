@@ -16,11 +16,29 @@ Phase C D28-29 (spec PR #31 + #32):
 
     PR #32 — ``DARK_FANTASY_PALETTE`` widened from biome IDs 0-7 to the full
         14-bucket palette (IDs 0-13) used at macro_color generation time.
-        The 14 palette buckets are *render-time* biome IDs (consumed from
-        ``biome_id`` channel) — distinct from the 18 canonical narrative
-        biome names in ``terrain_biome_registry.CANONICAL_BIOME_IDS``.
-        See ``BIOME_BUCKET_MAP_18_TO_14`` below for the canonical ID →
+        The 14 palette buckets are *render-time* biome IDs — distinct from
+        the 18 canonical narrative biome names in
+        ``terrain_biome_registry.CANONICAL_BIOME_IDS``. See
+        ``BIOME_BUCKET_MAP_18_TO_14`` below for the canonical name →
         palette bucket lookup.
+
+    PR #55 review fix (threads #1 / #4 — Codex + Copilot):
+        ``stack.biome_id`` from ``pass_compute_biome_channels`` stores
+        Voronoi-cell indices in ``[0, biome_count)`` — i.e. positions in
+        ``spec.biome_names`` — NOT canonical palette bucket IDs in
+        ``[0, 14)``. Without translation, a default tile whose Voronoi
+        cell 0 maps to ``thornwood_forest`` paints with palette bucket 0
+        (umber/lowland_earth) instead of bucket 1 (forest mossy green),
+        and 18-biome runs silently fall through for cells 14-17.
+
+        Fix: ``pass_compute_biome_channels`` now stamps
+        ``stack.biome_names`` (the ordered Voronoi-index list) onto the
+        stack alongside ``biome_id``. ``compute_macro_color`` builds an
+        int32 LUT via ``_build_voronoi_to_bucket_lut`` to translate each
+        cell's Voronoi index → canonical biome name → palette bucket
+        before lookup. When ``biome_names`` is absent (legacy direct-call
+        tests), ``biome_id`` is interpreted as already-bucketed for
+        backwards compat.
 
 User-task ambiguity reconciliation (2026-05-08):
     The Phase C task brief described "macro_color expand to 8-channel output
@@ -36,7 +54,7 @@ User-task ambiguity reconciliation (2026-05-08):
 from __future__ import annotations
 
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -94,6 +112,15 @@ DEFAULT_BIOME_ID = 0
 # the rocky_slope/weathered-stone macro tone).
 #
 # Bucket indices match ``DARK_FANTASY_PALETTE`` keys 0..13.
+#
+# IMPORTANT (PR #55 review): the lookup is by canonical NAME, not by raw
+# numeric ``biome_id``. ``stack.biome_id`` holds Voronoi-cell indices in
+# ``[0, biome_count)``, which are positions in ``stack.biome_names``. The
+# translation chain is:
+#     biome_names[stack.biome_id[r, c]]  ->  BIOME_BUCKET_MAP_18_TO_14  ->
+#     DARK_FANTASY_PALETTE[bucket]
+# ``compute_macro_color`` builds this as an int32 LUT once per call — see
+# ``_build_voronoi_to_bucket_lut`` below.
 BIOME_BUCKET_MAP_18_TO_14: Dict[str, int] = {
     # Lowland / earth (bucket 0 — umber)
     "battlefield":        0,
@@ -132,6 +159,45 @@ BIOME_BUCKET_MAP_18_TO_14: Dict[str, int] = {
     # Crystal cavern (bucket 13 — pale ashen — exotic light source neutral)
     "crystal_cavern":     13,
 }
+
+
+def _build_voronoi_to_bucket_lut(
+    biome_names: Optional[Sequence[str]],
+) -> Optional[np.ndarray]:
+    """Return an int32 LUT mapping Voronoi-cell index -> 14-palette bucket.
+
+    PR #55 review fix (threads #1 / #4 — Codex + Copilot):
+
+    ``stack.biome_id`` stores Voronoi-cell indices in [0, biome_count) — these
+    are positions in ``spec.biome_names``, NOT canonical palette bucket IDs in
+    [0, 14). Without translation, a default tile whose Voronoi cell 0 maps to
+    ``thornwood_forest`` paints with palette bucket 0 (umber/lowland_earth)
+    instead of bucket 1 (forest mossy green). Worse, an 18-biome run's IDs
+    14-17 silently fall through to the default.
+
+    The LUT translates by canonical name: ``biome_names[i]`` -> bucket via
+    ``BIOME_BUCKET_MAP_18_TO_14``. Cells whose canonical name is missing from
+    the bucket map fall back to ``DEFAULT_BIOME_ID``. Returns ``None`` when
+    no name list is available (callers then use the legacy raw-id path —
+    this preserves backwards compat for tests / call sites that set
+    ``biome_id`` directly to palette bucket indices).
+    """
+    if biome_names is None:
+        return None
+    try:
+        names_list: List[str] = [str(n) for n in biome_names]
+    except (TypeError, ValueError):
+        return None
+    if not names_list:
+        return None
+    lut = np.empty(len(names_list), dtype=np.int32)
+    for i, nm in enumerate(names_list):
+        bucket = BIOME_BUCKET_MAP_18_TO_14.get(nm)
+        if bucket is None:
+            # Unknown / non-canonical biome name -> fall back to umber.
+            bucket = DEFAULT_BIOME_ID
+        lut[i] = int(bucket)
+    return lut
 
 
 def _resolve_palette(palette: Optional[Dict]) -> Dict[int, Tuple[float, float, float]]:
@@ -211,11 +277,26 @@ def _resolve_strata_color_map(stack: TerrainMaskStack) -> Optional[np.ndarray]:
 def compute_macro_color(
     stack: TerrainMaskStack,
     palette: Optional[Dict] = None,
+    biome_names: Optional[Sequence[str]] = None,
 ) -> np.ndarray:
     """Return (H, W, 3) float32 macro-color map.
 
+    Args:
+        stack: Mask stack with ``height`` (required) and the soft-read
+            channels listed in ``MACRO_COLOR_CONSUMED_CHANNELS``.
+        palette: Optional override for ``DARK_FANTASY_PALETTE``.
+        biome_names: Ordered list of canonical biome names matching the
+            Voronoi indices stored in ``stack.biome_id`` (i.e.
+            ``biome_names[stack.biome_id[r, c]]`` is the canonical name of
+            the biome at cell (r, c)). When provided, the per-cell ID is
+            translated through ``BIOME_BUCKET_MAP_18_TO_14`` to the 14-bucket
+            render palette. When omitted, ``stack.biome_names`` is consulted
+            (set by ``pass_compute_biome_channels``); failing that, ``biome_id``
+            values are interpreted as already-bucketed palette indices —
+            preserving the legacy contract used by direct-call tests.
+
     Blend model:
-        base = palette[biome_id]
+        base = palette[bucket(biome_id)]
         darken for wetness (wet ground darker)
         blue-shift for snow_line_factor (when altitude crosses snow line)
         altitude gradient: higher = slightly cooler/desaturated
@@ -239,8 +320,25 @@ def compute_macro_color(
     color[:] = default_rgb.reshape(1, 1, 3)
     if biome is not None:
         biome_arr = np.asarray(biome).astype(np.int32, copy=False)
+        # PR #55 review fix (threads #1 / #4): translate Voronoi-index
+        # biome_id -> 14-bucket palette index when a biome_names list is
+        # available (either passed in or stamped onto the stack by
+        # pass_compute_biome_channels). Falls back to raw biome_id values
+        # when no names list is available — preserves the legacy contract
+        # for tests that set biome_id directly to palette bucket indices.
+        names_for_lut: Optional[Sequence[str]] = biome_names
+        if names_for_lut is None:
+            names_for_lut = getattr(stack, "biome_names", None)
+        lut = _build_voronoi_to_bucket_lut(names_for_lut)
+        if lut is not None:
+            # Clamp out-of-range Voronoi indices to default bucket (defends
+            # against biome_id values >= len(biome_names)).
+            clamped = np.clip(biome_arr, 0, len(lut) - 1)
+            bucket_arr = lut[clamped].astype(np.int32, copy=False)
+        else:
+            bucket_arr = biome_arr
         for bid, rgb in pal.items():
-            mask = biome_arr == bid
+            mask = bucket_arr == bid
             if np.any(mask):
                 color[mask] = np.array(rgb, dtype=np.float64)
 
@@ -344,8 +442,13 @@ def pass_macro_color(
 
     hints = state.intent.composition_hints if state.intent else {}
     palette = hints.get("macro_color_palette")
+    # PR #55 review fix (threads #1 / #4): pull biome_names off the stack
+    # (stamped by pass_compute_biome_channels) so the Voronoi-index ->
+    # 14-bucket palette translation runs. Falls back to None when absent
+    # (legacy direct-call sites that set biome_id to palette indices).
+    biome_names = getattr(stack, "biome_names", None)
 
-    color = compute_macro_color(stack, palette=palette)
+    color = compute_macro_color(stack, palette=palette, biome_names=biome_names)
     stack.set("macro_color", color, "macro_color")
 
     return PassResult(
@@ -364,6 +467,7 @@ def pass_macro_color(
             "strata_palette_applied": bool(
                 _resolve_strata_color_map(stack) is not None
             ),
+            "biome_bucket_remap_applied": bool(biome_names is not None),
         },
         issues=[],
     )
@@ -411,6 +515,7 @@ __all__ = [
     "MACRO_COLOR_CONSUMED_CHANNELS",
     "PALETTE_BUCKET_COUNT",
     "compute_macro_color",
+    "_build_voronoi_to_bucket_lut",
     "_resolve_strata_color_map",
     "pass_macro_color",
     "register_bundle_k_macro_color_pass",
