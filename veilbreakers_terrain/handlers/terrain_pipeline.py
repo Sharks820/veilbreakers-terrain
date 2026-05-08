@@ -1860,10 +1860,11 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_terrain_label_passes()
     # Phase C D30-32 (Issue #27) — structural label-stamping. Optional in the
     # default sequence (gated by composition_hints["label_stamping"]) so
-    # existing fixtures stay byte-identical. Registered here so build_default_pass_sequence
-    # can refer to it when the hint is set.
-    from .terrain_labels import register_pass_label_stamping
-    register_pass_label_stamping()
+    # existing fixtures stay byte-identical. Registered here directly via the
+    # canonical PassDefinition so terrain_labels does NOT have to import
+    # terrain_pipeline (avoids the static CodeQL cycle).
+    from .terrain_labels import label_stamping_pass_definition
+    TerrainPassController.register_pass(label_stamping_pass_definition())
     register_snow_line_pass()
     from ._biome_grammar import register_biome_surface_features_pass
     register_biome_surface_features_pass()

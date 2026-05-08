@@ -562,47 +562,62 @@ def pass_label_stamping(
     )
 
 
+def label_stamping_pass_definition() -> PassDefinition:
+    """Return the canonical PassDefinition for label_stamping.
+
+    Built without importing terrain_pipeline so this module has zero
+    dependency on the pipeline (PassDefinition lives in terrain_semantics).
+    The pipeline is the registration broker — it imports this constructor
+    and calls TerrainPassController.register_pass() itself.
+    """
+    return PassDefinition(
+        name="label_stamping",
+        func=pass_label_stamping,
+        requires_channels=("height",),
+        optional_channels=("slope", "curvature", "biome_id", "water_surface_mask"),
+        produces_channels=(
+            "rock_label",
+            "gravel_label",
+            "water_label",
+            "cliff_label",
+        ),
+        # The four legacy label channels are also produced (initialised
+        # to zeros) by ``pass_compute_terrain_labels`` — declare overrides
+        # so the DAG accepts the dual writer relationship.
+        overrides=(
+            "rock_label",
+            "gravel_label",
+            "water_label",
+            "cliff_label",
+        ),
+        seed_namespace="label_stamping",
+        requires_scene_read=False,
+        may_modify_geometry=False,
+        description=(
+            "Phase C D30-32: watersheds slope+curvature+biome+water "
+            "into structural regions and stamps the four legacy "
+            "material labels per region. Publishes a LabelStack on "
+            "stack.label_stack for downstream texturing/scatter."
+        ),
+    )
+
+
 def register_pass_label_stamping() -> None:
     """Register ``pass_label_stamping`` on the TerrainPassController.
 
     Idempotent — safe to call multiple times (the controller upserts on
     duplicate name).
+
+    NOTE: This function imports terrain_pipeline lazily, which is why the
+    static cycle was historically unavoidable. Callers who want to fully
+    avoid the cycle (e.g. terrain_pipeline.register_default_passes) should
+    instead call ``label_stamping_pass_definition()`` and register it on
+    their own controller — see that function's docstring.
     """
     # Local import to avoid module-load-time circular dependency.
     from .terrain_pipeline import TerrainPassController
 
-    TerrainPassController.register_pass(
-        PassDefinition(
-            name="label_stamping",
-            func=pass_label_stamping,
-            requires_channels=("height",),
-            optional_channels=("slope", "curvature", "biome_id", "water_surface_mask"),
-            produces_channels=(
-                "rock_label",
-                "gravel_label",
-                "water_label",
-                "cliff_label",
-            ),
-            # The four legacy label channels are also produced (initialised
-            # to zeros) by ``pass_compute_terrain_labels`` — declare overrides
-            # so the DAG accepts the dual writer relationship.
-            overrides=(
-                "rock_label",
-                "gravel_label",
-                "water_label",
-                "cliff_label",
-            ),
-            seed_namespace="label_stamping",
-            requires_scene_read=False,
-            may_modify_geometry=False,
-            description=(
-                "Phase C D30-32: watersheds slope+curvature+biome+water "
-                "into structural regions and stamps the four legacy "
-                "material labels per region. Publishes a LabelStack on "
-                "stack.label_stack for downstream texturing/scatter."
-            ),
-        )
-    )
+    TerrainPassController.register_pass(label_stamping_pass_definition())
 
 
 __all__ = [
