@@ -27,6 +27,14 @@ from .terrain_semantics import (
     ValidationIssue,
 )
 from .terrain_chunking import build_tile_seam_contract
+from .terrain_unity_backends import (
+    AtmosphericManifest,
+    SkyManifest,
+    UnityExportConfig,
+    UpscalerManifest,
+    WaterSurfaceManifest,
+    build_unity_urp_manifest_section,
+)
 from .terrain_unity_export_contracts import (
     UnityExportContract,
     validate_bit_depth_contract,
@@ -665,23 +673,24 @@ def _flip_normal_y(normal_arr: np.ndarray) -> np.ndarray:
     return result
 
 
-def _pack_hdrp_mask_map(
+def _pack_material_mask_map(
     metallic: np.ndarray,
     ao: np.ndarray,
     detail_mask: np.ndarray,
     smoothness: np.ndarray,
 ) -> np.ndarray:
-    """Pack HDRP Terrain Lit Mask Map: R=Metallic, G=AO, B=Detail, A=Smoothness.
+    """Pack Unity Terrain Lit Mask Map: R=Metallic, G=AO, B=Detail, A=Smoothness.
 
-    Unity HDRP's Terrain Lit shader expects a single "Mask Map" texture that
-    packs four material channels into RGBA following the HDRP convention:
+    Unity's Terrain Lit shader (used identically by both URP 17 and HDRP 17)
+    expects a single "Mask Map" texture that packs four material channels
+    into RGBA following the Unity Terrain Lit convention:
 
         R = Metallic     (0 = non-metallic, 1 = fully metallic)
         G = AO           (0 = fully occluded, 1 = no occlusion)
         B = Detail Mask  (0 = no detail layer, 1 = full detail)
         A = Smoothness   (0 = fully rough, 1 = mirror smooth)
 
-    Note: HDRP Terrain Lit uses *smoothness* in A, not roughness.  Convert
+    Note: Terrain Lit uses *smoothness* in A, not roughness.  Convert
     roughness → smoothness as ``smoothness = 1 - roughness`` before passing.
 
     All input arrays are broadcast-safe: scalar, (H, W), or (H, W, 1) shapes
@@ -721,6 +730,13 @@ def _pack_hdrp_mask_map(
     mask[..., 2] = np.broadcast_to(d, (h, w))
     mask[..., 3] = np.broadcast_to(s, (h, w))
     return mask
+
+
+# Phase D1 — backwards-compat alias for callers that still import the old
+# HDRP-tied name.  Both URP 17 and HDRP 17 Terrain Lit use the identical
+# RGBA pack convention (R=Metallic, G=AO, B=Detail, A=Smoothness), so the
+# rename to ``_pack_material_mask_map`` is purely cosmetic at the API level.
+_pack_hdrp_mask_map = _pack_material_mask_map
 
 
 def _write_raw_array(
@@ -1971,6 +1987,11 @@ def export_unity_manifest(
     *,
     strict_unity_resolution: bool = True,
     fail_on_validation_error: bool = True,
+    unity_export_config: Optional[UnityExportConfig] = None,
+    water_manifest: Optional[WaterSurfaceManifest] = None,
+    sky_manifest: Optional[SkyManifest] = None,
+    atmospheric_manifest: Optional[AtmosphericManifest] = None,
+    upscaler_manifest: Optional[UpscalerManifest] = None,
 ) -> Dict[str, Any]:
     """Write a Unity-consumable export bundle to ``output_dir``.
 
@@ -1978,7 +1999,16 @@ def export_unity_manifest(
     a descriptive error rather than a cryptic AttributeError mid-export.
     Required: height, tile_x, tile_y, tile_size, cell_size, world_origin_x,
     world_origin_y. Missing fields raise ValueError listing all absent fields.
+
+    Phase D1 — ``unity_export_config`` controls bake-side URP knobs (default
+    is :attr:`UnityExportConfig.DEFAULT` = 8GB ship config, FREE URP backends).
+    The four backend manifests (water/sky/atmospheric/upscaler) default to
+    their FREE URP backend with neutral parameters; callers can override any
+    slot to lock a different backend or specific tuning.  All four are
+    written under the ``unity_urp`` top-level manifest key.
     """
+    if unity_export_config is None:
+        unity_export_config = UnityExportConfig()
     # --- Required field validation ---
     missing: List[str] = []
     for field_name in _MANIFEST_REQUIRED_FIELDS:
@@ -2083,7 +2113,7 @@ def export_unity_manifest(
         # Written above as dedicated files
         "height", "heightmap_raw_u16", "terrain_normals", "terrain_normals_tangent",
         "splatmap_weights_layer", "material_weights",
-        "terrain_ao", "roughness_variation",  # packed into hdrp_mask_map
+        "terrain_ao", "roughness_variation",  # packed into material_mask_map
         # Dict-valued channels exported by their own loops below
         "detail_density", "wildlife_affinity", "decal_density",
         # Non-array metadata fields
@@ -2140,10 +2170,14 @@ def export_unity_manifest(
         )
 
     # ---------------------------------------------------------------------- #
-    # HDRP Mask Map: pack Metallic/AO/DetailMask/Smoothness into a single
-    # RGBA texture (R=Metallic, G=AO, B=Detail, A=Smoothness) for the
-    # HDRP Terrain Lit shader.  Only written when at least one source channel
-    # (terrain_ao or roughness_variation) is present on the stack.
+    # Material Mask Map: pack Metallic/AO/DetailMask/Smoothness into a single
+    # RGBA texture (R=Metallic, G=AO, B=Detail, A=Smoothness) for the Unity
+    # Terrain Lit shader (the same RGBA pack convention is used by both URP
+    # 17 and HDRP 17).  Only written when at least one source channel
+    # (terrain_ao or roughness_variation) is present on the stack.  When
+    # ``unity_export_config.legacy_hdrp_filename`` is True we additionally
+    # emit ``hdrp_mask_map.raw`` (byte-identical) so legacy Unity scenes that
+    # still bind the old filename keep working — backwards-compat shim.
     # ---------------------------------------------------------------------- #
     _terrain_ao = stack.get("terrain_ao")
     _roughness_var = stack.get("roughness_variation")
@@ -2175,7 +2209,7 @@ def export_unity_manifest(
         else:
             _smoothness_map = np.full((_h, _w), 0.5, dtype=np.float32)
 
-        _mask_map = _pack_hdrp_mask_map(
+        _mask_map = _pack_material_mask_map(
             _metallic_map, _ao_map, _detail_map, _smoothness_map
         )
         # Quantise to uint8 for compact storage (Unity imports as RGBA32)
@@ -2183,16 +2217,33 @@ def export_unity_manifest(
         _write_raw_array(
             files,
             output_dir,
-            filename="hdrp_mask_map.raw",
-            channel="hdrp_mask_map",
+            filename="material_mask_map.raw",
+            channel="material_mask_map",
             arr=_mask_map_u8,
-            encoding="raw_rgba_u8_hdrp_mask",
+            encoding="raw_rgba_u8_material_mask",
             extra={
                 "channels": 4,
                 "channel_layout": "R=Metallic,G=AO,B=Detail,A=Smoothness",
-                "hdrp_mask_map": True,
+                "material_mask_map": True,
             },
         )
+        # Phase D1 — opt-in legacy filename: byte-identical copy under the
+        # old hdrp_mask_map.raw name so existing Unity scenes keep working.
+        if unity_export_config.legacy_hdrp_filename:
+            _write_raw_array(
+                files,
+                output_dir,
+                filename="hdrp_mask_map.raw",
+                channel="hdrp_mask_map",
+                arr=_mask_map_u8,
+                encoding="raw_rgba_u8_material_mask",
+                extra={
+                    "channels": 4,
+                    "channel_layout": "R=Metallic,G=AO,B=Detail,A=Smoothness",
+                    "hdrp_mask_map": True,
+                    "legacy_alias_of": "material_mask_map.raw",
+                },
+            )
 
     detail_files: Dict[str, str] = {}
     if stack.detail_density:
@@ -2538,6 +2589,19 @@ def export_unity_manifest(
     manifest["probe_placements_file"] = "probe_placements.json"
     manifest["foliage_placement_manifest_file"] = "foliage_placement_manifest.json"
     manifest["mesh_attributes_present"] = present_mesh_attributes
+
+    # Phase D1 — backend-agnostic URP block.  Defaults are FREE URP backends
+    # selected for the 8GB ship config; callers can pass overridden manifest
+    # dataclasses to lock specific backend tuning.  The schema is versioned
+    # and includes per-backend ``upgrade_compat`` arrays so swapping to e.g.
+    # Stylized Water 2 needs only a new C# adapter, no bake-side change.
+    manifest["unity_urp"] = build_unity_urp_manifest_section(
+        config=unity_export_config,
+        water=water_manifest,
+        sky=sky_manifest,
+        atmospheric=atmospheric_manifest,
+        upscaler=upscaler_manifest,
+    )
     validation_issues = validate_bit_depth_contract(UnityExportContract(), files)
     validation_issues.extend(validate_mesh_attributes_present(present_mesh_attributes))
     water_contract_channels = (
@@ -3220,5 +3284,14 @@ __all__ = [
     "UNITY_SCALE_FACTOR",
     "_apply_unity_scale",
     "_flip_normal_y",
+    "_pack_material_mask_map",
+    # Phase D1 — backwards-compat alias; legacy callers still use this name.
     "_pack_hdrp_mask_map",
+    # Phase D1 — backend-agnostic URP manifest schema.
+    "UnityExportConfig",
+    "WaterSurfaceManifest",
+    "SkyManifest",
+    "AtmosphericManifest",
+    "UpscalerManifest",
+    "build_unity_urp_manifest_section",
 ]
