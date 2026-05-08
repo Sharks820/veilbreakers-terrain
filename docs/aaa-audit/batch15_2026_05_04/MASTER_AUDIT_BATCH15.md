@@ -88,10 +88,10 @@ Default `water_surface_channel="water_surface"`. Computes `depth = ws - height`.
 When `L > 4`, layers 5+ are zeroed per cell, then the top 4 re-normalized. This silently inflates survivors and destroys authored biome transitions. The export already writes N RGBA groups — truncation is wrong.
 **Fix:** Remove the `L > 4` truncation block. Pack all layers across `splatmap_NN.raw` groups per their full assignment.
 
-#### B15-P0-08 — Hydraulic mass leak (75% loss at boundaries)
+#### B15-P0-08 — Hydraulic mass leak (75% loss at boundaries) ✅ FIXED via PR #38 + PR #40 hotfix (Phase A D12-13 + D15.5)
 **File:** `_terrain_erosion.py:354,385,472-487` | **Scan:** 02
 Droplets that exit the tile boundary drop their full sediment payload. Mock test: 64×64 pyramid, 2000 droplets → `total_erosion=7647.6, total_deposition=1885.6, mass_change=-5762 (75% loss)`. Inter-tile drift: leaked sediment is gone permanently.
-**Fix:** Before any boundary-exit `break`, re-deposit `sediment` at the last in-bounds cell using bilinear logic.
+**Fix:** Before any boundary-exit `break`, re-deposit `sediment` at the last in-bounds cell using bilinear logic. Phase A D15.5 hotfix closed the end-of-lifetime mass leak via for-else clause. V2 adversarial verifier confirms 0% mass leak on gentle ramp.
 
 #### B15-P0-09 — `compute_stream_power_erosion` is unused by `pass_erosion`
 **File:** `_terrain_world.py:1167`, `_terrain_erosion.py:916` | **Scan:** 02
@@ -133,12 +133,12 @@ For 1024×1024 tile: ~1 TB transient memory. Each `_apply_*` function allocates 
 Docstring claims: "validates that every registered vantage→feature ray is actually clear." Implementation only checks that pair metrics were *recorded*. A pair with `max_cut_m=0` (blocked, carver did nothing) passes the gate.
 **Fix:** Re-sample post-carve heights along each pair's Bresenham line and verify `h <= ray_z - clearance_m`.
 
-#### B15-P0-17 — Stratigraphy `bedrock_height` computed pre-integration
+#### B15-P0-17 — Stratigraphy `bedrock_height` computed pre-integration ✅ FIXED via PR #39 (Phase A D14-15, GATE D15)
 **File:** `terrain_stratigraphy.py:1078-1080` | **Scan:** 02
 `bedrock_height = height - sediment_height` is written BEFORE the delta integrator applies `strat_erosion_delta`. Any consumer reading `bedrock_height` between the two passes sees pre-integration height.
 **Fix:** Move `bedrock_height` computation to after the integrator pass, or make it a derived channel computed lazily.
 
-#### B15-P0-18 — `apply_differential_erosion.hardness_above` shifts Y-axis not gravity-up Z
+#### B15-P0-18 — `apply_differential_erosion.hardness_above` shifts Y-axis not gravity-up Z ✅ FIXED via PR #39 (Phase A D14-15, GATE D15)
 **File:** `terrain_stratigraphy.py:368` | **Scan:** 02
 `hardness_above = np.pad(hardness, ((0,1),(0,0)), mode="edge")[1:]` — shifts in the row direction (Y on heightmap grid), not vertical Z. For horizontal-bedded mesas with hard caprock above soft shale, undercutting is zero.
 **Fix:** Lookup hardness at `elevation - 1m` directly from the layer table.
@@ -153,7 +153,7 @@ Volcanic biomes have flat lava plains. Lava pass exists but generates no height 
 Every horizon profile appended as `tolist()` (360 floats × ~5 vantages = ~14KB per tile). PassResult metrics are designed for small key-value summaries. Multiplied across N tiles in determinism replay → report balloons to many MB.
 **Fix:** Replace arrays with `mean, min, max, sample_count` only.
 
-#### B15-P0-21 — `pass_horizon_lod` primary registration missing `overrides` for `horizon_elevation_angles`
+#### B15-P0-21 — `pass_horizon_lod` primary registration missing `overrides` for `horizon_elevation_angles` ✅ FIXED via PR #39 (Phase A D14-15, GATE D15)
 **File:** `terrain_horizon_lod.py:344-353` | **Scan:** 06
 Secondary alias `"pass_horizon_lod"` has `overrides`, but primary `"horizon_lod"` does not. If any other pass touches `horizon_elevation_angles` first, the bundle is silently dropped per `ChannelOwnershipError`.
 **Fix:** Add `overrides=("lod_bias", "horizon_elevation_angles")` to the primary registration.
