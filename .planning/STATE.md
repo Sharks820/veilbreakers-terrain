@@ -3,21 +3,21 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-stopped_at: Phase B in flight (D24/D25 remaining)
-last_updated: "2026-05-08T07:30:00.000Z"
+stopped_at: Phase B + Phase D pre-work complete; Phase C/D-Unity-ingestion/E remaining
+last_updated: "2026-05-08T15:30:00.000Z"
 progress:
   total_phases: 8
   completed_phases: 6
   total_plans: 27
-  completed_plans: 20
-  percent: 74
+  completed_plans: 24
+  percent: 88
 ---
 
 # Project State
 
 **Project:** VeilBreakers Terrain Generator
 **Last Updated:** 2026-05-08
-**Status:** Active — Phase A complete (V1+V2 GO 2026-05-08); Phase B in flight (D24/D25 remaining)
+**Status:** Active — Phase A complete (V1+V2 GO 2026-05-08); Phase B complete (7 PRs merged 2026-05-08); Phase D pre-work complete (#48/#49/#50 merged 2026-05-08); Phase C / Phase D Unity ingestion / Phase E remaining
 
 ## §17 60-Day Plan Progress (Phase A-E)
 
@@ -34,21 +34,34 @@ progress:
 
 **Phase A V1+V2 verifiers (2026-05-08):** BOTH GO. Compliance/breadth + adversarial/quality converged.
 
-### Phase B (D16-25) — Determinism, RNG migration, splat truncation ⚙️ IN PROGRESS
+### Phase B (D16-25) — Determinism, RNG migration, splat truncation ✅ COMPLETE 2026-05-08
 
 | Day | Item | PR | Status |
 |-----|------|----|--------|
-| D17-18 | chunk_seed BLAKE2b + Bug-A unification | #41 | ✅ MERGED |
-| D19 (Bug-E) | terrain_features.py 14 RNG sites → derive_pass_seed | #42 | ⚙️ OPEN, auto-merge enabled |
-| D20-22 | Bulk RNG migration 32 sites / 12 files | #43 | ⚙️ OPEN, auto-merge enabled |
-| D23 | 6 hash hazards → derive_pass_seed | #44 | ✅ MERGED |
-| D24 | Atomic manifest writes + NaN/Inf assertions | TBD | ⚙️ Implementation in flight (subagent) |
-| D25 + GATE D25 | B15-P0-07 splatmap L>4 truncation + subprocess-determinism CI matrix | TBD | ⚙️ Implementation in flight (subagent) |
+| D17-18 | chunk_seed BLAKE2b + Bug-A unification | #41 | ✅ MERGED 2026-05-08T07:21:58Z (`4e12f50`) |
+| D19 (Bug-E) | terrain_features.py 14 RNG sites → derive_pass_seed | #42 | ✅ MERGED 2026-05-08T08:11:53Z (`795ace6`) |
+| D20-22 | Bulk RNG migration 32 sites / 12 files | #43 | ✅ MERGED 2026-05-08T08:37:53Z (`c922d1f`) |
+| D23 | 6 hash hazards → derive_pass_seed | #44 | ✅ MERGED 2026-05-08T05:33:11Z (`5185137`) |
+| Phase B doc marker | §17 plan Phase A complete + Phase B in-flight markers | #45 | ✅ MERGED 2026-05-08T09:05:51Z (`1638e76`) |
+| D24 | Atomic manifest writes + NaN/Inf runtime assertions | #47 | ✅ MERGED 2026-05-08T10:17:02Z (`3aa0221`) |
+| D25 + GATE D25 | B15-P0-07 splatmap L>4 truncation + subprocess-determinism CI matrix (18-cell) | #46 | ✅ MERGED 2026-05-08T10:46:16Z (`a05067f`) |
+
+**Phase B V1+V2 verifiers (2026-05-08):** BOTH GO. Compliance/breadth + adversarial/quality converged.
+
+### Phase D pre-work (D1-D3 plug-and-play backend abstraction) ✅ COMPLETE 2026-05-08
+
+| Day | Item | PR | Status |
+|-----|------|----|--------|
+| D1 | Backend-agnostic URP manifest schema + plug-and-play backends (bake-side dataclasses) | #49 | ✅ MERGED 2026-05-08T14:25:11Z (`e97ae1c`) |
+| D2 | Rewrite IMPLEMENTATION_FIX_GUIDE for URP commitment + plug-and-play (§17 + §X) | #50 | ✅ MERGED 2026-05-08T15:16:24Z (`694409e`) |
+| D3 | URP_BACKEND_ABSTRACTION.md — plug-and-play architecture spec (canonical design doc) | #48 | ✅ MERGED 2026-05-08T14:54:26Z (`92ee8e2`) |
+
+**Phase D pre-work V1/V2/VA/VB/VC/VD verifiers (2026-05-08):** consolidated 10 doc-drift findings, addressed in Hardening PR A. The four user decisions blocking Phase D are now made: Boat Attack water / skybox cubemap / URP Fog Volume + cards / **STP 1.0 + FSR 1.0** native upscaler (NOT FSR 3.1 — that is the v1.1 external-package swap).
 
 ### Phase C-E
 
 - Phase C (D26-35): orphan-pass wiring + label-stamping + stream cap. NOT STARTED.
-- Phase D (D36-45): Unity ingestion + Block 5a visual gate. **BLOCKED BY 4 USER DECISIONS** (water/clouds/fog/upscaler) for HDRP→URP rewrite.
+- Phase D Unity ingestion (D36-45): Unity 6.3 + URP 17.3 bootstrap + Block 5a visual gate. Pre-work (D1-D3) complete; Unity-side ingestion remaining.
 - Phase E (D46-60): Performance, atmosphere, audio, hero render. NOT STARTED.
 
 ## Mandatory Pre-Push Verifier Workflow
@@ -86,8 +99,8 @@ Before EVERY push, run all 4 local gates:
 ## Test Baseline (last verified)
 
 - **Tests passing:** 3,667 / 0 failed (after FIX_ORDER_CODEX sweep)
-- **Branch:** docs/biome-render-rebuild-spec (current working branch)
-- **Main HEAD:** `5185137` (PR #44 merge) — pending PR #41 squash merge as of 2026-05-08T07:21:58Z
+- **Branch:** docs/phase-d-hardening-doc-drift (current working branch — Hardening PR A)
+- **Main HEAD:** `694409e` (PR #50 merge — Phase D pre-work D2) as of 2026-05-08T15:16:24Z. Earlier same-day Phase B/D merges: #41 `4e12f50`, #42 `795ace6`, #43 `c922d1f`, #44 `5185137`, #45 `1638e76`, #46 `a05067f`, #47 `3aa0221`, #48 `92ee8e2`, #49 `e97ae1c`.
 
 ## Phase 14 Legacy Session (2026-04-19, preserved)
 

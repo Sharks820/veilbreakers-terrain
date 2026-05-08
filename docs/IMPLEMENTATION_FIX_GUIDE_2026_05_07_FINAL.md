@@ -630,13 +630,20 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 
 **Phase A V1+V2 verifier convergence (2026-05-08):** GO. Both compliance/breadth and adversarial/quality verifiers pass on origin/main HEAD `454f3af`.
 
-### PHASE B (Days 16-25) — Determinism, RNG migration, manifest atomicity, splat truncation ⚙️ IN PROGRESS
+### PHASE B (Days 16-25) — Determinism, RNG migration, manifest atomicity, splat truncation ✅ COMPLETE 2026-05-08
 - **D16:** PR #9 vectorize road SDF via scipy EDT. ✅ DONE via PR #34.
-- **D17-18:** PR #15.5 + #14 chunk_seed module + derive_pass_seed unification across `terrain_rng` ↔ `terrain_pipeline`. ⚙️ PR #41 OPEN — auto-merge enabled, all 4 local pre-push gates clean.
-- **D19-22:** PR #18 RNG migration — 179 sites (100 production + 79 test) replace `random.Random(seed)` with `derive_pass_seed`. XL parallel job. ⚙️ Bug-E (14 sites in terrain_features.py) PR #42 OPEN — auto-merge enabled. Bulk migration (32 sites / 12 files) PR #43 OPEN — auto-merge enabled. All 4 local gates clean on both.
-- **D23:** PR #15 4 hash hazards. ✅ DONE via PR #44 (6 sites — spec said 4, found 6).
-- **D24:** PR #12 atomic manifest + descriptor write + #13 NaN/Inf assertions. ⚙️ Implementation in flight (D24 worktree, fresh).
-- **D25:** B15-P0-07 splatmap L>4 truncation. **GATE D25** = subprocess-determinism CI matrix passes 18/18 (3 OS × 3 Py × 2 seed-seq). ⚙️ Implementation in flight (D25 worktree, fresh).
+- **D17-18:** PR #15.5 + #14 chunk_seed module + derive_pass_seed unification across `terrain_rng` ↔ `terrain_pipeline`. ✅ DONE via PR #41 merge `4e12f50` (2026-05-08T07:21:58Z). All 4 local pre-push gates clean at merge.
+- **D19-22:** PR #18 RNG migration — 179 sites (100 production + 79 test) replace `random.Random(seed)` with `derive_pass_seed`. XL parallel job split into two PRs. ✅ DONE via PR #42 merge `795ace6` (Bug-E — 14 sites in terrain_features.py, 2026-05-08T08:11:53Z) + PR #43 merge `c922d1f` (bulk 32 sites / 12 files, 2026-05-08T08:37:53Z).
+- **D23:** PR #15 4 hash hazards. ✅ DONE via PR #44 merge `5185137` (6 sites — spec said 4, found 6, 2026-05-08T05:33:11Z).
+- **D24:** PR #12 atomic manifest + descriptor write + #13 NaN/Inf assertions. ✅ DONE via PR #47 merge `3aa0221` (2026-05-08T10:17:02Z).
+- **D25:** B15-P0-07 splatmap L>4 truncation. **GATE D25** = subprocess-determinism CI matrix passes 18/18 (3 OS × 3 Py × 2 seed-seq). ✅ DONE via PR #46 merge `a05067f` (2026-05-08T10:46:16Z); GATE D25 18-cell matrix green.
+
+**Phase B V1+V2 verifier convergence (2026-05-08):** GO. Both compliance/breadth and adversarial/quality verifiers pass on origin/main HEAD `694409e`.
+
+### PHASE D pre-work (D1-D3 plug-and-play backend abstraction) — bake-side prerequisites for Unity ingestion ✅ COMPLETE 2026-05-08
+- **D1:** Backend-agnostic URP manifest schema + plug-and-play backends (bake-side `terrain_unity_backends.py` dataclasses: `WaterSurfaceManifest`, `SkyManifest`, `AtmosphericManifest`, `UpscalerManifest`, `UnityExportConfig`). ✅ DONE via PR #49 merge `e97ae1c` (2026-05-08T14:25:11Z).
+- **D2:** Rewrite IMPLEMENTATION_FIX_GUIDE for URP commitment + plug-and-play (this doc — adds §X URP Backend Abstraction, supersedes HDRP-specific guidance throughout, reconciles §17.4 Phase D Unity-ingestion plan with the new define-symbol contract). ✅ DONE via PR #50 merge `694409e` (2026-05-08T15:16:24Z).
+- **D3:** `docs/URP_BACKEND_ABSTRACTION.md` — canonical plug-and-play architecture spec for the 4 backend interfaces (`IWaterBackend`, `ISkyBackend`, `IFogBackend`, `IUpscalerBackend`), asmdef + define-symbol layout, capability detection, schema versioning policy, and per-slot upgrade guides. ✅ DONE via PR #48 merge `92ee8e2` (2026-05-08T14:54:26Z).
 
 ### PHASE C (Days 26-35) — Orphan-pass wiring + label-stamping + stream cap
 - **D26-27:** PR #16 stratigraphy + #17 morphology delta integrators wired in default sequence.
@@ -1635,7 +1642,7 @@ Path("renders/quality-audit/hwcap_4060ti_baseline.json").write_text(json.dumps(r
 ```
 D36 morning (2 hrs): Unity Hub > Create New Project > 6000.3.0f1 > URP template. Project location: `unity_project/VbHeroDemo/`.
 D36 afternoon (2 hrs): Edit `unity_project/VbHeroDemo/Packages/manifest.json` to pin: URP 17.3.x, Visual Effect Graph 17.x, Adaptive Probe Volumes (auto), Addressables 2.x, Burst, Collections, Mathematics. Run `Unity Hub > Open Project` to fetch deps (~10 min).
-D36 evening: Create `Assets/VbTerrain/Plugins/` directory. Copy 5 .cs files from repo `unity_plugin/` to `Assets/VbTerrain/Plugins/`. Add asmdef + define symbols (`VB_WATER_BOAT_ATTACK`, `VB_SKY_CUBEMAP`, `VB_FOG_URP_VOLUME`, `VB_UPSCALER_STP` (v1 primary, URP native), `VB_UPSCALER_FSR1` (v1 fallback, URP native)) per §X. `VB_UPSCALER_FSR31` and `VB_UPSCALER_DLSS` are reserved for v1.1 swap adapters and remain undefined in v1. Verify all 5 compile.
+D36 evening: Create `Assets/VbTerrain/Plugins/` directory. Copy 5 .cs files from repo `unity_plugin/` to `Assets/VbTerrain/Plugins/`. Add asmdef + define symbols (`VB_WATER_BOAT_ATTACK`, `VB_SKY_SKYBOX_CUBEMAP`, `VB_FOG_URP_FOG_VOLUME`, `VB_UPSCALER_STP_1_0` (v1 primary, URP 17.3 native), `VB_UPSCALER_FSR_1_0` (v1 fallback, URP 17.3 native)) per §X — these match the canonical define-symbol set in `docs/URP_BACKEND_ABSTRACTION.md` §4.1/§4.2. `VB_UPSCALER_FSR_3_1` and `VB_UPSCALER_DLSS_4_5` are reserved for v1.1 swap adapters and remain undefined in v1. Verify all 5 compile.
 D37 morning: Project Settings > Graphics > Render Pipeline Asset = create `Assets/Settings/VeilBreakersURP.asset` (UniversalRenderPipelineAsset, Forward+, MSAA 4x, 4 cascades, shadow distance 150m, **Upscaling Filter = Spatial-Temporal Post-Processing (STP) 1.0 — URP 17 native; renderScale 0.667 for 720p→1080p; FSR 1.0 also pre-configured as fallback profile**, ColorSpace=Linear). Project Settings > Quality > pipeline asset assignments per tier.
 D37 afternoon: Create `Assets/Scenes/vb_hero_demo.unity`. Add Directional Light + Camera + URP Volume (default profile with Bloom + Tonemapping ACES).
 ```
