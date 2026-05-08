@@ -537,6 +537,21 @@ class UnityExportConfig:
     # existing Unity scenes that still read the old filename keep working.
     legacy_hdrp_filename: bool = False
 
+    # Phase C D34 — streaming mipmap memory budget cap (PRs #43+#44).
+    # Default 3072 MB (3 GB) for the v1.0 8 GB ship config; the AAA_16GB
+    # preset bumps to 6144 MB (6 GB).  Default Unity streaming on 8GB
+    # cards uses ~6 GB, leaving URP only ~2 GB → instant streaming
+    # fallbacks.  The Unity-side ``URPSceneBootstrap`` (forthcoming) reads
+    # this manifest field and applies it via
+    # ``QualitySettings.streamingMipmapsMemoryBudget`` at scene load.
+    # Acceptable range: 256 MB (very low spec) to 16384 MB (16 GB cap).
+    streaming_mipmaps_memory_budget_mb: int = 3072
+
+    # Phase C D34 — flips ``QualitySettings.streamingMipmapsActive``.  The
+    # 8 GB ship config locks streaming ON; bake-only / headless flows can
+    # disable it to skip the budget enforcement entirely.
+    streaming_mipmaps_active: bool = True
+
     # Class-level preset slots — populated below the class definition so
     # they share the same dataclass type without becoming dataclass fields.
     # Using ClassVar tells both the dataclass machinery and pyright that
@@ -552,6 +567,28 @@ class UnityExportConfig:
         _validate_backend("sky", self.sky_backend)
         _validate_backend("fog", self.fog_backend)
         _validate_backend("upscaler", self.upscaler_backend)
+        # Phase C D34 — streaming mipmap budget plausibility guard.  Values
+        # outside [256, 16384] MB are config bugs (Unity refuses anything
+        # below ~256 MB and there is no shipping consumer GPU above 16 GB
+        # that we ship to in v1.x).  ``bool`` rejected explicitly because
+        # ``isinstance(True, int)`` is True in Python — ship config typoed
+        # as ``streaming_mipmaps_memory_budget_mb=True`` would otherwise
+        # silently accept budget = 1 MB.  We pin the runtime type via
+        # ``type(...) is int`` rather than ``isinstance(..., int)`` so that
+        # bool subclasses are caught and pyright's ``reportUnnecessaryIsInstance``
+        # rule isn't tripped on a field whose annotation already says ``int``.
+        budget_obj: object = self.streaming_mipmaps_memory_budget_mb
+        if type(budget_obj) is not int:
+            raise ValueError(
+                "streaming_mipmaps_memory_budget_mb must be int (got "
+                f"{type(budget_obj).__name__}={budget_obj!r})"
+            )
+        budget: int = budget_obj
+        if budget < 256 or budget > 16384:
+            raise ValueError(
+                "streaming_mipmaps_memory_budget_mb out of plausible range "
+                f"[256, 16384] MB: got {budget}"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -564,6 +601,11 @@ class UnityExportConfig:
             "fog_backend": self.fog_backend,
             "upscaler_backend": self.upscaler_backend,
             "legacy_hdrp_filename": bool(self.legacy_hdrp_filename),
+            # Phase C D34 — streaming mipmap budget surfaced in serialized form.
+            "streaming_mipmaps_memory_budget_mb": int(
+                self.streaming_mipmaps_memory_budget_mb
+            ),
+            "streaming_mipmaps_active": bool(self.streaming_mipmaps_active),
         }
 
 
@@ -571,8 +613,13 @@ class UnityExportConfig:
 # ``frozen=True`` dataclasses forbid in-class default-value mutation, but
 # the ``ClassVar`` declarations above tell pyright the attributes exist.
 # Public access is ``UnityExportConfig.DEFAULT`` and ``UnityExportConfig.AAA_16GB``.
+# Phase C D34 — ``DEFAULT`` keeps the 3 GB cap (8 GB ship config); the
+# AAA_16GB preset bumps to 6 GB (16 GB target hardware).
 UnityExportConfig.DEFAULT = UnityExportConfig()
-UnityExportConfig.AAA_16GB = UnityExportConfig(splatmap_max_layers=8)
+UnityExportConfig.AAA_16GB = UnityExportConfig(
+    splatmap_max_layers=8,
+    streaming_mipmaps_memory_budget_mb=6144,
+)
 
 
 def build_unity_urp_manifest_section(
@@ -643,6 +690,17 @@ def build_unity_urp_manifest_section(
         "sky": sky_m.to_dict(),
         "atmospheric": atmospheric_m.to_dict(),
         "upscaler": upscaler_m.to_dict(),
+        # Phase C D34 (PR #43+#44) — backend-agnostic Unity quality settings
+        # block.  The Unity-side ``URPSceneBootstrap`` reads these fields
+        # and applies them via ``QualitySettings.streamingMipmapsMemoryBudget``
+        # and ``QualitySettings.streamingMipmapsActive`` at scene load.
+        # 8 GB ship config = 3072 MB cap; v1.1 16 GB target = 6144 MB.
+        "quality_settings": {
+            "streaming_mipmaps_memory_budget_mb": int(
+                cfg.streaming_mipmaps_memory_budget_mb
+            ),
+            "streaming_mipmaps_active": bool(cfg.streaming_mipmaps_active),
+        },
     }
 
 
