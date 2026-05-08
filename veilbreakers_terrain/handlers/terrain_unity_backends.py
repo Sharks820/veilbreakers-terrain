@@ -119,6 +119,12 @@ def _validate_canonical_alt_order() -> None:
     ``BACKEND_REGISTRY`` and ``CANONICAL_ALT_ORDER`` surfaces immediately
     rather than silently producing a manifest whose ``upgrade_compat``
     omits a registered backend.
+
+    CodeRabbit round-2 fix: ``set(canonical) == set(registry)`` would accept
+    a tuple with a duplicated backend and no missing values (sets dedup
+    silently).  Comparing the multisets via ``sorted(...)`` instead enforces
+    true permutation semantics, so a duplicated entry trips the import-time
+    guard before it can leak into emitted ``upgrade_compat`` tuples.
     """
     for slot, registry in BACKEND_REGISTRY.items():
         canonical = CANONICAL_ALT_ORDER.get(slot)
@@ -128,11 +134,12 @@ def _validate_canonical_alt_order() -> None:
                 "every BACKEND_REGISTRY slot needs a substitution-priority "
                 "ordering."
             )
-        if set(canonical) != set(registry):
+        if sorted(canonical) != sorted(registry):
             raise RuntimeError(
                 f"CANONICAL_ALT_ORDER[{slot!r}] = {canonical!r} is not a "
                 f"permutation of BACKEND_REGISTRY[{slot!r}] = {registry!r}; "
-                "they must contain exactly the same backend strings."
+                "they must contain exactly the same backend strings with "
+                "no duplicates and no omissions."
             )
 
 
@@ -237,6 +244,13 @@ class WaterSurfaceManifest:
         # Hardening PR B Fix #2 — V2 finding: validate backend + upgrade_compat
         # at construction time so wrong values die loudly here rather than
         # silently in the runtime adapter on the Unity side.
+        #
+        # CodeRabbit round-2 fix: ``_check_major`` previously only ran in
+        # ``from_dict``; direct construction (e.g. ``WaterSurfaceManifest(
+        # schema_version="2.0", ...)``) could bypass the schema-major guard
+        # and emit a v2 manifest unchanged.  Validate here too so the write
+        # path is closed.
+        _check_major(self.schema_version)
         _validate_backend("water", self.backend)
         _validate_upgrade_compat("water", self.backend, self.upgrade_compat)
 
@@ -313,6 +327,9 @@ class SkyManifest:
     )
 
     def __post_init__(self) -> None:
+        # CodeRabbit round-2 fix: enforce schema-major on direct construction
+        # too (not only from_dict), closing the write-path hole.
+        _check_major(self.schema_version)
         _validate_backend("sky", self.backend)
         _validate_upgrade_compat("sky", self.backend, self.upgrade_compat)
 
@@ -387,6 +404,9 @@ class AtmosphericManifest:
     )
 
     def __post_init__(self) -> None:
+        # CodeRabbit round-2 fix: enforce schema-major on direct construction
+        # too (not only from_dict), closing the write-path hole.
+        _check_major(self.schema_version)
         _validate_backend("fog", self.backend)
         _validate_upgrade_compat("fog", self.backend, self.upgrade_compat)
 
@@ -468,6 +488,9 @@ class UpscalerManifest:
     )
 
     def __post_init__(self) -> None:
+        # CodeRabbit round-2 fix: enforce schema-major on direct construction
+        # too (not only from_dict), closing the write-path hole.
+        _check_major(self.schema_version)
         _validate_backend("upscaler", self.backend)
         _validate_upgrade_compat("upscaler", self.backend, self.upgrade_compat)
 
@@ -548,6 +571,12 @@ class UnityExportConfig:
         # Hardening PR B Fix #2: validate per-slot backend strings against
         # BACKEND_REGISTRY so a typo in the bake config dies here rather
         # than silently producing an unloadable manifest.
+        #
+        # CodeRabbit round-2 fix: enforce schema-major on direct construction
+        # too (not only from_dict), closing the write-path hole — a
+        # ``UnityExportConfig(schema_version="2.0", ...)`` literal would
+        # otherwise serialise unchanged.
+        _check_major(self.schema_version)
         _validate_backend("water", self.water_backend)
         _validate_backend("sky", self.sky_backend)
         _validate_backend("fog", self.fog_backend)

@@ -3,24 +3,24 @@
   "direct_test_only_a_grade_count": 140,
   "domain_counts": {
     "blender_tool": 1604,
-    "camera_readability": 401,
+    "camera_readability": 402,
     "core": 8,
-    "geometry_mesh": 1454,
-    "materials_texturing": 806,
-    "pipeline_wiring": 1250,
+    "geometry_mesh": 1456,
+    "materials_texturing": 808,
+    "pipeline_wiring": 1251,
     "scatter_ecology": 770,
     "visual_qa": 397,
-    "water": 851
+    "water": 853
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "LOW": 1900
+    "LOW": 1902
   },
   "tool_blocker_count": 0,
-  "total_callables": 1900,
+  "total_callables": 1902,
   "wiring_status_counts": {
     "direct_test_covered": 240,
-    "helper_reachable": 1440,
+    "helper_reachable": 1442,
     "runtime_primary": 220
   }
 }

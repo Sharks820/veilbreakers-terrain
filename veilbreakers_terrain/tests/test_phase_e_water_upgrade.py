@@ -262,6 +262,45 @@ class TestWaterShaderManifestShape:
         for m in payload["materials"]:
             assert m["flow_map_channel"] == "Color2"
 
+    def test_unity_urp_integration_note_is_backend_aware(self):
+        """CodeRabbit round-2 fix: ``shader_integration_notes['unity_urp']``
+        must vary by ``water_backend`` so manifests emitted for non–Boat-Attack
+        backends carry the right Unity package guidance.
+        """
+        from veilbreakers_terrain.handlers.terrain_unity_export import (
+            _water_shader_manifest_json,
+        )
+
+        boat_payload = _water_shader_manifest_json(
+            self._stack(), water_backend="boat_attack"
+        )
+        sw2_payload = _water_shader_manifest_json(
+            self._stack(), water_backend="stylized_water_2"
+        )
+        crest_payload = _water_shader_manifest_json(
+            self._stack(), water_backend="crest_5"
+        )
+        hand_payload = _water_shader_manifest_json(
+            self._stack(), water_backend="hand_authored_urp"
+        )
+
+        boat_note = boat_payload["shader_integration_notes"]["unity_urp"]
+        sw2_note = sw2_payload["shader_integration_notes"]["unity_urp"]
+        crest_note = crest_payload["shader_integration_notes"]["unity_urp"]
+        hand_note = hand_payload["shader_integration_notes"]["unity_urp"]
+
+        # Each backend's note mentions its own package by name and is distinct
+        # from the others (no shared template-string fallthrough).
+        assert "Boat Attack" in boat_note
+        assert "Stylized Water 2" in sw2_note
+        assert "Crest" in crest_note
+        assert "hand-authored URP" in hand_note
+        notes = {boat_note, sw2_note, crest_note, hand_note}
+        assert len(notes) == 4, (
+            f"backend-aware integration notes collapsed to {len(notes)} "
+            f"distinct values: {notes!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # test_flow_continuity_validator_catches_reversals
