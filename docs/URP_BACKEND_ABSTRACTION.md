@@ -78,9 +78,9 @@ asset, MIT licensed). Vertex-displacement Gerstner waves, planar reflection,
 foam by mask, caustics by projector, shore reaction by SDF lookup.
 
 **Future swap candidates:**
-- Stylized Water 2 (paid asset, ~$45 — `[SKU TBD — search Asset Store
-  before swap; verify the listed SKU and current price]`) — better
-  stylized look for v1.1.
+- Stylized Water 2 (paid asset, `[SKU and price TBD — search Asset Store
+  before swap; verify the listed SKU and current price during the v1.1
+  buy-step]`) — better stylized look for v1.1.
 - Crest 5 — **paid only**, Asset Store SKU **268614**, $100-200 list
   (~$165 typical). The OSS GitHub `wave-harmonic/crest` (Crest 4) is
   **BIRP-only** and **not usable on URP**; it does not back-port to
@@ -295,7 +295,7 @@ coupling.
 > swap candidates listed in `upgrade_compat[]` so the abstraction can
 > roll forward without a schema bump. See §2.4.
 
-This schema has matching `@dataclass` definitions on the bake side at
+This schema has corresponding `@dataclass` definitions on the bake side at
 `veilbreakers_terrain/handlers/terrain_unity_backends.py` (landed via
 Phase D1 PR #49, merge `e97ae1c` 2026-05-08T14:25:11Z):
 
@@ -304,9 +304,25 @@ Phase D1 PR #49, merge `e97ae1c` 2026-05-08T14:25:11Z):
 - `AtmosphericManifest`
 - `UpscalerManifest`
 
-> **Status update (2026-05-08).** Phase D1 has merged. `terrain_unity_backends.py`
-> is now present on `main`; the `@dataclass` definitions match this JSON
-> schema and are pinned by `test_phase_d1_urp_manifest_schema.py`.
+> **Status update (2026-05-08) — known upscaler-default drift, code update
+> tracked.** Phase D1 has merged and `terrain_unity_backends.py` is on
+> `main`. The water / sky / fog dataclasses match this JSON schema. The
+> **upscaler dataclass currently still ships the obsolete pre-correction
+> defaults** (`UpscalerManifest.backend = "fsr_3_1"`,
+> `upgrade_compat = ("dlss_4_5", "stp_native", "off")`,
+> `UnityExportConfig.upscaler_backend = "fsr_3_1"`) and the pinned tests
+> in `test_phase_d1_urp_manifest_schema.py` lock those values. This doc
+> intentionally describes the **corrected** v1.0 ship defaults — STP 1.0
+> primary, FSR 1.0 spatial fallback, FSR 3.1 / DLSS 4.5 as v1.1
+> `upgrade_compat[]` swap candidates — per the URP 17.3 native dropdown
+> reality (see §2.4 + §10 references). A follow-up code-side PR
+> (Phase D-Hardening B) will retarget the dataclass defaults and the
+> pinned tests to `stp_1_0` / `fsr_1_0` so this manifest schema and the
+> shipped bake match. Until that PR lands, manifest writers SHOULD pass
+> `UpscalerManifest(backend="stp_1_0", upgrade_compat=("fsr_1_0",
+> "fsr_3_1", "dlss_4_5", "off"))` explicitly when constructing manifests
+> for v1.0 scenes; relying on the dataclass defaults will emit the
+> obsolete `fsr_3_1` ID.
 
 The bake side OWNS the schema. The runtime side is read-only.
 
@@ -358,7 +374,16 @@ namespace VeilBreakers.Rendering.Backends
         public string backendId = "skybox_cubemap";
 
         // Cubemap asset (HDR EXR). Addressable so it streams.
-        public AssetReferenceCubemap cubemap;
+        // NOTE: Addressables 1.21+ does not ship a concrete
+        // AssetReferenceCubemap subclass — Texture / Texture2D / Texture3D /
+        // GameObject / Sprite / AtlasedSprite are the only concrete typed
+        // wrappers. Use the generic AssetReferenceT<Cubemap> wrapper so this
+        // compiles out-of-the-box against a default Addressables install.
+        // (If the project later defines its own concrete
+        // `AssetReferenceCubemap : AssetReferenceT<Cubemap>` for a
+        // CustomPropertyDrawer, swap the field type to it without changing
+        // any other code in this profile.)
+        public AssetReferenceT<Cubemap> cubemap;
 
         // Optional volumetric-cloud component reference (used by v1.1 swaps).
         public AssetReferenceGameObject cloudComponentPrefab;
