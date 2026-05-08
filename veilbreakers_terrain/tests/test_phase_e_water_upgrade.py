@@ -271,17 +271,20 @@ class TestWaterShaderManifestShape:
             _water_shader_manifest_json,
         )
 
+        # pyright: ignore[reportArgumentType] — _DictStack is a structural
+        # mock for TerrainMaskStack; the manifest builder only reads .get()
+        # on it and never depends on TerrainMaskStack's full surface.
         boat_payload = _water_shader_manifest_json(
-            self._stack(), water_backend="boat_attack"
+            self._stack(), water_backend="boat_attack"  # pyright: ignore[reportArgumentType]
         )
         sw2_payload = _water_shader_manifest_json(
-            self._stack(), water_backend="stylized_water_2"
+            self._stack(), water_backend="stylized_water_2"  # pyright: ignore[reportArgumentType]
         )
         crest_payload = _water_shader_manifest_json(
-            self._stack(), water_backend="crest_5"
+            self._stack(), water_backend="crest_5"  # pyright: ignore[reportArgumentType]
         )
         hand_payload = _water_shader_manifest_json(
-            self._stack(), water_backend="hand_authored_urp"
+            self._stack(), water_backend="hand_authored_urp"  # pyright: ignore[reportArgumentType]
         )
 
         boat_note = boat_payload["shader_integration_notes"]["unity_urp"]
