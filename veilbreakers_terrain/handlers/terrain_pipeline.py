@@ -227,6 +227,11 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # entry is already populated by the macro/banded/erosion passes
             # earlier in the sequence.
             *(("wind_erosion",) if has_scene_read else ()),
+            # Phase C D35: emit derived topographic indices (vb_aspect_deg,
+            # vb_aspect_north, vb_canopy_openness, vb_TWI) AFTER erosion/
+            # composite so consumers see post-erosion height-derived values,
+            # and BEFORE foliage/scatter consumers read them.
+            "topographic_indices",
             # C-7: terrain feature carving before scatter
             "pass_terrain_features",
             # C-8: sightline framing before scatter
@@ -1847,6 +1852,12 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_biome_channel_pass()
     register_terrain_label_passes()
     register_snow_line_pass()
+    # Phase C D35: pass_topographic_indices emits vb_aspect_deg /
+    # vb_aspect_north / vb_canopy_openness / vb_TWI from height (post-erosion,
+    # post-composite). Foliage / scatter consumers read them via
+    # optional_channels declarations.
+    from .terrain_topographic_indices import register_topographic_indices_pass
+    register_topographic_indices_pass()
     from ._biome_grammar import register_biome_surface_features_pass
     register_biome_surface_features_pass()
     # pass_seasonal_water_state registers AFTER Bundle O/I in terrain_master_registrar
