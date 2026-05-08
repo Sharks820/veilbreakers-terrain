@@ -892,10 +892,17 @@ def test_bundle_i_declares_full_stratigraphy_channel_contract():
         TerrainPassController.PASS_REGISTRY.clear()
         TerrainPassController.PASS_REGISTRY.update(prior)
 
+    # Phase C D26-27: stratigraphy now declares the 3 aux height channels
+    # (sediment_height, bedrock_height, strata_height) explicitly so
+    # downstream consumers and cycle/contract detection see a registered
+    # producer. The PassDefinition contract is now this 10-channel tuple.
     assert stratigraphy.produces_channels == (
         "rock_hardness",
         "strata_orientation",
         "strat_erosion_delta",
+        "sediment_height",
+        "bedrock_height",
+        "strata_height",
         "unconformity_mask",
         "intrusion_mask",
         "albedo_shift_rgb",
