@@ -135,6 +135,7 @@ class TestFoamVertexAlpha:
         prox = np.array([0.0, 1.0, 2.0], dtype=np.float32)
         speed = np.full((3,), MAX_FOAM_SPEED_DEFAULT, dtype=np.float32)
         result = bake_foam_vertex_alpha(prox, speed)
+        assert isinstance(result, np.ndarray)
         # Closer cells must have ≥ foam than farther cells (monotone).
         assert result[0] >= result[1] >= result[2] - 1e-6
 
