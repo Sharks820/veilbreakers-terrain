@@ -115,11 +115,14 @@ def atomic_write_bytes(path: _PathLike, data: bytes) -> Path:
     fd: int = -1
     try:
         # Use os.open so we can fsync the underlying fd reliably on all
-        # platforms before closing.
+        # platforms before closing. Mode 0o600 (owner read+write only)
+        # avoids the CodeQL "overly permissive mask" finding — manifest
+        # data may carry seed values, tile IDs, or path fragments we do
+        # not want world-readable on a multi-user host.
         fd = os.open(
             str(tmp_path),
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o644,
+            0o600,
         )
         try:
             with os.fdopen(fd, "wb") as fh:
@@ -143,8 +146,9 @@ def atomic_write_bytes(path: _PathLike, data: bytes) -> Path:
                 try:
                     os.close(fd)
                 except OSError:
+                    # fd may already be closed if the OS forced it during
+                    # an earlier failure; closing again is safe to ignore.
                     pass
-                fd = -1
 
         os.replace(str(tmp_path), str(final_path))
     except Exception:
@@ -154,6 +158,8 @@ def atomic_write_bytes(path: _PathLike, data: bytes) -> Path:
             if tmp_path.exists():
                 tmp_path.unlink()
         except OSError:
+            # If we cannot unlink (file disappeared, permission denied),
+            # propagate the original failure rather than masking it.
             pass
         raise
     return final_path
