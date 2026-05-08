@@ -142,6 +142,10 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
     skip_scatter = bool(composition_hints.get("skip_scatter", False))
     include_waterfalls = bool(composition_hints.get("waterfalls", True))
+    # Phase C D30-32 (Issue #27) — opt-in structural label-stamping. Off by default
+    # so existing fixtures stay byte-identical; downstream texturing/scatter
+    # consumers that want authored region tags request it explicitly.
+    include_label_stamping = bool(composition_hints.get("label_stamping", False))
     biome_hint = str(
         composition_hints.get("biome")
         or composition_hints.get("biome_name")
@@ -185,6 +189,14 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         "pass_banded_advanced",
         validation_pass,
     ]
+    # Phase C D30-32 (Issue #27) — opt-in label-stamping. Inserted AFTER
+    # ``structural_masks`` (so slope+curvature exist) and BEFORE the
+    # ``materials_v2`` consumer (so stamped labels override analytical slope).
+    # Stays out of pass_sequence when the hint is False so default tests are
+    # unaffected.
+    if include_label_stamping:
+        insert_at = pass_sequence.index("structural_masks") + 1
+        pass_sequence.insert(insert_at, "label_stamping")
     if has_scene_read:
         # Hydrology + erosion operate on the low-freq height before compositing.
         # Insert them at index 3 (before pass_generate_high_freq_detail).
@@ -1846,6 +1858,12 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_pass_water_depth()
     register_biome_channel_pass()
     register_terrain_label_passes()
+    # Phase C D30-32 (Issue #27) — structural label-stamping. Optional in the
+    # default sequence (gated by composition_hints["label_stamping"]) so
+    # existing fixtures stay byte-identical. Registered here so build_default_pass_sequence
+    # can refer to it when the hint is set.
+    from .terrain_labels import register_pass_label_stamping
+    register_pass_label_stamping()
     register_snow_line_pass()
     from ._biome_grammar import register_biome_surface_features_pass
     register_biome_surface_features_pass()
@@ -1871,4 +1889,26 @@ __all__ = [
     "register_snow_line_pass",
     "pass_water_depth",
     "register_pass_water_depth",
+]
+
+
+# Phase C D30-32 — re-export structural label types so callers do not have
+# to know which submodule owns them. The actual implementations live in
+# ``terrain_labels`` to keep this module focused on pass orchestration.
+from .terrain_labels import (  # noqa: E402  (after __all__ for grouping)
+    LABEL_TO_LEGACY_CHANNEL,
+    LabelStack,
+    LabelStamp,
+    STRUCTURAL_LABELS,
+    pass_label_stamping,
+    register_pass_label_stamping,
+)
+
+__all__ += [
+    "LABEL_TO_LEGACY_CHANNEL",
+    "LabelStack",
+    "LabelStamp",
+    "STRUCTURAL_LABELS",
+    "pass_label_stamping",
+    "register_pass_label_stamping",
 ]

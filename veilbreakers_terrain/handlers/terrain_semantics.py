@@ -475,6 +475,17 @@ class TerrainMaskStack:
     cliff_label: Optional[np.ndarray] = None
     strata_height: Optional[np.ndarray] = None
 
+    # Phase C D30-32 (Issue #27) — structural label-stamping system.
+    # ``label_stack`` is a ``terrain_labels.LabelStack`` instance produced by
+    # ``pass_label_stamping``. It is a non-array channel (a list of
+    # ``LabelStamp`` records + spatial index) so it lives outside
+    # _ARRAY_CHANNELS — but it IS a contracted produced output of the
+    # label_stamping pass and downstream texturing/scatter consumers may
+    # query it for per-region authored tags. Type is ``Any`` to avoid a
+    # circular import (terrain_labels imports terrain_semantics for
+    # PassDefinition / PassResult / BBox).
+    label_stack: Optional[Any] = None
+
     # Height decomposition channels (Fix 12.1 — low/high freq split)
     hmap_low_freq: Optional[np.ndarray] = None   # base shape, max LOW_FREQ_OCTAVES=3 octaves
     hmap_high_freq: Optional[np.ndarray] = None  # micro-detail, octaves 3-7
