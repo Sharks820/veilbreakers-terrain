@@ -24,13 +24,13 @@
 - **32 GB RAM**, Windows 11, **Unity 6.3 LTS** (released Dec 3 2025) + **URP 17.3** (RP commitment locked 2026-05-07 per memory `project_urp_commitment_2026_05_07.md`; URP asset `Assets/Settings/VeilBreakersURP.asset` bound, ColorSpace=Linear, Forward+), **Blender 4.5 LTS**. **DO NOT use HDRP** — HDRP enters maintenance mode Feb 2026 and costs ~1.5-2 GB extra VRAM on the 8GB target. URP 17 closes ~80% of the URP↔HDRP gap and fits the 8GB ceiling with foliage/scatter headroom. See §X URP Backend Abstraction for the plug-and-play upgrade path.
 - **Auto-Rig Pro INSTALLED** (user confirmed 2026-05-07) — do NOT recommend buying.
 - **Game:** VeilBreakers, single-player, dark-fantasy, **AAA-target** (reference titles in §18: Witcher 3 NG, Hellblade 2, Cyberpunk 2.0, Diablo IV, Alan Wake 2, Black Myth Wukong; "Bloodborne PS4 5GB" downgrade framing DROPPED).
-- **Resolution & frame target — LOCK 1080p/60 native via URP FSR 3.1 native (Quality preset, 720p internal → 1080p output).** URP 17.3 ships **FSR 3.1 native** out of the box (URP Asset > Quality > Upscaling Filter = FSR 3.1 + Sharpness slider). 16.6ms frame budget at 1080p/60. FSR 3.1 is the v1 IUpscalerBackend (FREE). DLSS 4.5 SR is **v1.1 contingent** (NVIDIA NGX SDK port to URP — pending packaging) and STP (Spatio-Temporal Post-process upscaling, native to URP 17) is the FREE fallback if Forward+ raster hits 1080p/60 directly without an upscaler. **Supersedes prior "1080p/45 raster lock" decision and prior HDRP DLSS framing.** Frame-gen (any backend) remains v1.1 contingent (~2-3 weeks plugin integration work) — SR-class upscaling is the v1 unlock, not FG. See §X URP Backend Abstraction + §18 for full latest-decisions patch.
+- **Resolution & frame target — LOCK 1080p/60 native via URP STP (Spatial-Temporal Post-Processing 1.0) upscaler (renderScale 0.667 → 720p internal upscaled to 1080p output).** URP 17.3 ships **STP native** out of the box as its marquee new temporal upscaler (URP Asset > Quality > Upscaling Filter = **Spatial-Temporal Post-Processing (STP) 1.0**); **FSR 1.0** (FidelityFX Super Resolution 1.0) is the in-the-box fallback dropdown choice if STP causes ghosting on heavy alpha foliage. **NOTE 2026-05-08:** prior drafts cited "FSR 3.1 native" — that is **wrong**; URP 17.3's native Upscaling Filter dropdown only lists Automatic / Bilinear / Nearest-Neighbor / FSR 1.0 / STP. **FSR 3.1 is a v1.1 external-package swap** (AMD/community FSR3-Unity-URP package, ~1-2 weeks integration when packaged) — same v1.1 IUpscalerBackend slot as DLSS 4.5 SR (NGX SDK URP port pending). 16.6ms frame budget at 1080p/60. STP is the v1 IUpscalerBackend (FREE, native). FSR 1.0 fallback also FREE/native. **Supersedes prior "1080p/45 raster lock" decision and prior HDRP DLSS framing AND the earlier "FSR 3.1 native" mis-citation.** Frame-gen (any backend) remains v1.1 contingent (~2-3 weeks plugin integration work) — SR-class upscaling is the v1 unlock, not FG. See §X URP Backend Abstraction + §18 for full latest-decisions patch.
 
 ### 0.3 Money (R2 FINAL — supersedes R1/R1.5; URP-rebased 2026-05-07)
 - **Total baseline spend: $20.** MicroSplat URP variant (Asset Store ID 189950, same author Jason Booth, same Texture Clusters feature, same $20) ONLY.
 - **Conditional ceiling: $40** if cliffs/overhangs gameplay-critical → add MicroSplat Mesh Terrains (157356) $20.
 - **Amplify Impostors $30, Beautify HDRP $39.99, Aurora $25, THOR $30, Crest 5 $100-200 — ALL DROPPED.** R2-A2 verified each has a working free equivalent at the 8GB URP target. New URP-side ceiling is **$50-$70** (down from R1.5 $130). Beautify HDRP is irrelevant on URP (URP 17.6 ships ACES + the AgX MIT port + a 30-line Purkinje HLSL post — see §2.4.x). Crest 5 is dropped because the user-committed water backend is the **Boat Attack water sample (FREE)** — see §X URP Backend Abstraction. See §14.1.
-- **Wwise Indie, Steam Audio (Apache 2.0 — NOT AGPL), Unity Recorder, Blender Cycles 4K via RunPod (renderer-agnostic golden bake — replaces HDRP Path Tracer), Graphics Test Framework, GRD, RenderMeshIndirect, SpeedTree 9 Importer, Cinemachine, A* Free, Animation Rigging, AI Navigation, Localization, URP FSR 3.1 native (replaces HDRP DLSS 4.5 SR), Boat Attack water sample (replaces HDRP WaterSurface), URP Fog Volume override + billboard fog cards (replaces HDRP Volumetric Fog), skybox-only cubemap (replaces HDRP Volumetric Clouds)** — all **FREE** and adopted-without-purchase.
+- **Wwise Indie, Steam Audio (Apache 2.0 — NOT AGPL), Unity Recorder, Blender Cycles 4K via RunPod (renderer-agnostic golden bake — replaces HDRP Path Tracer), Graphics Test Framework, GRD, RenderMeshIndirect, SpeedTree 9 Importer, Cinemachine, A* Free, Animation Rigging, AI Navigation, Localization, URP STP 1.0 native upscaler + FSR 1.0 fallback (replaces HDRP DLSS 4.5 SR — corrected 2026-05-08 from prior "URP FSR 3.1" mis-citation; FSR 3.1 is v1.1 external-package swap), Boat Attack water sample (replaces HDRP WaterSurface), URP Fog Volume override + billboard fog cards (replaces HDRP Volumetric Fog), skybox-only cubemap (replaces HDRP Volumetric Clouds)** — all **FREE** and adopted-without-purchase.
 
 ### 0.4 DAY 0 SETUP CHECKLIST (~4-6 hr wall-clock — complete BEFORE opening §17 Day 1)
 
@@ -81,7 +81,7 @@ plug-and-play, not refactors.
 | `IWaterBackend` | BoatAttackWaterBackend | StylizedWater2Backend, Crest5Backend |
 | `ISkyBackend` | CubemapSkyBackend | VolumeCloudUrpBackend |
 | `IFogBackend` | URPFogVolumeBackend | AtmosphericHeightFogBackend |
-| `IUpscalerBackend` | FSR31UpscalerBackend | DLSSUpscalerBackend, STPUpscalerBackend |
+| `IUpscalerBackend` | STPUpscalerBackend (v1 primary, URP 17 native) + FSR1UpscalerBackend (v1 fallback, URP 17 native) | FSR31UpscalerBackend (v1.1, AMD/community FSR3-Unity-URP package), DLSSUpscalerBackend (v1.1, NGX SDK URP port) |
 
 ### Plug-and-play mechanism
 
@@ -647,13 +647,13 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 - **D35:** PR #42 missing emitters (vb_aspect_deg, vb_aspect_north, vb_canopy_openness, vb_TWI via new `pass_topographic_indices` ~150 LOC; consumer `requires_channels=` updates on foliage-catalog/scatter passes). **GATE D35** = `pass_topographic_indices` produces all 4 spec channels + foliage-stack consumer wiring complete.
 
 ### PHASE D (Days 36-45) — Unity ingestion + Block 5a visual gate (URP-rebased)
-- **D36-37:** B5-U1 Unity 6.3 LTS + URP 17.3 project bootstrap + **4-layer splat config (NOT 8-layer — 8GB constraint)** + APV Sky Occlusion **OFF** at 8x8 grid. `Packages/manifest.json` (URP 17.3 + Visual Effect Graph 17 + Adaptive Probe Volumes + Addressables + Burst + Collections + Mathematics) + `Assets/Settings/VeilBreakersURP.asset` (UniversalRenderPipelineAsset, Forward+, MSAA 4x, 4 cascades, shadow distance 150m, FSR 3.1 upscaler, ColorSpace=Linear).
+- **D36-37:** B5-U1 Unity 6.3 LTS + URP 17.3 project bootstrap + **4-layer splat config (NOT 8-layer — 8GB constraint)** + APV Sky Occlusion **OFF** at 8x8 grid. `Packages/manifest.json` (URP 17.3 + Visual Effect Graph 17 + Adaptive Probe Volumes + Addressables + Burst + Collections + Mathematics) + `Assets/Settings/VeilBreakersURP.asset` (UniversalRenderPipelineAsset, Forward+, MSAA 4x, 4 cascades, shadow distance 150m, **Upscaling Filter = STP 1.0 (Spatial-Temporal Post-Processing) — URP 17 native; FSR 1.0 fallback also configured**, ColorSpace=Linear).
 - **D38:** B5-U3 SetHoles consumer (`holes.png` was never read; wire up).
 - **D39:** B5-U4 normal-Y flip handedness + B5-U5 edges.json contract.
 - **D40-41:** B5-U2 Boat Attack water sample integration via `IWaterBackend = BoatAttackWaterBackend` (river + pool only — no ocean at 8GB). See §X for the IWaterBackend interface.
 - **D42:** B5-U8 flow_map RG16 EXR + RenderMeshIndirect for foliage (replaces `DrawMeshInstanced` 1023-cap; **Hi-Z occlusion mandatory** per R2-A3 #5).
-- **D43-44:** Visual gate `scripts/run_unity_recorder_gate.py` + Graphics Test Framework `ImageAssert.AreEqual` SSIM ≥ 0.95 per spec §11.5b PR #6.5 (rasterized URP goldens locally; **Blender Cycles 4K via RunPod for AAA-anchor goldens** — replaces HDRP Path Tracer per §18.6 cloud bake-rig). Integrate **URP FSR 3.1 native upscaler** (URP Asset > Quality > Upscaling Filter = FSR 3.1) per `IUpscalerBackend = FSR31UpscalerBackend` (§X).
-- **D45:** NotImplementedError shim for `compute_nonblack_ratio` (after replacement gate is live, NOT before — prevents 17-day CI break per V2 self-contradiction #3). **GATE D45** = visual gate SSIM ≥ 0.95 (per spec §11.5b PR #6.5) against rasterized URP goldens; FSR 3.1 verified at 1080p output / 720p internal / 16.6ms frame budget at 1080p/60 LOCKED.
+- **D43-44:** Visual gate `scripts/run_unity_recorder_gate.py` + Graphics Test Framework `ImageAssert.AreEqual` SSIM ≥ 0.95 per spec §11.5b PR #6.5 (rasterized URP goldens locally; **Blender Cycles 4K via RunPod for AAA-anchor goldens** — replaces HDRP Path Tracer per §18.6 cloud bake-rig). Integrate **URP STP 1.0 native upscaler** (URP Asset > Quality > Upscaling Filter = **Spatial-Temporal Post-Processing (STP) 1.0** — URP 17 marquee native temporal upscaler) per `IUpscalerBackend = STPUpscalerBackend` (§X). **FSR 1.0** is the in-the-box fallback (`IUpscalerBackend = FSR1UpscalerBackend`); both are real native dropdown options. **NOTE: prior drafts cited "FSR 3.1" — that was a doc mis-citation; URP 17.3's native Upscaling Filter list is Automatic / Bilinear / Nearest-Neighbor / FSR 1.0 / STP 1.0. FSR 3.1 is the v1.1 external-package swap (AMD/community FSR3-Unity-URP).**
+- **D45:** NotImplementedError shim for `compute_nonblack_ratio` (after replacement gate is live, NOT before — prevents 17-day CI break per V2 self-contradiction #3). **GATE D45** = visual gate SSIM ≥ 0.95 (per spec §11.5b PR #6.5) against rasterized URP goldens; **STP 1.0 verified at 1080p output / 720p internal (renderScale 0.667) / 16.6ms frame budget at 1080p/60 LOCKED**, motion vectors enabled on all camera rigs (STP requires them), FSR 1.0 fallback path smoke-tested.
 
 ### PHASE E (Days 46-60) — Performance, atmosphere, audio, hero render, decision gate (URP-rebased)
 - **D46-47:** PR #19 Numba/Taichi erosion (integer atomics ONLY — atomic-float ban per spec §8.4). TerraForge3D #1 GPU erosion compute kernel port (gated by §10 confirmation that existing Cordonnier 2016 SPL is genuinely the bottleneck — see §14.9 disagreement #2).
@@ -664,7 +664,7 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 - **D54-55:** Wwise Indie + **Steam Audio (Apache 2.0 verified — see §7.2)** integration + AkRoom/AkPortal volumes from `audio_reverb_class` raster + Sonniss SFX + Footstepper free + day/night `AmbientAudioController`. Fallback FMOD Indie if Wwise authoring blocks.
 - **D56-57:** B15-P0-15 vectorize 22 biome-feature O(N²) loops (~1 TB transient at 1024² removed).
 - **D58:** Memory + spec doc updates (§14.8 supersession list).
-- **D59-60:** Hero shot render + decision gate. **Rubric (REVISED 2026-05-07 per §18.1 + §18.9):** ≤16.67 ms frame budget at 1080p output via URP FSR 3.1 Quality (720p internal → 1080p). Native 1080p/60 raster acceptable if Forward+ hits it directly without upscaler (STP fallback also FREE). SSIM ≥0.95 vs rasterized URP golden. Foliage placement >0 per chunk. PYTHONHASHSEED=0 byte-identical determinism. 4060 Ti 8GB VRAM peak ≤ 7.4 GB sustained. **GATE D60** = pilot ships at 1080p/60 via URP FSR 3.1 (or native raster + STP). DLSS 4.5 SR is v1.1 (NVIDIA NGX SDK port pending packaging); frame-gen (any backend) is v1.1 contingent on plugin integration (per §18.9 + R2-V2 + §X plug-and-play upgrade path).
+- **D59-60:** Hero shot render + decision gate. **Rubric (REVISED 2026-05-07 per §18.1 + §18.9; CORRECTED 2026-05-08 — STP 1.0 is the URP 17 native upscaler, not FSR 3.1):** ≤16.67 ms frame budget at 1080p output via URP STP 1.0 (720p internal at renderScale 0.667 → 1080p output). FSR 1.0 fallback also FREE/native. Native 1080p/60 raster acceptable if Forward+ hits it directly without upscaler. SSIM ≥0.95 vs rasterized URP golden. Foliage placement >0 per chunk. PYTHONHASHSEED=0 byte-identical determinism. 4060 Ti 8GB VRAM peak ≤ 7.4 GB sustained. **GATE D60** = pilot ships at 1080p/60 via URP STP 1.0 (or FSR 1.0 fallback, or native raster). FSR 3.1 (external FSR3-Unity-URP package) and DLSS 4.5 SR (NGX SDK URP port pending packaging) are both v1.1 IUpscalerBackend swaps; frame-gen (any backend) is v1.1 contingent on plugin integration (per §18.9 + R2-V2 + §X plug-and-play upgrade path).
 
 **Deferred to v1.1:** APV Sky Occlusion (16GB rebake rig), 8-layer splatmap (16GB only), Blender Cycles 4K cloud-baked goldens at higher density (cloud-rig limit), TerraForge3D GPU port (only if profiler confirms bottleneck), PFG #2 Bézier compute shader, refactors PR #49-#54, 30 Batch15 P1s, Aurora URP Renderer Feature port (4-6 hr — easy v1.1 win), 12 hero VFX Graph particle systems, Unity HLOD 2.0, **DLSS 4.5 SR (NGX SDK URP port)**, **Volume Cloud URP asset ($45 ISkyBackend swap)**, **Stylized Water 2 ($30 IWaterBackend swap) or Crest 5 ($100-200 IWaterBackend swap)**, **Atmospheric Height Fog ($35 IFogBackend swap)**.
 
@@ -804,7 +804,7 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 7. **No realtime planar reflections for water** — SSR Renderer Feature + cubemap fallback
 
 **Frame-budget reality at 8GB / 1080p (URP-rebased):**
-- **Day-time:** ~16-19ms total estimated on URP Forward+ (URP 17 closes ~80% of HDRP gap with ~10-15% lower base cost — Volumetric Clouds dropped, no HDRP overhead). **Target 1080p/60 via URP FSR 3.1 Quality** (16.6ms budget; 720p internal upscaled to 1080p output). Native 1080p/60 raster acceptable if Forward+ profiles green directly.
+- **Day-time:** ~16-19ms total estimated on URP Forward+ (URP 17 closes ~80% of HDRP gap with ~10-15% lower base cost — Volumetric Clouds dropped, no HDRP overhead). **Target 1080p/60 via URP STP 1.0 native upscaler** (16.6ms budget; 720p internal at renderScale 0.667 upscaled to 1080p output). FSR 1.0 fallback also FREE/native. Native 1080p/60 raster acceptable if Forward+ profiles green directly.
 - **Night-time:** ~13-16ms (alpha/fog overdraw lower; URP Volume Fog cheaper than HDRP Local Volumetric Fog) → comfortable at 60fps native.
 - **APV bake reality:** 3-10 min per chunk; 3-12 hr full 8×8 grid (chunk-batched overnight). Max Probe Spacing 243m mandatory for 32GB system RAM safety.
 - **Cycles 4K cloud-baked goldens:** offloaded to RunPod RTX 4090 spot (~$31/mo per §18.6); replaces local HDRP Path Tracer entirely.
@@ -855,7 +855,7 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 9. **(NEW R2-A6 N2) SpeedTree .st9 vs glTF Draco** — Draco strips morph targets used by SpeedTree wind. Decision: keep .st9 for trees; glTF/Draco for static props only.
 10. **(NEW R2-A6 N3) Blender Z-up vs Unity Y-up vs SpeedTree Y-up forward-Z chain** — FBX export from Blender with default `-Y forward, Z up` produces parent rotation `(-89.98°, 0, 0)` in Unity that breaks Auto-Rig Pro retarget. **Fix:** Apply Transform in FBX exporter or use Unity FBX Importer "Bake Axis Conversion".
 11. **(NEW R2-A6 N4) URP Decal Projector vs Terrain Holes** — URP Decal Projector (URP 17 Renderer Feature) projects through hole alpha but loses depth. **Workaround:** tag decals `Affects Transparent = Off` in cave entrances. (Same root issue as HDRP Decal Projector; URP version of the bug.)
-12. **(NEW R2-A6 N5) GPU Resident Drawer vs frame-gen plugins** — GRD's per-frame BRG buffer updates can fight with motion-vector reprojection used by frame-gen plugins. Currently moot for v1 since URP FSR 3.1 is the v1 upscaler (no frame-gen). Re-evaluate when DLSS NGX SDK URP port lands in v1.1.
+12. **(NEW R2-A6 N5) GPU Resident Drawer vs frame-gen plugins** — GRD's per-frame BRG buffer updates can fight with motion-vector reprojection used by frame-gen plugins. Currently moot for v1 since URP STP 1.0 (with FSR 1.0 fallback) is the v1 upscaler chain (both native, no frame-gen). Re-evaluate when DLSS NGX SDK URP port or FSR3-Unity-URP package lands in v1.1.
 
 ### 7.5 NVIDIA driver 536.40+ introduced fallback / 546.01+ added the toggle — shared-memory cliff (NEW — CRITICAL 8GB risk)
 
@@ -881,7 +881,7 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 
 **Unity Terrain multi-pass shader stalls (R2-A3 #4):** With 10-layer URP Shader Graph terrain, first-time-seen terrain triggers async shader compilation 6-14 sec on 4060 Ti — pink/black tiles during fly-through. Recorder captures these stalls into goldens. **Mitigation:** prewarm shader variants at scene load via `ShaderVariantCollection.WarmUp()`.
 
-**Upscaler memory cost (URP FSR 3.1 — v1 IUpscalerBackend):** URP 17.3 native FSR 3.1 is built into the URP Asset (Quality > Upscaling Filter); no extra VRAM allocation beyond URP's own internal scaler buffers (~30-50MB at 720p→1080p). Significantly cheaper than DLSS 4.5 SR's neural network model upload. Frame-gen (any backend including DLSS-G's 272MB at 1080p) remains v1.1 contingent. Decision (§14.10): URP FSR 3.1 v1 lock; STP fallback FREE if FSR sharpness unacceptable; DLSS NGX SDK URP port + frame-gen plugins both v1.1.
+**Upscaler memory cost (URP STP 1.0 — v1 IUpscalerBackend; CORRECTED 2026-05-08 — STP, not FSR 3.1, is the URP 17 native upscaler):** URP 17.3 native STP 1.0 is built into the URP Asset (Quality > Upscaling Filter = Spatial-Temporal Post-Processing); no extra VRAM allocation beyond URP's own internal scaler buffers (~40-70MB at 720p→1080p including history buffers — STP is temporal so it carries one prior frame). FSR 1.0 native fallback (~30-40MB; spatial-only, no history). Both significantly cheaper than DLSS 4.5 SR's neural network model upload. Frame-gen (any backend including DLSS-G's 272MB at 1080p) remains v1.1 contingent. Decision (§14.10): URP STP 1.0 v1 lock with FSR 1.0 native fallback; FSR 3.1 (FSR3-Unity-URP package) and DLSS NGX SDK URP port + frame-gen plugins all v1.1 IUpscalerBackend swaps per §X.
 
 ---
 
@@ -1255,13 +1255,13 @@ R2 (10 Opus deep-scan + 10 codex deep-scan + 3 doc-updaters + 4 verifiers) repla
 | **happy-turtle/foliage-wind** | n/a | **DROP — abandoned 2021** | Broken on URP 17 ShaderGraph; no commercial ship. Replaced by SpeedTree 9 Indie above. |
 | **v1.1 backend swaps (per §X)** | varies | **defer v1.1** | Stylized Water 2 ($30 IWaterBackend), Crest 5 ($100-200 IWaterBackend), Volume Cloud URP ($45 ISkyBackend), Atmospheric Height Fog ($35 IFogBackend), DLSS NGX SDK URP port (when packaged, IUpscalerBackend). All plug-and-play via §X interfaces — one C# adapter file each + inspector flip. |
 
-**Auto-Rig Pro: OWNED (user has installed).** Wwise Indie / Steam Audio (Apache-2.0) / Unity Recorder / Blender Cycles 4K via RunPod (renderer-agnostic golden bake) / Graphics Test Framework / GRD / RenderMeshIndirect / SpeedTree 9 Importer (FREE consumer) / Cinemachine / A* Free / Animation Rigging / AI Navigation / Localization / **Boat Attack water sample (FREE IWaterBackend) / skybox cubemap (FREE ISkyBackend) / URP Volume Fog override + billboard cards (FREE IFogBackend) / URP FSR 3.1 native (FREE IUpscalerBackend)** — **all FREE.**
+**Auto-Rig Pro: OWNED (user has installed).** Wwise Indie / Steam Audio (Apache-2.0) / Unity Recorder / Blender Cycles 4K via RunPod (renderer-agnostic golden bake) / Graphics Test Framework / GRD / RenderMeshIndirect / SpeedTree 9 Importer (FREE consumer) / Cinemachine / A* Free / Animation Rigging / AI Navigation / Localization / **Boat Attack water sample (FREE IWaterBackend) / skybox cubemap (FREE ISkyBackend) / URP Volume Fog override + billboard cards (FREE IFogBackend) / URP STP 1.0 native + FSR 1.0 native fallback (FREE IUpscalerBackend pair — corrected 2026-05-08 from "URP FSR 3.1 native"; FSR 3.1 is v1.1 swap)** — **all FREE.**
 
 **Hardware paths (user-evaluated 2026-05-07; see §0.2 + §18):**
 
 | Path | Net cost delta | What it unlocks |
 |------|----------------|-----------------|
-| **(A) Keep 4060 Ti 8GB + URP FSR 3.1 + cloud bake-rig** | $0 hardware (~$31/mo cloud) | 1080p/60 via URP FSR 3.1 Quality (720p internal) or native raster + STP fallback. AAA-tier per-domain matrix in §18 (offload Cycles 4K goldens + APV bakes to cloud). DLSS 4.5 SR is v1.1 swap via §X IUpscalerBackend when NGX SDK URP port lands. |
+| **(A) Keep 4060 Ti 8GB + URP STP 1.0 + cloud bake-rig** | $0 hardware (~$31/mo cloud) | 1080p/60 via URP STP 1.0 native upscaler (720p internal at renderScale 0.667) with FSR 1.0 native fallback; native raster also acceptable. AAA-tier per-domain matrix in §18 (offload Cycles 4K goldens + APV bakes to cloud). FSR 3.1 (FSR3-Unity-URP package) and DLSS 4.5 SR (NGX SDK URP port pending packaging) are both v1.1 swaps via §X IUpscalerBackend. |
 | **(B) Used RTX 4070 Ti Super 16GB** | **+~$450 net** ($750 buy − ~$300 sell of 4060 Ti 8GB) | Removes 8GB ceiling. Unlocks APV Sky Occlusion, 8-layer splat, in-process Cycles goldens (no cloud rig needed). |
 | **(C) RTX 5070 12GB** | **+$549** | +50% VRAM, GDDR7. Middle path; AAA-tier achievable per §18 R2 deep-dive table. |
 
@@ -1383,7 +1383,7 @@ DELETE/COLLAPSE:
 3. **Confirm Wwise vs FMOD** — recommendation Wwise (better Rooms & Portals). Either FREE under indie threshold.
 4. **Approve $20 baseline + $20 conditional Mesh Terrains spend** (per §0.3 / §3 / §14.1 — MicroSplat URP variant 189950 only at baseline; +$20 MicroSplat Mesh Terrains conditional if cliffs/overhangs gameplay-critical).
 5. **Approve Option β re-baseline 60-day plan (per §17)** — Phase A-E supersedes the R1 30-day plan; covers ~80% of P0 surface at $20-$40 spend with explicit v1.1 deferral.
-6. **Approve 1080p/60 via URP FSR 3.1 Quality (v1) OR DLSS NGX SDK URP port v1.1 contingent** (per §14.10 + §18.1). URP FSR 3.1 is FREE and ships in v1; DLSS 4.5 SR is the v1.1 IUpscalerBackend swap per §X (NGX SDK URP port pending packaging). Frame-gen any backend deferred v1.1.
+6. **Approve 1080p/60 via URP STP 1.0 native upscaler (v1, with FSR 1.0 native fallback) OR FSR 3.1 (FSR3-Unity-URP package) / DLSS NGX SDK URP port (v1.1 contingent)** (per §14.10 + §18.1). STP and FSR 1.0 are FREE and ship native in URP 17.3; FSR 3.1 and DLSS 4.5 SR are v1.1 IUpscalerBackend swaps per §X. **NOTE 2026-05-08:** corrected from prior "URP FSR 3.1 native" mis-citation — URP 17.3's native dropdown lists STP and FSR 1.0, not FSR 3.1. Frame-gen any backend deferred v1.1.
 7. **Resolve §14.9 disagreements** — V1/V3 disagreed on B15-P0-09; need a code-Read pass.
 8. **Apply memory updates §14.8** — collapses 7+ stale entries.
 
@@ -1635,8 +1635,8 @@ Path("renders/quality-audit/hwcap_4060ti_baseline.json").write_text(json.dumps(r
 ```
 D36 morning (2 hrs): Unity Hub > Create New Project > 6000.3.0f1 > URP template. Project location: `unity_project/VbHeroDemo/`.
 D36 afternoon (2 hrs): Edit `unity_project/VbHeroDemo/Packages/manifest.json` to pin: URP 17.3.x, Visual Effect Graph 17.x, Adaptive Probe Volumes (auto), Addressables 2.x, Burst, Collections, Mathematics. Run `Unity Hub > Open Project` to fetch deps (~10 min).
-D36 evening: Create `Assets/VbTerrain/Plugins/` directory. Copy 5 .cs files from repo `unity_plugin/` to `Assets/VbTerrain/Plugins/`. Add asmdef + define symbols (`VB_WATER_BOAT_ATTACK`, `VB_SKY_CUBEMAP`, `VB_FOG_URP_VOLUME`, `VB_UPSCALER_FSR31`) per §X. Verify all 5 compile.
-D37 morning: Project Settings > Graphics > Render Pipeline Asset = create `Assets/Settings/VeilBreakersURP.asset` (UniversalRenderPipelineAsset, Forward+, MSAA 4x, 4 cascades, shadow distance 150m, FSR 3.1 upscaler, ColorSpace=Linear). Project Settings > Quality > pipeline asset assignments per tier.
+D36 evening: Create `Assets/VbTerrain/Plugins/` directory. Copy 5 .cs files from repo `unity_plugin/` to `Assets/VbTerrain/Plugins/`. Add asmdef + define symbols (`VB_WATER_BOAT_ATTACK`, `VB_SKY_CUBEMAP`, `VB_FOG_URP_VOLUME`, `VB_UPSCALER_STP` (v1 primary, URP native), `VB_UPSCALER_FSR1` (v1 fallback, URP native)) per §X. `VB_UPSCALER_FSR31` and `VB_UPSCALER_DLSS` are reserved for v1.1 swap adapters and remain undefined in v1. Verify all 5 compile.
+D37 morning: Project Settings > Graphics > Render Pipeline Asset = create `Assets/Settings/VeilBreakersURP.asset` (UniversalRenderPipelineAsset, Forward+, MSAA 4x, 4 cascades, shadow distance 150m, **Upscaling Filter = Spatial-Temporal Post-Processing (STP) 1.0 — URP 17 native; renderScale 0.667 for 720p→1080p; FSR 1.0 also pre-configured as fallback profile**, ColorSpace=Linear). Project Settings > Quality > pipeline asset assignments per tier.
 D37 afternoon: Create `Assets/Scenes/vb_hero_demo.unity`. Add Directional Light + Camera + URP Volume (default profile with Bloom + Tonemapping ACES).
 ```
 
@@ -1644,8 +1644,8 @@ D37 afternoon: Create `Assets/Scenes/vb_hero_demo.unity`. Add Directional Light 
 | D39 | B5-U4 normal-Y flip | + B5-U5 edges.json |
 | D40-41 | B5-U2 Boat Attack water sample integration via `IWaterBackend = BoatAttackWaterBackend` | (river+pool only — no Ocean simultaneously per §7.1 stacked-feature ceiling). See §X for the IWaterBackend interface contract. |
 | D42 | B5-U8 flow_map | + RenderMeshIndirect for foliage |
-| D43-44 | **Integrate URP FSR 3.1 native upscaler (BEFORE foliage scatter — REVISED 2026-05-07)** | Set URP Asset > Quality > Upscaling Filter = FSR 3.1 + Sharpness slider (`IUpscalerBackend = FSR31UpscalerBackend` per §X). Verify motion vectors enabled across all camera rigs. Author per-scene sharpness curves. Output 1080p, internal 720p, 16.6ms frame budget at 1080p/60 LOCKED. **1-2 days solo-dev integration** (faster than HDRP DLSS because it's a single dropdown — no NGX SDK packaging). Then run `run_unity_recorder_gate.py` + Graphics Test Framework SSIM ≥0.95 against URP rasterized goldens AND Blender Cycles 4K cloud-baked goldens (per §18.6). DLSS 4.5 SR is v1.1 swap (NGX SDK URP port pending packaging) via §X IUpscalerBackend; STP fallback FREE if FSR sharpness unacceptable. **Pre-warm step (FINAL-V3 #2 fill — R2-A3 #4): before each golden capture, run scene flythrough 2 minutes to pre-warm shader cache, then capture goldens fresh.** First-time-seen 10-layer terrain triggers async shader compilation 6-14 sec on 4060 Ti — visible as pink/black tiles. Recorder otherwise captures these stalls *into goldens*, polluting the SSIM ratchet. Use `ShaderVariantCollection.WarmUp()` at scene load + 2-min camera flythrough across all biome chunks before snapshot. |
-| D45 | NotImplementedError shim | replaces fake `compute_nonblack_ratio` (**GATE D45 — URP FSR 3.1 verified at 1080p output, 720p internal, 16.6ms frame budget at 1080p/60 LOCKED; SSIM ≥0.95 against URP rasterized + Cycles 4K goldens; motion vectors verified all camera rigs; FSR 3.1 confirmed via URP Asset Quality settings**) |
+| D43-44 | **Integrate URP STP native upscaler (BEFORE foliage scatter — REVISED 2026-05-07; CORRECTED 2026-05-08 — URP 17 native dropdown options are STP + FSR 1.0; FSR 3.1 is v1.1 external-package swap)** | Set URP Asset > Quality > Upscaling Filter = **Spatial-Temporal Post-Processing (STP) 1.0** (URP 17.3 marquee native upscaler — temporal, motion-vector-driven, ships in the box). FSR 1.0 (FidelityFX Super Resolution 1.0) is the **fallback** dropdown choice if STP causes ghosting on heavy alpha foliage. (`IUpscalerBackend = STPUpscalerBackend` per §X; FSR1UpscalerBackend is the v1 fallback adapter.) Verify motion vectors enabled across all camera rigs (STP requires them). Output 1080p, internal 720p (`UniversalRenderPipelineAsset.renderScale = 0.667` for STP Quality-equivalent), 16.6ms frame budget at 1080p/60 LOCKED. **1-2 days solo-dev integration** (single dropdown — no external SDK). Then run `run_unity_recorder_gate.py` + Graphics Test Framework SSIM ≥0.95 against URP rasterized goldens AND Blender Cycles 4K cloud-baked goldens (per §18.6). FSR 3.1 (FidelityFX Super Resolution 3.1) is the **v1.1 IUpscalerBackend swap** via the AMD/community FSR3-Unity-URP package (~1-2 weeks integration when packaged); DLSS 4.5 SR is the **other v1.1 swap** (NGX SDK URP port pending packaging). **Pre-warm step (FINAL-V3 #2 fill — R2-A3 #4): before each golden capture, run scene flythrough 2 minutes to pre-warm shader cache, then capture goldens fresh.** First-time-seen 10-layer terrain triggers async shader compilation 6-14 sec on 4060 Ti — visible as pink/black tiles. Recorder otherwise captures these stalls *into goldens*, polluting the SSIM ratchet. Use `ShaderVariantCollection.WarmUp()` at scene load + 2-min camera flythrough across all biome chunks before snapshot. |
+| D45 | NotImplementedError shim | replaces fake `compute_nonblack_ratio` (**GATE D45 — URP STP native verified at 1080p output, 720p internal (renderScale 0.667), 16.6ms frame budget at 1080p/60 LOCKED; SSIM ≥0.95 against URP rasterized + Cycles 4K goldens; motion vectors verified all camera rigs (STP requires them); URP Asset > Quality > Upscaling Filter = STP 1.0 confirmed (FSR 1.0 fallback path also smoke-tested)**) |
 
 ### 17.5 Phase E (Days 46-60) — Performance + atmosphere + audio (URP-rebased)
 
@@ -1670,8 +1670,8 @@ D37 afternoon: Create `Assets/Scenes/vb_hero_demo.unity`. Add Directional Light 
 - PFG Bézier compute shader (clean-room cost 3-5d not 1.5d per V3)
 - Refactors PR #49-#54 (low-priority architecture polish)
 - 30 Batch15 P1s (post-v1 quality polish)
-- **DLSS 4.5 SR (URP IUpscalerBackend swap, when NVIDIA NGX SDK URP port lands):** v1 lock is URP FSR 3.1 native (FREE). DLSS NGX SDK URP port is the v1.1 IUpscalerBackend (§X) when packaged. Frame-gen (Streamline FG, any backend) is also v1.1 contingent on plugin integration (~2-3 weeks).
-- **§X v1.1 backend swaps:** Volume Cloud URP ($45 ISkyBackend), Stylized Water 2 ($30 IWaterBackend), Crest 5 ($100-200 IWaterBackend), Atmospheric Height Fog ($35 IFogBackend), DLSS NGX SDK URP port (IUpscalerBackend), STP (URP-native, FREE alternate IUpscalerBackend).
+- **FSR 3.1 (FSR3-Unity-URP package, IUpscalerBackend swap when packaged) and DLSS 4.5 SR (NGX SDK URP port, IUpscalerBackend swap when packaged):** v1 lock is **URP STP 1.0 + FSR 1.0 native** (both FREE, both real Upscaling Filter dropdown options in URP 17.3). FSR 3.1 and DLSS NGX SDK URP port are the v1.1 IUpscalerBackend swaps (§X) when packaged. Frame-gen (Streamline FG, any backend) is also v1.1 contingent on plugin integration (~2-3 weeks).
+- **§X v1.1 backend swaps:** Volume Cloud URP ($45 ISkyBackend), Stylized Water 2 ($30 IWaterBackend), Crest 5 ($100-200 IWaterBackend), Atmospheric Height Fog ($35 IFogBackend), FSR 3.1 (FSR3-Unity-URP package, IUpscalerBackend), DLSS NGX SDK URP port (IUpscalerBackend).
 - `procedural_meshes.py` 22,607 LOC scope contamination relocation (defer per spec §11.7 #7)
 
 ### 17.7 v1.1 → v2 escalation path
@@ -1956,14 +1956,16 @@ FINAL-V2 closed all 10 external-fact corrections flagged by R2-V2 (§13.5) and R
 
 **Status:** This section consolidates the user's latest decisions after pushback on prior 1080p/45 lock + AAA-reference downgrade + happy-turtle foliage choice, then RP-rebased to URP per the 2026-05-07 URP commitment (memory `project_urp_commitment_2026_05_07.md`). Where §0-§17 conflict with §18, **§18 wins.** The implementation auditor reads this section as authoritative.
 
-### 18.1 Resolution lock — 1080p/60 via URP FSR 3.1 Quality (DLSS 4.5 SR is v1.1 swap)
+### 18.1 Resolution lock — 1080p/60 via URP STP 1.0 native upscaler (FSR 3.1 + DLSS 4.5 SR are v1.1 swaps; CORRECTED 2026-05-08)
 
-- **1080p/60 mandate maintained** — URP FSR 3.1 Quality (720p internal → 1080p output) is the v1 unlock, NOT a 1080p/45 raster downgrade.
-- URP 17.3 ships **FSR 3.1 native** (URP Asset > Quality > Upscaling Filter = FSR 3.1 + Sharpness slider); 1-2 day solo-dev integration window. Native raster + STP fallback also FREE.
-- Output 1080p, internal 720p, **16.6ms frame budget at 1080p/60 LOCKED**.
-- DLSS 4.5 SR is the **v1.1 IUpscalerBackend swap** per §X (NVIDIA NGX SDK URP port pending packaging) — one C# adapter file + inspector flip, no bake-side changes.
-- Frame-gen (any backend including Streamline FG, DLSS-G) remains v1.1 contingent on plugin integration (~2-3 weeks).
-- **Supersedes §0.2 + §14.10 prior "1080p/45 raster lock" framing AND prior HDRP DLSS 4.5 SR framing.** §17 Phase D D43-44 + GATE D45 carry the integration ordering.
+- **1080p/60 mandate maintained** — URP STP 1.0 (renderScale 0.667 → 720p internal upscaled to 1080p output) is the v1 unlock, NOT a 1080p/45 raster downgrade.
+- URP 17.3 ships **STP 1.0 native** as its marquee new temporal upscaler (URP Asset > Quality > Upscaling Filter = **Spatial-Temporal Post-Processing (STP) 1.0**). **FSR 1.0** is the in-the-box fallback dropdown choice (FidelityFX Super Resolution 1.0 + Sharpness slider). Both are real native dropdown options in URP 17.3. 1-2 day solo-dev integration window (single dropdown).
+- **NOTE 2026-05-08 — doc correction:** Prior drafts cited "URP FSR 3.1 native." That was wrong. URP 17.3's native Upscaling Filter dropdown lists only: Automatic / Bilinear / Nearest-Neighbor / FidelityFX Super Resolution 1.0 / Spatial-Temporal Post-Processing (STP) 1.0. **FSR 3.1 is NOT a native URP dropdown option.** Confirmed against `docs.unity3d.com/Packages/com.unity.render-pipelines.universal@17.0/manual/universalrp-asset.html` and the URP 17.3 changelog.
+- Output 1080p, internal 720p (renderScale 0.667), **16.6ms frame budget at 1080p/60 LOCKED**.
+- **FSR 3.1 (FidelityFX Super Resolution 3.1)** is the **v1.1 IUpscalerBackend swap** per §X — integrate via the **AMD/community FSR3-Unity-URP package** (~1-2 weeks), one C# adapter file + inspector flip + URP Renderer Feature, no bake-side changes.
+- **DLSS 4.5 SR** is the **other v1.1 IUpscalerBackend swap** per §X (NVIDIA NGX SDK URP port pending packaging) — same adapter pattern.
+- Frame-gen (any backend including Streamline FG, DLSS-G, FSR 3.1 FG mode) remains v1.1 contingent on plugin integration (~2-3 weeks).
+- **Supersedes §0.2 + §14.10 prior "1080p/45 raster lock" framing AND prior HDRP DLSS 4.5 SR framing AND the prior "URP FSR 3.1 native" mis-citation.** §17 Phase D D43-44 + GATE D45 carry the integration ordering.
 
 ### 18.2 AAA reference targets RESTORED
 
@@ -1989,7 +1991,7 @@ FINAL-V2 closed all 10 external-fact corrections flagged by R2-V2 (§13.5) and R
 
 | Path | Card | Net cost delta | Why pick |
 |------|------|----------------|----------|
-| **A** | Keep RTX 4060 Ti 8GB | $0 hardware (~$31/mo cloud bake-rig) | Day-1. URP FSR 3.1 Quality unlocks 1080p/60 (DLSS 4.5 SR is v1.1 IUpscalerBackend swap per §X). AAA-tier achievable per §18.7 with Blender Cycles 4K cloud bake offload. |
+| **A** | Keep RTX 4060 Ti 8GB | $0 hardware (~$31/mo cloud bake-rig) | Day-1. URP STP 1.0 native upscaler (with FSR 1.0 native fallback) unlocks 1080p/60 (FSR 3.1 via FSR3-Unity-URP package and DLSS 4.5 SR via NGX SDK URP port are both v1.1 IUpscalerBackend swaps per §X). AAA-tier achievable per §18.7 with Blender Cycles 4K cloud bake offload. |
 | **B** | Used RTX 4070 Ti Super 16GB | **+~$450 net** ($750 buy − ~$300 sell of 4060 Ti 8GB) | Removes 8GB ceiling. Unlocks APV Sky Occlusion + 8-layer splat + in-process Cycles 4K goldens (no cloud rig needed). |
 | **C** | RTX 5070 12GB | **+$549** | Middle path. +50% VRAM, GDDR7 bandwidth. AAA-tier per §18.7 without cloud rig for most domains. |
 
@@ -2032,11 +2034,11 @@ FINAL-V2 closed all 10 external-fact corrections flagged by R2-V2 (§13.5) and R
   ```
 - Spot tier can preempt; checkpoint bake state every 10 min via Unity script. For un-preemptible runs, use RunPod community RTX 4090 (~$0.69/hr) for hero-shot final passes only.
 
-### 18.7 Per-domain AAA tier achievable at 12GB + URP FSR 3.1 (R2 deep-dive; URP-rebased)
+### 18.7 Per-domain AAA tier achievable at 12GB + URP STP 1.0 (R2 deep-dive; URP-rebased; CORRECTED 2026-05-08)
 
 Reproduced from R2 deep-dive table — applies to **path C (RTX 5070 12GB)** and effectively **path A + cloud bake-rig** (Cycles 4K offloaded). Path B 16GB hits or exceeds every row.
 
-| Domain | AAA target tier | Achievable at 12GB + URP FSR 3.1 (v1.1 swap to DLSS 4.5 SR via §X)? |
+| Domain | AAA target tier | Achievable at 12GB + URP STP 1.0 native (v1.1 swap to FSR 3.1 via FSR3-Unity-URP package or DLSS 4.5 SR via NGX SDK URP port — both per §X)? |
 |--------|------------------|------------------------------------|
 | Terrain | **Witcher 3 NG Ultra+** (10-layer splat with MicroSplat URP Texture Clusters) | YES |
 | Materials | **8-layer MicroSplat URP with Texture Clusters** (3-sub-texture cycling) | YES |
@@ -2047,7 +2049,7 @@ Reproduced from R2 deep-dive table — applies to **path C (RTX 5070 12GB)** and
 | VFX | **D4 storm parity** (LightningController.cs + Sonniss thunder + URP Volume Fog interactions) | YES |
 | AAA-anchor goldens | **Reserved for offline Blender Cycles 4K renders** (cloud bake-rig in §18.6) | OFFLINE-ONLY (renderer-agnostic) |
 
-Path A (8GB + URP FSR 3.1 + cloud bake) hits every row above except in-process AAA-anchor goldens (which are offloaded to Cycles cloud rig — same final visual outcome).
+Path A (8GB + URP STP 1.0 native upscaler + cloud bake) hits every row above except in-process AAA-anchor goldens (which are offloaded to Cycles cloud rig — same final visual outcome).
 
 ### 18.8 NVIDIA driver gate (mandatory launcher check)
 
@@ -2058,16 +2060,16 @@ Path A (8GB + URP FSR 3.1 + cloud bake) hits every row above except in-process A
 
 ### 18.9 Cross-section override map (where §18 supersedes earlier sections; URP-rebased)
 
-- §0.2 — 1080p/60 via URP FSR 3.1 Quality replaces 1080p/45 raster lock and prior HDRP DLSS 4.5 SR framing. Hardware paths A/B/C added.
+- §0.2 — 1080p/60 via URP STP 1.0 native upscaler (with FSR 1.0 native fallback) replaces 1080p/45 raster lock and prior HDRP DLSS 4.5 SR framing AND prior "URP FSR 3.1 native" mis-citation (corrected 2026-05-08; FSR 3.1 is a v1.1 external-package swap). Hardware paths A/B/C added.
 - §3 — SpeedTree 9 Indie restored as paid tool; happy-turtle DROPPED row added; cloud bake-rig row added; Crest 5 dropped (v1.1 swap per §X); MicroSplat URP variant 189950 replaces HDRP variant 344008.
 - §14.1 — money table rewritten ($39 day-1 / ~$50/mo recurring; +$450 path B / +$549 path C hardware; cost ceiling $50-$70 down from $130).
-- §14.10 — 1080p/60 URP FSR 3.1 Quality is v1 lock; 1080p/45 raster framing OBSOLETE; DLSS 4.5 SR is v1.1 IUpscalerBackend swap per §X.
+- §14.10 — 1080p/60 URP STP 1.0 native upscaler (with FSR 1.0 native fallback) is v1 lock; 1080p/45 raster framing OBSOLETE; FSR 3.1 (FSR3-Unity-URP package) and DLSS 4.5 SR (NGX SDK URP port) are both v1.1 IUpscalerBackend swaps per §X.
 - §16.1 — "Bloodborne PS4 5GB" reference framing OBSOLETE; AAA refs in §18.2 are canonical.
-- §17 Phase D D43-44 — URP FSR 3.1 integration step BEFORE foliage scatter (1-2d, simpler than HDRP DLSS); Cycles 4K cloud goldens replace HDRP Path Tracer.
-- §17 Phase D GATE D45 — adds "URP FSR 3.1 verified at 1080p output, 720p internal, 16.6ms frame budget at 1080p/60 LOCKED."
+- §17 Phase D D43-44 — URP STP 1.0 native upscaler integration step BEFORE foliage scatter (1-2d, single dropdown — simpler than HDRP DLSS); FSR 1.0 native fallback configured alongside; Cycles 4K cloud goldens replace HDRP Path Tracer.
+- §17 Phase D GATE D45 — adds "URP STP 1.0 native verified at 1080p output, 720p internal (renderScale 0.667), 16.6ms frame budget at 1080p/60 LOCKED, motion vectors required for STP, FSR 1.0 fallback smoke-tested."
 - §17 Phase E D49-50 — SpeedTree 9 Indie + DIY URP Shader Graph wind; happy-turtle and Modular Tree GoodPie billboards DROPPED.
 - §17 Phase E D51-52 — skybox cubemap (v1 ISkyBackend) + URP Volume Fog + billboard fog cards (v1 IFogBackend); Volume Cloud URP asset $45 is the v1.1 ISkyBackend swap.
-- §17.6 — DLSS NGX SDK URP port + frame-gen plugins both v1.1 deferred; but URP FSR 3.1 is NOT deferred — it ships v1.
+- §17.6 — DLSS NGX SDK URP port, FSR 3.1 via FSR3-Unity-URP package, and frame-gen plugins are all v1.1 deferred; **URP STP 1.0 (with FSR 1.0 native fallback) ships v1** as the native Upscaling Filter dropdown choice in URP 17.3.
 - §X URP Backend Abstraction — added 2026-05-07 to formalize the plug-and-play upgrade path for Water/Sky/Fog/Upscaler interfaces.
 
 ### 18.10 Per-decision change-log marker
