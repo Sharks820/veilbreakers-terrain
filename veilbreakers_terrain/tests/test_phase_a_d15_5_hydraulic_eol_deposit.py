@@ -103,9 +103,14 @@ def test_short_max_lifetime_stress():
     )
     total_erosion = float(np.asarray(masks.erosion_amount, dtype=np.float64).sum())
     total_deposition = float(np.asarray(masks.deposition_amount, dtype=np.float64).sum())
-    leak_fraction = (
-        abs(total_erosion - total_deposition) / max(total_erosion, 1e-9)
+    # Guard against vacuous pass: if the geometry/parameters stop
+    # producing erosion the leak_fraction trivially evaluates to 0.
+    # Explicit threshold ensures the test exercises the EOL deposit path.
+    assert total_erosion > 1e-3, (
+        f"short_max_lifetime stress geometry must produce measurable "
+        f"erosion to exercise the EOL deposit path; got {total_erosion:.6f}"
     )
+    leak_fraction = abs(total_erosion - total_deposition) / total_erosion
     assert leak_fraction < 0.10, (
         f"short-lifetime mass leak >10%: ero={total_erosion:.2f}, "
         f"dep={total_deposition:.2f}, leak={leak_fraction:.4f}"
@@ -134,10 +139,25 @@ def test_eol_deposit_honours_deposition_mask():
     total_deposition = float(
         np.asarray(masks.deposition_amount, dtype=np.float64).sum()
     )
+    total_erosion = float(
+        np.asarray(masks.erosion_amount, dtype=np.float64).sum()
+    )
+    # Guard against vacuous pass: this test only exercises the EOL
+    # mask-honouring path if the run actually produces erosion (which
+    # is what carries sediment into the EOL deposit code path).
+    assert total_erosion > 1e-3, (
+        f"deposition_mask geometry must produce measurable erosion "
+        f"to exercise the EOL deposit guard; got {total_erosion:.6f}"
+    )
     # With deposition_mask=0 the only legal deposit volume is 0.
     # Allow a tiny tolerance for accumulated FP error in `_deposit`'s
-    # bilinear weights; pre-fix this test would record many units of
-    # deposition because the EOL deposit path bypassed the mask check.
+    # bilinear weights. This test guards a NEW EOL-deposit path
+    # introduced by the D15.5 hotfix from accidentally ignoring
+    # deposition_mask — pre-hotfix the bug was sediment LOSS at the
+    # natural for-loop end, not bypass of mask. The mask-bypass
+    # failure mode would only arise if the hotfix's EOL closure
+    # called _deposit() directly without the
+    # `_boundary_deposit_blocked` guard.
     assert total_deposition < 1e-6, (
         f"end-of-life deposit bypassed deposition_mask; "
         f"recorded {total_deposition:.6f} units of deposition where "
