@@ -448,3 +448,47 @@ def test_compute_twi_helper_falls_back_when_flow_accumulation_absent() -> None:
     assert twi.shape == height.shape
     assert twi.dtype == np.float32
     assert np.isfinite(twi).all()
+
+
+# ---------------------------------------------------------------------------
+# topographic_indices_pass_definition broker — direct test for HIGH→LOW
+# ---------------------------------------------------------------------------
+
+
+def test_topographic_indices_pass_definition_returns_canonical_passdef() -> None:
+    """`topographic_indices_pass_definition` returns the canonical PassDefinition
+    without importing terrain_pipeline (broker pattern that breaks the CodeQL
+    static cycle).
+
+    Direct test reference so the wiring scanner promotes the function from
+    HIGH risk to LOW risk (no module-level call → needs explicit test
+    reference for direct_test_covered evidence).
+    """
+    from veilbreakers_terrain.handlers.terrain_topographic_indices import (
+        pass_topographic_indices,
+        topographic_indices_pass_definition,
+    )
+
+    pd = topographic_indices_pass_definition()
+    assert pd.name == "topographic_indices"
+    assert pd.func is pass_topographic_indices
+    assert pd.requires_channels == ("height",)
+    assert "vb_aspect_deg" in pd.produces_channels
+    assert "vb_aspect_north" in pd.produces_channels
+    assert "vb_canopy_openness" in pd.produces_channels
+    assert "vb_TWI" in pd.produces_channels
+    assert pd.seed_namespace == "topographic_indices"
+
+
+def test_topographic_indices_pass_definition_returns_fresh_instance() -> None:
+    """Factory must return a fresh PassDefinition each call so callers
+    can mutate without aliasing.
+    """
+    from veilbreakers_terrain.handlers.terrain_topographic_indices import (
+        topographic_indices_pass_definition,
+    )
+
+    a = topographic_indices_pass_definition()
+    b = topographic_indices_pass_definition()
+    assert a == b
+    assert a is not b
