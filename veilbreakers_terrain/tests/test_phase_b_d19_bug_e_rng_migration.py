@@ -193,15 +193,26 @@ def test_generate_canyon_deterministic_after_migration():
     # defaults. We do NOT swallow TypeError silently because that would
     # mask real regressions where the function suddenly requires args
     # we are no longer passing.
-    extra_kwargs: dict = {}
+    from typing import Any
+
+    extra_kwargs: dict[str, Any] = {}
     for name, param in sig.parameters.items():
         if name == "seed":
             continue
         if param.default is not inspect.Parameter.empty:
             continue  # parameter has a default; let function provide it
-        # Required parameter without default — provide a numeric stub
-        # that's plausible across most generators in this module.
-        extra_kwargs[name] = 1.0
+        # Required parameter without default — provide a stub plausible
+        # across most generators in this module. The dict is typed as
+        # ``Any`` because parameters span numeric/str types and we are
+        # only smoke-testing determinism; type checking is enforced
+        # elsewhere by the per-function signature.
+        annotation = param.annotation
+        if annotation is int or annotation == "int":
+            extra_kwargs[name] = 1
+        elif annotation is str or annotation == "str":
+            extra_kwargs[name] = "default"
+        else:
+            extra_kwargs[name] = 1.0
     a = generate_canyon(seed=42, **extra_kwargs)
     b = generate_canyon(seed=42, **extra_kwargs)
     if False:  # placeholder for legacy block below
