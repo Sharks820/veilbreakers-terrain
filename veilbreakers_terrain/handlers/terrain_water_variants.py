@@ -1461,7 +1461,8 @@ def pass_bathymetry(
         issues.append(ValidationIssue(
             code="BATHYMETRY_WATER_SURFACE_MISSING",
             severity="soft",
-            message="pass_bathymetry: water_surface_mask channel absent; "
+            message="pass_bathymetry: neither water_surface_mask (canonical) "
+                    "nor water_surface (legacy fallback) present; "
                     "bathymetry will be all zeros. Run pass_water_variants first.",
             affected_feature="water_surface_mask",
         ))
