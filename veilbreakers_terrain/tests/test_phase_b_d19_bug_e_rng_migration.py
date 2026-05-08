@@ -215,13 +215,8 @@ def test_generate_canyon_deterministic_after_migration():
             extra_kwargs[name] = 1.0
     a = generate_canyon(seed=42, **extra_kwargs)
     b = generate_canyon(seed=42, **extra_kwargs)
-    if False:  # placeholder for legacy block below
-        return
-        # Output is a dict with vertex_count / face_count etc.; compare
-        # the determinism-relevant subset.
-        # generate_canyon's return type is dict per its docstring, so a
-        # `.get` access is type-safe; pyright-strict reports unnecessary
-        # isinstance() narrowing if we add one here.
-        a_count = a.get("vertex_count")
-        b_count = b.get("vertex_count")
-        assert a_count == b_count
+    # Output is a dict with vertex_count / face_count etc.; compare
+    # the determinism-relevant subset. generate_canyon's return type
+    # is dict per its docstring, so .get is type-safe.
+    assert a.get("vertex_count") == b.get("vertex_count")
+    assert a.get("face_count") == b.get("face_count")
