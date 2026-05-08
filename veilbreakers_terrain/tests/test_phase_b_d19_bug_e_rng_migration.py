@@ -137,6 +137,9 @@ def test_generate_canyon_deterministic_after_migration():
             return
         # Output is a dict with vertex_count / face_count etc.; compare
         # the determinism-relevant subset.
-        a_count = a.get("vertex_count") if isinstance(a, dict) else None
-        b_count = b.get("vertex_count") if isinstance(b, dict) else None
+        # generate_canyon's return type is dict per its docstring, so a
+        # `.get` access is type-safe; pyright-strict reports unnecessary
+        # isinstance() narrowing if we add one here.
+        a_count = a.get("vertex_count")
+        b_count = b.get("vertex_count")
         assert a_count == b_count
