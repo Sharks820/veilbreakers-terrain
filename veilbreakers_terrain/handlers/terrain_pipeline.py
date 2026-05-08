@@ -216,19 +216,29 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # fails when stratigraphy is scheduled because its height
             # overwrite is non-determinism-safe today).
             #
-            # karst + glacial are already scheduled (glacial via has_scene_read
-            # insert at :199; karst is consumed via optional_channels by
-            # downstream passes per R1.5 verifier).
+            # karst + glacial are already scheduled (glacial via the
+            # has_scene_read insert in the early validation_full block;
+            # karst is consumed via optional_channels by downstream passes
+            # per R1.5 verifier).
             #
-            # Both selected passes are gated on has_scene_read because their
-            # delta outputs (wind_erosion_delta, coastline_delta) need
-            # ``integrate_deltas`` (also has_scene_read-gated) to apply.
-            *(("wind_erosion", "coastline") if has_scene_read else ()),
+            # ``wind_erosion`` is scheduled HERE, before ``pass_terrain_features``
+            # and the water-variants block. Its only requires_channels=("height",)
+            # entry is already populated by the macro/banded/erosion passes
+            # earlier in the sequence.
+            *(("wind_erosion",) if has_scene_read else ()),
             # C-7: terrain feature carving before scatter
             "pass_terrain_features",
             # C-8: sightline framing before scatter
             "framing",
             *(("water_variants", "pass_seasonal_water_state", "bathymetry", "pass_water_depth") if has_scene_read else ()),
+            # Codex review (PR #36 P2): ``pass_coastline`` reads
+            # ``water_surface_elevation_m`` to derive shoreline; that channel is
+            # written by ``pass_water_variants`` upstream. Scheduling coastline
+            # BEFORE water_variants makes the pass fall back to sea_level=0.0
+            # and produce wrong tidal/wave/coastline_delta. Schedule AFTER
+            # water_variants but BEFORE waterfalls + integrate_deltas (so
+            # ``coastline_delta`` is available to the integrator).
+            *(("coastline",) if has_scene_read else ()),
             *(("waterfalls", "emit_particle_systems") if has_scene_read and include_waterfalls else ()),
             *(("integrate_deltas",) if has_scene_read else ()),
             *(("talus", "structural_masks_post_talus") if include_talus else ()),

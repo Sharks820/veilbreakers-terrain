@@ -1,22 +1,27 @@
-"""Phase A D8-9 / B15-P0-28..33 trio regression tests.
+"""Phase A D8-9 regression tests.
 
-Verifies that the 3 Bundle I orphan-by-omission passes —
-``stratigraphy``, ``wind_erosion``, ``coastline`` — are explicitly
-scheduled in the default pass sequence when ``has_scene_read`` is true
-(i.e. when ``integrate_deltas`` is also scheduled to apply their delta
-outputs).
+Verifies the Bundle I orphan-pass scheduling contract:
+
+  * ``wind_erosion`` and ``coastline`` ARE explicitly scheduled in the
+    default pass sequence when ``has_scene_read`` is true (i.e. when
+    ``integrate_deltas`` is also scheduled to apply their delta outputs).
+  * ``stratigraphy`` is DEFERRED to Phase B (Task #39): pre-existing
+    produces_channels gap (writes 4 undeclared channels including
+    overwriting ``height`` without ``overrides=("height",)``) breaks
+    byte-identity determinism when scheduled. The deferred-marker test
+    pins this state until the Phase B fix lands.
 
 The other 2 Bundle I passes (``glacial``, ``karst``) are intentionally
 NOT in this test:
 
-  * ``glacial`` is already scheduled at :199 of terrain_pipeline.py via
-    the existing ``has_scene_read`` insert, before this PR.
+  * ``glacial`` is already scheduled via the existing ``has_scene_read``
+    insert in the early ``validation_full`` block, before this PR.
   * ``karst`` is reachable via ``optional_channels`` consumption by
     downstream passes (per R1.5 verifier) and not a real omission.
 
-Both ``register_bundle_i_passes()`` registers all 5; this test does not
-re-verify registration (covered by adjacent contract tests). It only
-verifies SCHEDULING: that the names appear in
+``register_bundle_i_passes()`` registers all 5 Bundle I passes; this
+test does not re-verify registration (covered by adjacent contract
+tests). It only verifies SCHEDULING — that the names appear in
 ``build_default_pass_sequence(intent)`` for representative intents.
 """
 
@@ -105,9 +110,10 @@ def test_stratigraphy_DEFERRED_to_phase_b():
     intent = _intent_with_scene_read()
     seq = build_default_pass_sequence(intent)
     # Pin the deferral: stratigraphy MUST NOT be in the sequence yet. When
-    # Phase B lands the determinism fix this test should be flipped to
-    # `assert "stratigraphy" in seq` along with the schedule edit at
-    # terrain_pipeline.py:218.
+    # Phase B lands the determinism fix this test flips to
+    # `assert "stratigraphy" in seq` and the schedule edit lands inside
+    # the Phase A D8-9 block of build_default_pass_sequence (search for
+    # "Phase A D8-9" in terrain_pipeline.py).
     assert "stratigraphy" not in seq, (
         "stratigraphy should not be scheduled until Phase B fixes its "
         "produces_channels + overrides=height declaration. See Task #39."
@@ -144,8 +150,17 @@ def test_wind_erosion_precedes_integrate_deltas():
     """``wind_erosion`` must precede ``integrate_deltas`` (delta producer → consumer)."""
     intent = _intent_with_scene_read()
     seq = build_default_pass_sequence(intent)
-    if "integrate_deltas" not in seq:
-        return
+    # Both passes are required for Phase A D8-9 — assert presence first so a
+    # regression that drops either fails with a clear message rather than a
+    # ValueError from seq.index().
+    assert "wind_erosion" in seq, (
+        f"wind_erosion missing from default sequence — D8-9 schedule regressed; "
+        f"seq={seq!r}"
+    )
+    assert "integrate_deltas" in seq, (
+        f"integrate_deltas missing — has_scene_read scheduling regressed; "
+        f"seq={seq!r}"
+    )
     wind_idx = seq.index("wind_erosion")
     deltas_idx = seq.index("integrate_deltas")
     assert wind_idx < deltas_idx, (
@@ -158,13 +173,40 @@ def test_coastline_precedes_integrate_deltas():
     """``coastline`` must precede ``integrate_deltas`` (coastline_delta → integrate)."""
     intent = _intent_with_scene_read()
     seq = build_default_pass_sequence(intent)
-    if "integrate_deltas" not in seq:
-        return
+    assert "coastline" in seq, (
+        f"coastline missing from default sequence — D8-9 schedule regressed; "
+        f"seq={seq!r}"
+    )
+    assert "integrate_deltas" in seq, (
+        f"integrate_deltas missing — has_scene_read scheduling regressed; "
+        f"seq={seq!r}"
+    )
     coast_idx = seq.index("coastline")
     deltas_idx = seq.index("integrate_deltas")
     assert coast_idx < deltas_idx, (
         f"coastline must precede integrate_deltas; got "
         f"coast at {coast_idx}, integrate_deltas at {deltas_idx}, seq={seq!r}"
+    )
+
+
+def test_coastline_follows_water_variants():
+    """``coastline`` must run AFTER ``water_variants`` (Codex P2 PR #36 review).
+
+    pass_coastline reads ``water_surface_elevation_m`` to derive shoreline
+    geometry. That channel is written by pass_water_variants. Scheduling
+    coastline BEFORE water_variants makes coastline fall back to
+    sea_level=0.0 and produce wrong tidal/wave/coastline_delta values.
+    """
+    intent = _intent_with_scene_read()
+    seq = build_default_pass_sequence(intent)
+    assert "coastline" in seq, f"coastline missing; seq={seq!r}"
+    assert "water_variants" in seq, f"water_variants missing; seq={seq!r}"
+    coast_idx = seq.index("coastline")
+    water_idx = seq.index("water_variants")
+    assert water_idx < coast_idx, (
+        f"water_variants must precede coastline (water_surface_elevation_m "
+        f"producer → consumer); got water_variants at {water_idx}, "
+        f"coastline at {coast_idx}, seq={seq!r}"
     )
 
 
