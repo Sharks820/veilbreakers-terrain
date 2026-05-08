@@ -12,8 +12,19 @@ VeilBreakers commits to **Universal Render Pipeline (URP) 17.3** for v1.0 ship.
 The choice is locked because URP 17.3 is FREE, runs comfortably inside the
 project's **8 GB VRAM hard constraint** (RTX 4060 Ti baseline), and continues
 to receive Unity engineering attention while HDRP enters maintenance mode in
-February 2026. See `project_urp_commitment_2026_05_07.md` (memory) and
-`docs/IMPLEMENTATION_FIX_GUIDE_2026_05_07_FINAL.md` for the full justification.
+February 2026.
+
+> **Reference scope.** The URP commitment was finalized via a 6-agent fleet
+> audit + Unity batch-mode setup verification (memory note
+> `project_urp_commitment_2026_05_07`, repo-external — lives in the
+> author's user-memory store, not under version control).
+> `docs/IMPLEMENTATION_FIX_GUIDE_2026_05_07_FINAL.md` contains the legacy
+> HDRP-tied stack notes from before this commitment was made; **only the
+> 8 GB VRAM hardware-constraint analysis there is still authoritative**
+> (memory note `project_hardware_8gb_vram_2026_05_07`, also user-memory
+> only). The HDRP-specific picks (MicroSplat HDRP, WaterSurface, DXR, etc.)
+> in that older guide are SUPERSEDED by this URP spec — see §10 References
+> for what to read and what to ignore.
 
 URP, however, has feature gaps relative to HDRP — most notably in water,
 volumetric clouds, height-fog, and high-quality temporal upscaling. Rather
@@ -41,6 +52,25 @@ or any of the 26 fields of `VbTerrainTileMetadata`.
 
 ## 2. The 4 interfaces
 
+All four interfaces share a small common base, `IBackend`, so generic
+selection code can read `BackendId` / `IsAvailable` without `dynamic`:
+
+```csharp
+namespace VeilBreakers.Rendering.Backends
+{
+    public interface IBackend
+    {
+        bool   IsAvailable { get; }
+        string BackendId   { get; }
+    }
+}
+```
+
+`IWaterBackend`, `ISkyBackend`, `IFogBackend`, and `IUpscalerBackend` each
+extend `IBackend`. The members shown in the per-slot contracts below
+(`IsAvailable`, `BackendId`) are inherited from `IBackend` and re-listed
+for readability — implementers do not declare them twice.
+
 ### 2.1 `IWaterBackend`
 
 **Today's implementation (v1.0 ship):** Boat Attack water (FREE Unity sample
@@ -57,11 +87,9 @@ foam by mask, caustics by projector, shore reaction by SDF lookup.
 ```csharp
 namespace VeilBreakers.Rendering.Backends
 {
-    public interface IWaterBackend
+    public interface IWaterBackend : IBackend
     {
-        bool   IsAvailable { get; }
-        string BackendId   { get; }     // "boat_attack" / "stylized_water_2" / "crest_5" / "hand_authored_urp"
-
+        // BackendId is one of: "boat_attack" / "stylized_water_2" / "crest_5" / "hand_authored_urp"
         void ApplyManifest(WaterSurfaceManifest manifest);
         void SetWaterPlaneElevation(float meters);
         void SetWaveSpec(float amplitude_m, float period_s);
@@ -88,11 +116,9 @@ authored as a discrete keyframe per scene (no real-time TOD blend in v1.0).
 ```csharp
 namespace VeilBreakers.Rendering.Backends
 {
-    public interface ISkyBackend
+    public interface ISkyBackend : IBackend
     {
-        bool   IsAvailable { get; }
-        string BackendId   { get; }     // "skybox_cubemap" / "volume_cloud_urp" / "volumetric_clouds_native"
-
+        // BackendId is one of: "skybox_cubemap" / "volume_cloud_urp" / "volumetric_clouds_native"
         void ApplyManifest(SkyManifest manifest);
         void SetCubemap(Texture cubemap);
         void SetTimeOfDay(float hour);                // 0.0 .. 24.0
@@ -119,11 +145,9 @@ billboarded fog cards for hero pockets (mist clinging to riverbeds, etc.).
 ```csharp
 namespace VeilBreakers.Rendering.Backends
 {
-    public interface IFogBackend
+    public interface IFogBackend : IBackend
     {
-        bool   IsAvailable { get; }
-        string BackendId   { get; }     // "urp_fog_volume_plus_cards" / "atmospheric_height_fog" / "volumetric_fog_native"
-
+        // BackendId is one of: "urp_fog_volume_plus_cards" / "atmospheric_height_fog" / "volumetric_fog_native"
         void ApplyManifest(AtmosphericManifest manifest);
         void SetHeightDensityCurve(AnimationCurve curve);   // y in [0..1]; x = world meters
         void SetFogColorRamp(Texture2D ramp);
@@ -149,18 +173,22 @@ ships in URP 17.3 out of the box). Used at "balanced" quality to recover
 ```csharp
 namespace VeilBreakers.Rendering.Backends
 {
-    public interface IUpscalerBackend
+    public interface IUpscalerBackend : IBackend
     {
-        bool   IsAvailable { get; }
-        string BackendId   { get; }     // "fsr_3_1" / "dlss_4_5" / "stp_native" / "off"
-
+        // BackendId is one of: "fsr_3_1" / "dlss_4_5" / "stp_native" / "off"
         void ApplyManifest(UpscalerManifest manifest);
         void SetQuality(string preset);      // "ultra_quality" / "quality" / "balanced" / "performance"
         void SetMipBias(float biasOffset);   // negative values sharpen at the cost of perf
-        bool IsSupportedOnThisGPU();
+        bool IsSupportedOnThisGPU();         // instance method — call after construction
     }
 }
 ```
+
+> **Capability detection convention.** `IsSupportedOnThisGPU()` is declared
+> as an **instance method** so adapters can consult fields populated in
+> their constructor (NGX init handle, FSR feature support flags, etc.).
+> The bootstrap MUST construct the backend first and then call the
+> instance method — never call it as a static. See §5.1 below.
 
 ---
 
@@ -213,13 +241,20 @@ coupling.
 }
 ```
 
-This schema has matching `@dataclass` definitions on the bake side at
-`veilbreakers_terrain/handlers/terrain_unity_backends.py`:
+This schema **will** have matching `@dataclass` definitions on the bake side
+at `veilbreakers_terrain/handlers/terrain_unity_backends.py` once the
+**Phase D1 companion PR** lands (this is the Phase D3 design spec — D1 is
+the bake-side implementation that mirrors the schema in Python):
 
 - `WaterSurfaceManifest`
 - `SkyManifest`
 - `AtmosphericManifest`
 - `UpscalerManifest`
+
+> **Pending prerequisite.** As of this commit, `terrain_unity_backends.py`
+> does not yet exist on this branch. Phase D1 introduces it; this Phase D3
+> doc is the canonical schema specification it must conform to. Until D1
+> merges, the JSON above is the single source of truth.
 
 The bake side OWNS the schema. The runtime side is read-only.
 
@@ -247,60 +282,68 @@ Assets/Scripts/Rendering/
 ├── Water/
 │   ├── BoatAttack/
 │   │   ├── VeilBreakers.Rendering.Water.BoatAttack.asmdef
-│   │   │   (versionDefines: VB_WATER_BOAT_ATTACK)
+│   │   │   (defineConstraints: VB_WATER_BOAT_ATTACK)
 │   │   └── BoatAttackWaterBackend.cs
 │   ├── StylizedWater2/
 │   │   ├── VeilBreakers.Rendering.Water.StylizedWater2.asmdef
-│   │   │   (versionDefines: VB_WATER_STYLIZED_2)
+│   │   │   (defineConstraints: VB_WATER_STYLIZED_2)
 │   │   └── StylizedWater2Backend.cs
 │   └── Crest5/
 │       ├── VeilBreakers.Rendering.Water.Crest5.asmdef
-│       │   (versionDefines: VB_WATER_CREST_5)
+│       │   (defineConstraints: VB_WATER_CREST_5)
 │       └── Crest5Backend.cs
 ├── Sky/
 │   ├── SkyboxCubemap/
 │   │   ├── VeilBreakers.Rendering.Sky.SkyboxCubemap.asmdef
-│   │   │   (versionDefines: VB_SKY_SKYBOX_CUBEMAP)
+│   │   │   (defineConstraints: VB_SKY_SKYBOX_CUBEMAP)
 │   │   └── SkyboxCubemapBackend.cs
 │   ├── VolumeCloudURP/
 │   │   ├── VeilBreakers.Rendering.Sky.VolumeCloudURP.asmdef
-│   │   │   (versionDefines: VB_SKY_VOLUME_CLOUD_URP)
+│   │   │   (defineConstraints: VB_SKY_VOLUME_CLOUD_URP)
 │   │   └── VolumeCloudURPBackend.cs
 │   └── VolumetricCloudsNative/
 │       ├── VeilBreakers.Rendering.Sky.VolumetricCloudsNative.asmdef
-│       │   (versionDefines: VB_SKY_VOLUMETRIC_CLOUDS_NATIVE)
+│       │   (defineConstraints: VB_SKY_VOLUMETRIC_CLOUDS_NATIVE)
 │       └── VolumetricCloudsNativeBackend.cs
 ├── Fog/
 │   ├── URPFogVolume/
 │   │   ├── VeilBreakers.Rendering.Fog.URPFogVolume.asmdef
-│   │   │   (versionDefines: VB_FOG_URP_FOG_VOLUME)
+│   │   │   (defineConstraints: VB_FOG_URP_FOG_VOLUME)
 │   │   └── URPFogVolumeBackend.cs
 │   ├── AtmosphericHeightFog/
 │   │   ├── VeilBreakers.Rendering.Fog.AtmosphericHeightFog.asmdef
-│   │   │   (versionDefines: VB_FOG_ATMOSPHERIC_HEIGHT_FOG)
+│   │   │   (defineConstraints: VB_FOG_ATMOSPHERIC_HEIGHT_FOG)
 │   │   └── AtmosphericHeightFogBackend.cs
 │   └── VolumetricFogNative/
 │       ├── VeilBreakers.Rendering.Fog.VolumetricFogNative.asmdef
-│       │   (versionDefines: VB_FOG_VOLUMETRIC_FOG_NATIVE)
+│       │   (defineConstraints: VB_FOG_VOLUMETRIC_FOG_NATIVE)
 │       └── VolumetricFogNativeBackend.cs
 └── Upscaler/
     ├── FSR31/
     │   ├── VeilBreakers.Rendering.Upscaler.FSR31.asmdef
-    │   │   (versionDefines: VB_UPSCALER_FSR_3_1)
+    │   │   (defineConstraints: VB_UPSCALER_FSR_3_1)
     │   └── FSR31UpscalerBackend.cs
     ├── DLSS/
     │   ├── VeilBreakers.Rendering.Upscaler.DLSS.asmdef
-    │   │   (versionDefines: VB_UPSCALER_DLSS)
+    │   │   (defineConstraints: VB_UPSCALER_DLSS)
     │   └── DLSSUpscalerBackend.cs
     ├── STP/
     │   ├── VeilBreakers.Rendering.Upscaler.STP.asmdef
-    │   │   (versionDefines: VB_UPSCALER_STP)
+    │   │   (defineConstraints: VB_UPSCALER_STP)
     │   └── STPUpscalerBackend.cs
     └── Off/
         ├── VeilBreakers.Rendering.Upscaler.Off.asmdef
-        │   (always enabled — no version define needed)
+        │   (always enabled — no constraint)
         └── OffUpscalerBackend.cs
 ```
+
+> **Asmdef field choice:** Unity's `versionDefines` is for package-version-based
+> compile symbols (e.g. emit `VB_HAS_NEW_API` when `com.unity.foo >= 2.0.0`),
+> while `defineConstraints` is what gates whether an assembly is compiled or
+> referenced at all. Backend gating belongs in `defineConstraints` — a missing
+> or paid adapter (Stylized Water 2, Crest 5, NGX SDK) must stay
+> compile-excluded, not fail import. `versionDefines` is reserved here for
+> package-presence symbols that the constraint evaluates against.
 
 ### 4.2 Define-symbol contract
 
@@ -390,14 +433,21 @@ namespace VeilBreakers.Rendering.Backends
         {
             var available = new List<IUpscalerBackend>();
 #if VB_UPSCALER_DLSS
-            if (DLSSUpscalerBackend.IsSupportedOnThisGPU())
-                available.Add(new DLSSUpscalerBackend());
+            // Construct first, THEN call the instance method — IsSupportedOnThisGPU()
+            // consults fields populated in the constructor (NGX init handle, etc.).
+            var dlss = new DLSSUpscalerBackend();
+            if (dlss.IsSupportedOnThisGPU())
+                available.Add(dlss);
 #endif
 #if VB_UPSCALER_FSR_3_1
-            available.Add(new FSR31UpscalerBackend());
+            var fsr = new FSR31UpscalerBackend();
+            if (fsr.IsSupportedOnThisGPU())
+                available.Add(fsr);
 #endif
 #if VB_UPSCALER_STP
-            available.Add(new STPUpscalerBackend());
+            var stp = new STPUpscalerBackend();
+            if (stp.IsSupportedOnThisGPU())
+                available.Add(stp);
 #endif
             available.Add(new OffUpscalerBackend());      // always available
 
@@ -406,23 +456,24 @@ namespace VeilBreakers.Rendering.Backends
 
         // Pick first available matching manifest preference; fall back through
         // upgrade_compat[] in order; finally fall back to any available backend.
+        // T : IBackend — no `dynamic`, no runtime reflection, AOT/IL2CPP-safe.
         private static T PickBestMatch<T>(List<T> available, string preferred, string[] fallbackChain)
-            where T : class
+            where T : IBackend
         {
             // 1. Exact match on preferred.
             foreach (var b in available)
-                if (((dynamic)b).BackendId == preferred && ((dynamic)b).IsAvailable)
+                if (b.BackendId == preferred && b.IsAvailable)
                     return b;
 
             // 2. Walk upgrade_compat in declared order.
             foreach (var fallbackId in fallbackChain)
                 foreach (var b in available)
-                    if (((dynamic)b).BackendId == fallbackId && ((dynamic)b).IsAvailable)
+                    if (b.BackendId == fallbackId && b.IsAvailable)
                         return b;
 
             // 3. Last resort — any available.
             foreach (var b in available)
-                if (((dynamic)b).IsAvailable)
+                if (b.IsAvailable)
                     return b;
 
             throw new InvalidOperationException(
@@ -535,13 +586,15 @@ back into the bake side or into the adapter, never the schema.
 
 ### 8.1 Bake-side (Python, in this repo)
 
-- `veilbreakers_terrain/tests/test_phase_d1_urp_manifest_schema.py`
-  pins:
-  - manifest dataclass round-trips (write → JSON → read → equal).
-  - `upgrade_compat` arrays are non-empty and contain only canonical
-    backend IDs.
-  - `schema_version` strings match the per-section dataclasses.
-  - Required fields are present after default construction.
+The Phase D1 companion PR will add
+`veilbreakers_terrain/tests/test_phase_d1_urp_manifest_schema.py` (not yet
+present on this branch) pinning:
+
+- manifest dataclass round-trips (write → JSON → read → equal).
+- `upgrade_compat` arrays are non-empty and contain only canonical
+  backend IDs.
+- `schema_version` strings match the per-section dataclasses.
+- Required fields are present after default construction.
 - Determinism: same seeded scene → byte-identical manifest JSON.
 
 ### 8.2 Unity-side (C#, deferred to scene-build phase)
@@ -582,16 +635,21 @@ effect on ship:
 
 ## 10. References
 
-- `project_urp_commitment_2026_05_07.md` — memory note locking the URP
-  17.3 v1.0 commitment, including the 6-agent fleet audit and Unity
-  batch-mode setup verification.
-- `docs/IMPLEMENTATION_FIX_GUIDE_2026_05_07_FINAL.md` §X — URP Backend
-  Abstraction section; this file is the deep-dive reference for that
-  guide entry.
-- `veilbreakers_terrain/handlers/terrain_unity_backends.py` — Phase D1
-  bake-side `@dataclass` definitions for `WaterSurfaceManifest`,
-  `SkyManifest`, `AtmosphericManifest`, `UpscalerManifest` (introduced
-  by the Phase D1 companion PR).
-- `project_hardware_8gb_vram_2026_05_07.md` — memory note documenting
-  the 8 GB VRAM hard constraint that drove the URP commitment and the
-  FSR-3.1-default-upscaler choice.
+- `project_urp_commitment_2026_05_07` — **user-memory note** (not in repo)
+  locking the URP 17.3 v1.0 commitment, including the 6-agent fleet audit
+  and Unity batch-mode setup verification. Stored in the author's
+  Claude-memory store, not under version control.
+- `docs/IMPLEMENTATION_FIX_GUIDE_2026_05_07_FINAL.md` — **partially stale.**
+  Use ONLY for: (a) hardware/VRAM analysis, (b) the AAA-quality bar
+  rationale. **IGNORE** every HDRP-tied section (MicroSplat HDRP,
+  WaterSurface, DXR/HDRP volumetrics, etc.) — those are superseded by
+  this URP spec. The guide has not yet been rewritten for the URP
+  commitment; this doc is the new authority for the rendering-stack
+  decision.
+- `veilbreakers_terrain/handlers/terrain_unity_backends.py` —
+  **pending prerequisite.** Phase D1 companion PR will add the bake-side
+  `@dataclass` definitions for `WaterSurfaceManifest`, `SkyManifest`,
+  `AtmosphericManifest`, `UpscalerManifest`. Not present on this branch.
+- `project_hardware_8gb_vram_2026_05_07` — **user-memory note** (not in
+  repo) documenting the 8 GB VRAM hard constraint that drove the URP
+  commitment and the FSR-3.1-default-upscaler choice.
