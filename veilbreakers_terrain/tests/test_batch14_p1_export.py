@@ -111,7 +111,14 @@ def test_splatmap_layer_cap_enforced_at_4_per_cell():
     with tempfile.TemporaryDirectory() as tmpdir:
         out_dir = pathlib.Path(tmpdir)
         files: dict = {}
-        _write_splatmap_groups(files, out_dir, stack)
+        # Phase B D25 changed the return signature to tuple[list[str], int]
+        # — assert both elements have the expected shapes so the new
+        # contract is exercised (and CodeQL doesn't flag the unpack as
+        # unused-local).
+        group_files, truncated_count = _write_splatmap_groups(files, out_dir, stack)
+        assert isinstance(group_files, list)
+        assert isinstance(truncated_count, int)
+        assert truncated_count >= 0
 
     # The top-4 layers per cell (indices 0-3) must have positive weight.
     # Layers 4 and 5 must have been zeroed before normalisation.
