@@ -96,27 +96,21 @@ def test_coastline_scheduled_when_scene_read_present():
     )
 
 
-def test_stratigraphy_DEFERRED_to_phase_b():
-    """``stratigraphy`` is DEFERRED to Phase B (see Task #39, follow-up).
+def test_stratigraphy_scheduled_when_scene_read_present():
+    """``stratigraphy`` is now SCHEDULED in default sequence (Phase C D26-27).
 
-    pass_stratigraphy currently writes 4 undeclared channels including
-    overwriting ``height`` without ``overrides=("height",)`` in its
-    PassDefinition. Scheduling it in the default sequence breaks the
-    determinism byte-identity contract
-    (test_terrain_deep_qa::test_determinism_check_passes_on_identical_runs
-    fails with assert False). Phase B will add the missing produces_channels
-    + overrides + verify byte-identity then schedule explicitly.
+    Was DEFERRED in Phase A D8 because pass_stratigraphy wrote 4 undeclared
+    channels (sediment_height, bedrock_height, strata_height, height-via-fold)
+    without overrides=("height",). Phase C D26-27 closed the gap in
+    register_bundle_i_passes (terrain_geology_validator.py) and now
+    schedules the pass explicitly so strat_erosion_delta is integrated
+    by integrate_deltas. See test_phase_c_d26_27_delta_integrator_wiring.py
+    for the full position invariants.
     """
     intent = _intent_with_scene_read()
     seq = build_default_pass_sequence(intent)
-    # Pin the deferral: stratigraphy MUST NOT be in the sequence yet. When
-    # Phase B lands the determinism fix this test flips to
-    # `assert "stratigraphy" in seq` and the schedule edit lands inside
-    # the Phase A D8-9 block of build_default_pass_sequence (search for
-    # "Phase A D8-9" in terrain_pipeline.py).
-    assert "stratigraphy" not in seq, (
-        "stratigraphy should not be scheduled until Phase B fixes its "
-        "produces_channels + overrides=height declaration. See Task #39."
+    assert "stratigraphy" in seq, (
+        f"stratigraphy missing from default sequence; got {seq!r}"
     )
 
 
