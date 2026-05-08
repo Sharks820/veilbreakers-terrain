@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .terrain_pipeline import derive_pass_seed
 from .terrain_semantics import (
     BBox,
     PassDefinition,
@@ -2394,7 +2395,13 @@ def insert_hero_cliff_meshes(
                     mean_hardness = float(np.mean(face_hardness))
                     noise_amplitude = 0.3 + (1.0 - mean_hardness) * 1.1
 
-        mesh_seed = hash(cliff.cliff_id) & 0x7FFFFFFF
+        mesh_seed = derive_pass_seed(
+            int(state.intent.seed),
+            f"terrain_cliffs.cliff_mesh.{cliff.cliff_id}",
+            0,
+            0,
+            None,
+        )
 
         overhang_fraction = 0.15 + (1.0 - mean_hardness) * 0.15
 
@@ -2648,7 +2655,7 @@ def pass_cliffs(
         # steep/gentle slope transition trigger). Species tag aligns with
         # the scatter-system contract.
         boulder_rng = np.random.default_rng(
-            (seed ^ (0xB0B1 + cliff_idx * 37)) & 0x7FFFFFFF
+            derive_pass_seed(seed, f"terrain_cliffs.bench.{cliff_idx}", 0, 0, None)
         )
         placements = place_talus_boulders_power_law(
             cliff, stack, rng=boulder_rng
@@ -2668,7 +2675,7 @@ def pass_cliffs(
     # 35% of lip segments per cliff get a 0.3-1.2 m outward protrusion with
     # a tagged drip edge for wet/foam material.  Stored on cliff.overhang_spec.
     for cliff_idx, cliff in enumerate(cliffs):
-        overhang_seed = (seed ^ (cliff_idx * 1234567891 + 987654321)) & 0x7FFFFFFF
+        overhang_seed = derive_pass_seed(seed, f"terrain_cliffs.overhang.{cliff_idx}", 0, 0, None)
         overhang_spec = _generate_cliff_overhang(
             cliff,
             overhang_probability=0.35,

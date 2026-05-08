@@ -3851,7 +3851,7 @@ def pass_caves(
     interior_bool_final = np.asarray(stack.get("cave_candidate"), dtype=bool)
     for cave_i, cave in enumerate(caves):
         if cave.height_delta is not None and cave.damp_mask is not None:
-            per_cave_seed = (base_seed ^ ((cave_i + 1) * 2654435761)) & 0xFFFFFFFF
+            per_cave_seed = derive_pass_seed(base_seed, f"terrain_caves.per_cave.{cave_i}", 0, 0, None)
             stals, stags = compute_speleothem_growth(
                 interior_mask=interior_bool_final,
                 damp_mask=cave.damp_mask,
@@ -3886,7 +3886,7 @@ def pass_caves(
             continue
         # Subsample to max 60 stalactites per cave for performance.
         if ys_idx.size > 60:
-            rng_sub = np.random.default_rng(cave_i ^ 0xDEADBEEF)
+            rng_sub = np.random.default_rng(derive_pass_seed(base_seed, f"terrain_caves.cave_subrng.{cave_i}", 0, 0, None))
             sel = rng_sub.choice(ys_idx.size, 60, replace=False)
             ys_idx, xs_idx = ys_idx[sel], xs_idx[sel]
         stala_positions: list[Tuple[float, float, float]] = [
@@ -3897,7 +3897,7 @@ def pass_caves(
             )
             for r, c in zip(ys_idx, xs_idx)
         ]
-        spelo_seed = (cave_i * 2654435761 ^ 0xC0FFEE) & 0xFFFFFFFF
+        spelo_seed = derive_pass_seed(base_seed, f"terrain_caves.spelo.{cave_i}", 0, 0, None)
         spelo_props = _generate_speleothem_pairs(
             wall_height=float(cave.spec.entrance_height_m),
             chamber_width=float(cave.spec.entrance_width_m),
