@@ -103,7 +103,9 @@ def test_height_array_mass_conservation_within_tolerance():
     # be approximately preserved; the tolerance is wider than the
     # accumulator test because numerical clipping of brush footprints
     # near edges still creates small (~1-3%) drift.
-    relative_drift = abs(final_total - initial_total) / max(initial_total, 1.0)
+    # Use abs(initial_total) so the metric stays well-defined for future
+    # geometries with negative total volume (heightmaps centred on 0).
+    relative_drift = abs(final_total - initial_total) / max(abs(initial_total), 1.0)
     assert relative_drift < 0.05, (
         f"heightmap volume drift >5%: initial={initial_total:.2f}, "
         f"final={final_total:.2f}, drift={relative_drift:.4f} "
@@ -187,23 +189,42 @@ def test_phantom_p0_10_gradient_axis_order_correct():
 
 
 def test_phantom_p0_11_no_per_tile_mean_subtraction_in_terrain_world():
-    """`_terrain_world.py` must NOT contain `hmap_high - np.mean(hmap_high)`."""
+    """`_terrain_world.py` must NOT subtract its per-tile mean from `hmap_high`.
+
+    The original bug pattern: ``hmap_high = hmap_high - float(np.mean(hmap_high))``.
+    Any reintroduction breaks tile-seam continuity by giving each tile
+    a different DC offset.
+
+    PR #38 Copilot review broadened the check from two exact-string forms
+    to a regex that catches all common subtraction-assignment variants:
+      - ``hmap_high = hmap_high - np.mean(hmap_high)``
+      - ``hmap_high = hmap_high - float(np.mean(hmap_high))``
+      - ``hmap_high -= np.mean(hmap_high)``
+      - ``hmap_high -= float(np.mean(hmap_high))``
+      - any whitespace / extra parens around the np.mean call.
+    """
     import pathlib
+    import re
 
     src = (
         pathlib.Path(__file__).resolve().parents[1]
         / "handlers"
         / "_terrain_world.py"
     ).read_text(encoding="utf-8")
-    # The original bug pattern: `hmap_high = hmap_high - float(np.mean(hmap_high))`.
-    # Any reintroduction of this pattern breaks tile-seam continuity by
-    # giving each tile a different DC offset.
-    assert "hmap_high - float(np.mean(hmap_high))" not in src, (
-        "B15-P0-11 REGRESSION — per-tile mean subtraction reintroduced; "
-        "neighbouring tiles will have different DC offsets and seams will "
-        "show vertical steps"
+
+    # Match either `hmap_high = hmap_high - <expr>(np.mean(hmap_high)<...>)`
+    # or `hmap_high -= <expr>(np.mean(hmap_high)<...>)`, allowing optional
+    # `float(...)` wrapping and whitespace.
+    pattern = re.compile(
+        r"hmap_high\s*"
+        r"(?:=\s*hmap_high\s*-|-=)"  # subtraction-assignment OR augmented
+        r"\s*"
+        r"(?:float\s*\(\s*)?"        # optional float(...)
+        r"np\.mean\s*\(\s*hmap_high",
     )
-    assert "hmap_high - np.mean(hmap_high)" not in src, (
-        "B15-P0-11 REGRESSION — per-tile mean subtraction reintroduced "
-        "(unwrapped variant)"
+    matches = pattern.findall(src)
+    assert not matches, (
+        f"B15-P0-11 REGRESSION — per-tile mean subtraction reintroduced "
+        f"(regex matched {len(matches)} sites). Neighbouring tiles will "
+        f"have different DC offsets and seams will show vertical steps."
     )

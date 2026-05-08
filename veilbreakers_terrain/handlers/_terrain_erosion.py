@@ -31,6 +31,18 @@ from typing import Optional
 import numpy as np
 
 
+# Strict-less-than epsilon for clamping a float into ``[1, dim-2)`` so that
+# ``int(clamped)`` stays inside the working range. We need ``int()``
+# truncation to land on ``dim - 3`` at the upper end (one cell BELOW the
+# buffer band) for the bilinear ``_deposit`` footprint to remain in
+# bounds. ``2.0001`` is small enough not to bias the deposit position
+# noticeably (~0.0001 cell upstream) and large enough to survive the
+# float64 → int64 truncation without rounding errors at million-cell
+# scale. Keep this as a named constant so future "simplifications" don't
+# silently drop the offset.
+_BUFFER_INT_EPSILON: float = 2.0001
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -338,6 +350,27 @@ def apply_hydraulic_erosion_masks(
                 f"heightmap shape {result.shape}"
             )
 
+    # B15-P0-08 review fix (PR #38 Codex P1): boundary-exit deposits must
+    # honour the same `deposition_mask` / `hero_mask` guards as the main
+    # loop body, otherwise hero zones / mask-protected cells silently
+    # receive all carried sediment when a droplet crosses the boundary
+    # band. The function checks both the cell itself and its bilinear
+    # footprint corners (matching the main-loop hero-exclusion check at
+    # ~line 415).
+    def _boundary_deposit_blocked(_ix: int, _iy: int) -> bool:
+        if hero_mask is not None:
+            if (
+                bool(hero_mask[_iy, _ix])
+                or bool(hero_mask[_iy, min(_ix + 1, cols - 1)])
+                or bool(hero_mask[min(_iy + 1, rows - 1), _ix])
+                or bool(hero_mask[min(_iy + 1, rows - 1), min(_ix + 1, cols - 1)])
+            ):
+                return True
+        if _deposition_mask is not None:
+            if float(_deposition_mask[_iy, _ix]) <= deposition_mask_threshold:
+                return True
+        return False
+
     for _ in range(simulated_iterations):
         px = rng.random() * (cols - 2) + 0.5
         py = rng.random() * (rows - 2) + 0.5
@@ -359,8 +392,17 @@ def apply_hydraulic_erosion_masks(
 
             if ix < 1 or ix >= cols - 2 or iy < 1 or iy >= rows - 2:
                 # B15-P0-08: deposit remaining sediment at the last
-                # in-bounds cell instead of losing it overboard.
-                if sediment > 0.0 and last_in_bounds is not None:
+                # in-bounds cell instead of losing it overboard. Honour
+                # `deposition_mask` / `hero_mask` so protected cells
+                # don't accept sediment that the main-loop guard would
+                # have rejected (PR #38 Codex P1 review).
+                if (
+                    sediment > 0.0
+                    and last_in_bounds is not None
+                    and not _boundary_deposit_blocked(
+                        last_in_bounds[0], last_in_bounds[1]
+                    )
+                ):
                     li_ix, li_iy, li_fx, li_fy = last_in_bounds
                     _deposit(result, li_ix, li_iy, li_fx, li_fy, sediment)
                     _deposit(deposition_amount, li_ix, li_iy, li_fx, li_fy, sediment)
@@ -401,7 +443,8 @@ def apply_hydraulic_erosion_masks(
                 # before exiting. Without this re-deposit, droplets that
                 # would step off the grid lose their full payload at the
                 # boundary — the dominant contributor to the 75% mass leak.
-                if sediment > 0.0:
+                # Honour deposition_mask / hero_mask (PR #38 Codex P1).
+                if sediment > 0.0 and not _boundary_deposit_blocked(ix, iy):
                     _deposit(result, ix, iy, fx, fy, sediment)
                     _deposit(deposition_amount, ix, iy, fx, fy, sediment)
                 break
@@ -509,31 +552,55 @@ def apply_hydraulic_erosion_masks(
                     fix_i = int(new_px)
                     fiy_i = int(new_py)
                     if 1 <= fix_i < cols - 2 and 1 <= fiy_i < rows - 2:
-                        ffx = new_px - fix_i
-                        ffy = new_py - fiy_i
-                        _deposit(result, fix_i, fiy_i, ffx, ffy, sediment)
-                        _deposit(deposition_amount, fix_i, fiy_i, ffx, ffy, sediment)
+                        if not _boundary_deposit_blocked(fix_i, fiy_i):
+                            ffx = new_px - fix_i
+                            ffy = new_py - fiy_i
+                            _deposit(result, fix_i, fiy_i, ffx, ffy, sediment)
+                            _deposit(
+                                deposition_amount,
+                                fix_i,
+                                fiy_i,
+                                ffx,
+                                ffy,
+                                sediment,
+                            )
                     else:
                         # B15-P0-08 fallback: post-move drifted into the
                         # buffer band. Clamp the *post-move* position into
                         # the working range and deposit there. Names are
                         # derived from new_px / new_py — must NOT reuse
                         # the pre-move (ix/iy/fx/fy) per P2-3 contract.
-                        clamped_px = max(1.0, min(float(cols) - 2.0001, new_px))
-                        clamped_py = max(1.0, min(float(rows) - 2.0001, new_py))
+                        # ``_BUFFER_INT_EPSILON`` keeps `int(clamped_*)` strictly
+                        # less than the working-range upper bound so the
+                        # subsequent _deposit bilinear footprint stays
+                        # inside the array.
+                        clamped_px = max(
+                            1.0, min(float(cols) - _BUFFER_INT_EPSILON, new_px)
+                        )
+                        clamped_py = max(
+                            1.0, min(float(rows) - _BUFFER_INT_EPSILON, new_py)
+                        )
                         clamp_ix = int(clamped_px)
                         clamp_iy = int(clamped_py)
                         clamp_fx = clamped_px - clamp_ix
                         clamp_fy = clamped_py - clamp_iy
-                        _deposit(result, clamp_ix, clamp_iy, clamp_fx, clamp_fy, sediment)
-                        _deposit(
-                            deposition_amount,
-                            clamp_ix,
-                            clamp_iy,
-                            clamp_fx,
-                            clamp_fy,
-                            sediment,
-                        )
+                        if not _boundary_deposit_blocked(clamp_ix, clamp_iy):
+                            _deposit(
+                                result,
+                                clamp_ix,
+                                clamp_iy,
+                                clamp_fx,
+                                clamp_fy,
+                                sediment,
+                            )
+                            _deposit(
+                                deposition_amount,
+                                clamp_ix,
+                                clamp_iy,
+                                clamp_fx,
+                                clamp_fy,
+                                sediment,
+                            )
                 break
 
     # drainage → log1p of droplet count

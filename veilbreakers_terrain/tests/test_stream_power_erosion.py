@@ -239,8 +239,13 @@ class TestHydraulicErodibility:
         from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion_masks
 
         dem = _make_sloped_dem(16).astype(np.float64)
-        low_erodibility = np.full_like(dem, 0.0002)
-        high_erodibility = np.full_like(dem, 0.0010)
+        # apply_hydraulic_erosion_masks treats erodibility_map as a
+        # normalized multiplier clamped to [0, 1]; use values in the
+        # intended range so the assertion compares contract-relevant
+        # signal magnitudes rather than near-floor numerical noise
+        # (PR #38 Copilot review).
+        low_erodibility = np.full_like(dem, 0.2)
+        high_erodibility = np.full_like(dem, 1.0)
 
         low = apply_hydraulic_erosion_masks(
             dem,
