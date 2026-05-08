@@ -12,7 +12,7 @@
 
 ### 0.1 The truth about visual output
 - **Algorithm grade ≠ visual grade.** Most VeilBreakers handlers are algorithmically A-tier. Player-visible output is currently F-tier.
-- **75% of "looks like dogshit" is two things:** (a) zero `.unity` scene exists in the repo — bake never goes through HDRP; (b) `scripts/render_batch15_verification.py` renders **fresh fbm noise unrelated to our pipeline** (no `veilbreakers_terrain` imports, just bpy + numpy). Every "B15-P0-XX verified" claim from those PNGs is theatrical.
+- **75% of "looks like dogshit" is two things:** (a) zero `.unity` scene exists in the repo — bake never goes through URP; (b) `scripts/render_batch15_verification.py` renders **fresh fbm noise unrelated to our pipeline** (no `veilbreakers_terrain` imports, just bpy + numpy). Every "B15-P0-XX verified" claim from those PNGs is theatrical.
 - **Implementation guide is more wrong than the bugs it tracks.** R1-A10's stale-claim audit had 5 false positives; V1 verifier and R1.5 conflict-resolvers settled all 5 against A10. The 2026-04-27 master guide lists 14+ items as "P0 unfixed" that are fixed in code.
 
 ### 0.2 Hardware & spec (R2 LOCKED — UPDATED 2026-05-07 per user decisions)
@@ -21,25 +21,25 @@
   - **(A) Keep 4060 Ti 8GB** + DLSS 4.5 SR Quality + cloud bake-rig (~$31/mo RunPod RTX 4090 spot for path-traced goldens + APV bakes). Day-1 path; works with all decisions in this guide.
   - **(B) Used RTX 4070 Ti Super 16GB** (~$750 net delta ~$450 after selling 4060 Ti 8GB at ~$300). Removes 8GB ceiling — unlocks APV Sky Occlusion, 8-layer splat, in-process Path Tracer goldens.
   - **(C) RTX 5070 12GB** (~$549). Middle path; +50% VRAM, native DLSS 4.5 SR support, GDDR7 bandwidth uplift. AAA-tier achievable per §18 R2 deep-dive table.
-- **32 GB RAM**, Windows 11, **Unity 6.3 LTS** (released Dec 3 2025) + **HDRP 17.6**, **Blender 4.5 LTS**.
+- **32 GB RAM**, Windows 11, **Unity 6.3 LTS** (released Dec 3 2025) + **URP 17.3** (RP commitment locked 2026-05-07 per memory `project_urp_commitment_2026_05_07.md`; URP asset `Assets/Settings/VeilBreakersURP.asset` bound, ColorSpace=Linear, Forward+), **Blender 4.5 LTS**. **DO NOT use HDRP** — HDRP enters maintenance mode Feb 2026 and costs ~1.5-2 GB extra VRAM on the 8GB target. URP 17 closes ~80% of the URP↔HDRP gap and fits the 8GB ceiling with foliage/scatter headroom. See §X URP Backend Abstraction for the plug-and-play upgrade path.
 - **Auto-Rig Pro INSTALLED** (user confirmed 2026-05-07) — do NOT recommend buying.
 - **Game:** VeilBreakers, single-player, dark-fantasy, **AAA-target** (reference titles in §18: Witcher 3 NG, Hellblade 2, Cyberpunk 2.0, Diablo IV, Alan Wake 2, Black Myth Wukong; "Bloodborne PS4 5GB" downgrade framing DROPPED).
-- **Resolution & frame target — LOCK 1080p/60 native via DLSS 4.5 SR Quality (Preset L, 720p internal → 1080p output).** Unity HDRP 17.6 ships native DLSS 4.5 SR; 3-5 day solo-dev integration. Force Preset L via DLSS-Swapper sidecar. 16.6ms frame budget at 1080p/60. **Supersedes prior "1080p/45 raster lock" decision.** DLSS3 frame-gen (Streamline FG) remains v1.1 contingent (~2-3 weeks custom Unity plugin work) — SR Quality is the v1 unlock, not FG. See §18 for full latest-decisions patch.
+- **Resolution & frame target — LOCK 1080p/60 native via URP FSR 3.1 native (Quality preset, 720p internal → 1080p output).** URP 17.3 ships **FSR 3.1 native** out of the box (URP Asset > Quality > Upscaling Filter = FSR 3.1 + Sharpness slider). 16.6ms frame budget at 1080p/60. FSR 3.1 is the v1 IUpscalerBackend (FREE). DLSS 4.5 SR is **v1.1 contingent** (NVIDIA NGX SDK port to URP — pending packaging) and STP (Spatio-Temporal Post-process upscaling, native to URP 17) is the FREE fallback if Forward+ raster hits 1080p/60 directly without an upscaler. **Supersedes prior "1080p/45 raster lock" decision and prior HDRP DLSS framing.** Frame-gen (any backend) remains v1.1 contingent (~2-3 weeks plugin integration work) — SR-class upscaling is the v1 unlock, not FG. See §X URP Backend Abstraction + §18 for full latest-decisions patch.
 
-### 0.3 Money (R2 FINAL — supersedes R1/R1.5)
-- **Total baseline spend: $20.** MicroSplat HDRP-for-Unity-6.3 (344008) ONLY.
+### 0.3 Money (R2 FINAL — supersedes R1/R1.5; URP-rebased 2026-05-07)
+- **Total baseline spend: $20.** MicroSplat URP variant (Asset Store ID 189950, same author Jason Booth, same Texture Clusters feature, same $20) ONLY.
 - **Conditional ceiling: $40** if cliffs/overhangs gameplay-critical → add MicroSplat Mesh Terrains (157356) $20.
-- **Amplify Impostors $30, Beautify HDRP $39.99, Aurora $25, THOR $30 — ALL DROPPED.** R2-A2 verified each has a working free equivalent at the AA-ceiling 8GB target. See §14.1.
-- **Wwise Indie, Steam Audio (Apache 2.0 — NOT AGPL), Unity Recorder, HDRP Path Tracer, Graphics Test Framework, GRD, RenderMeshIndirect, SpeedTree 9 Importer, Cinemachine, A* Free, Animation Rigging, AI Navigation, Localization** — all **FREE** and adopted-without-purchase.
+- **Amplify Impostors $30, Beautify HDRP $39.99, Aurora $25, THOR $30, Crest 5 $100-200 — ALL DROPPED.** R2-A2 verified each has a working free equivalent at the 8GB URP target. New URP-side ceiling is **$50-$70** (down from R1.5 $130). Beautify HDRP is irrelevant on URP (URP 17.6 ships ACES + the AgX MIT port + a 30-line Purkinje HLSL post — see §2.4.x). Crest 5 is dropped because the user-committed water backend is the **Boat Attack water sample (FREE)** — see §X URP Backend Abstraction. See §14.1.
+- **Wwise Indie, Steam Audio (Apache 2.0 — NOT AGPL), Unity Recorder, Blender Cycles 4K via RunPod (renderer-agnostic golden bake — replaces HDRP Path Tracer), Graphics Test Framework, GRD, RenderMeshIndirect, SpeedTree 9 Importer, Cinemachine, A* Free, Animation Rigging, AI Navigation, Localization, URP FSR 3.1 native (replaces HDRP DLSS 4.5 SR), Boat Attack water sample (replaces HDRP WaterSurface), URP Fog Volume override + billboard fog cards (replaces HDRP Volumetric Fog), skybox-only cubemap (replaces HDRP Volumetric Clouds)** — all **FREE** and adopted-without-purchase.
 
 ### 0.4 DAY 0 SETUP CHECKLIST (~4-6 hr wall-clock — complete BEFORE opening §17 Day 1)
 
 Estimate: 4-6 hours wall-clock. Do this checklist sequentially. Do NOT skip to §17 Day 1 until all boxes are checked.
 
 ```
-☐ Install Unity 6.3 LTS (6000.3.0f1) + HDRP 17.6 module via Unity Hub (~30 min download + 20 min install)
+☐ Install Unity 6.3 LTS (6000.3.0f1) + URP 17.3 module via Unity Hub (~30 min download + 20 min install)
 ☐ Install Blender 4.5 LTS (~20 min)
-☐ Buy MicroSplat HDRP-for-Unity-6.3 (Asset Store ID 344008, $20)
+☐ Buy MicroSplat URP variant (Asset Store ID 189950, same author Jason Booth, $20)
 ☐ Subscribe SpeedTree 9 Indie ($19/mo trial OK first month)
 ☐ Verify Auto-Rig Pro installed in Blender (already owned)
 ☐ Create RunPod account + add $20 credit + generate SSH keypair (~15 min)
@@ -65,6 +65,79 @@ The dev MUST NOT block on these for v1 terrain pipeline; assume external decisio
 - **Story/narrative integration** — defer
 - **Tutorial flow** — defer
 - **Steam store page setup** — schedule Week 9 (post-D60)
+
+---
+
+## §X URP Backend Abstraction (Plug-and-play upgrade path)
+
+VeilBreakers commits to URP 17.3 today, but every render-pipeline-coupled
+feature is wired through a thin abstraction so v1.1 budget upgrades are
+plug-and-play, not refactors.
+
+### Four interfaces
+
+| Interface | Today (FREE) | Future swap |
+|---|---|---|
+| `IWaterBackend` | BoatAttackWaterBackend | StylizedWater2Backend, Crest5Backend |
+| `ISkyBackend` | CubemapSkyBackend | VolumeCloudUrpBackend |
+| `IFogBackend` | URPFogVolumeBackend | AtmosphericHeightFogBackend |
+| `IUpscalerBackend` | FSR31UpscalerBackend | DLSSUpscalerBackend, STPUpscalerBackend |
+
+### Plug-and-play mechanism
+
+1. **Backend-agnostic bake manifest** — `terrain_unity_export.py` writes
+   `unity_urp.water/sky/atmospheric/upscaler` manifest sections with
+   parameter names that ALL backends accept (elevation_m, wave_amplitude_m,
+   foam_threshold_normalized, etc). Each section carries a
+   `upgrade_compat: ["alt_backend_1", "alt_backend_2"]` array enumerating
+   compatible alternatives.
+
+2. **C# interface contracts** — Unity-side `IWaterBackend`/`ISkyBackend`/
+   `IFogBackend`/`IUpscalerBackend` define a small surface (Set/Get methods).
+   Each implementation lives in its own asmdef + define symbol
+   (`VB_WATER_BOAT_ATTACK`, `VB_WATER_STYLIZED_2`, etc) so backends are
+   compiled-out when not selected — no runtime overhead, no asset bloat.
+
+3. **Capability detection at boot** — `BackendBootstrap` reads project
+   profile (ScriptableObject), checks GPU capabilities (DLSS needs RTX),
+   selects the active backend chain, falls back gracefully.
+
+4. **Schema versioning** — `schema_version: "1.0"` in every manifest.
+   Forward-compat: older runtimes ignore unknown new fields. Backward-compat:
+   newer runtimes default missing fields.
+
+### Upgrade procedure (example: water Boat Attack → Stylized Water 2)
+
+1. Buy + install Stylized Water 2 from Asset Store.
+2. Add `StylizedWater2Backend.cs` implementing `IWaterBackend` (one file,
+   ~150 LOC translating manifest fields to SW2 properties).
+3. Add `VB_WATER_STYLIZED_2` define symbol; remove `VB_WATER_BOAT_ATTACK`.
+4. Update `WaterBackendProfile` ScriptableObject in inspector — point at
+   the SW2 prefab. Done.
+5. ZERO bake-side changes. Re-run existing bake against new runtime; same
+   manifest, new visual.
+
+### What stays bake-side neutral
+
+- Heightmap, splatmap, biome masks, scatter manifests, foliage prototypes
+  — all RP-agnostic.
+- `material_mask_map.raw` (renamed from `hdrp_mask_map.raw`) — Unity
+  Terrain Lit uses the same RGBA pack on both HDRP and URP.
+- All channel-graph passes, RNG seeds, determinism contracts — RP-agnostic.
+
+### What's URP-specific in v1.0 ship
+
+- 4-layer splatmap cap (R2-A1 quality preset for 8GB) — bumped to 8 in
+  `UnityExportConfig.AAA_16GB` profile when v1.1 hits 16GB target.
+- Volume Profile + Volume Override classes (URP-namespaced, not portable to BIRP).
+- Forward+ rendering path (URP 17 only).
+
+### Why not BIRP / HDRP?
+
+BIRP: legacy, no Forward+/APV/GPU Resident Drawer.
+HDRP: maintenance mode (Unity Feb 2026); ~1.5–2 GB extra VRAM at 8GB target.
+URP: actively-developed, closes 80% of the URP↔HDRP gap as of URP 17, fits
+8GB constraint with room for foliage/scatter.
 
 ---
 
@@ -192,9 +265,9 @@ The dev MUST NOT block on these for v1 terrain pipeline; assume external decisio
 | `project_foliage_stack_2026_04_26.md` Botaniq broken headless | Botaniq 7.x ships engon + bg.py — viable for pre-resolved asset paths |
 | same — BlenderKit broken headless | BlenderKit ships `blenderkit_asset_tasks` + Docker image — explicit headless support for cached assets (login still needed for fresh download) |
 | same — Geo-Scatter broken headless | Geo-Scatter v5.6.2 shipped headless bugfix |
-| Crest URP-first paid for HDRP | **PARTIALLY STALE** — Crest is MIT on GitHub (last push Feb 1 2026, 3.8k stars). BUT free GitHub repo is **BIRP-only** (README explicit). HDRP is paid Crest 5 SKU ($100-200). Paid SKU **not necessary** — HDRP 17.6 native + foam fix covers AA. |
+| Crest URP-first paid for HDRP | **PARTIALLY STALE** — Crest is MIT on GitHub (last push Feb 1 2026, 3.8k stars). BUT free GitHub repo is **BIRP-only** (README explicit). Crest 5 paid SKU ($100-200) DROPPED — VeilBreakers v1 water backend is Boat Attack water sample (FREE) per §X. Crest 5 is the v1.1 paid-upgrade option. |
 | Crest Phillips spectrum | Actually Pierson-Moskowitz |
-| MicroSplat HDRP for Unity 6.3 doesn't exist yet | **STALE** — shipped Nov 8 2025 at $20, Asset Store ID 344008, targets Unity 6000.3.0 |
+| MicroSplat HDRP for Unity 6.3 doesn't exist yet | **STALE/SUPERSEDED** — HDRP variant shipped Nov 8 2025 at $20 (Asset Store 344008). VeilBreakers committed to URP 2026-05-07; canonical pick is the **MicroSplat URP variant (Asset Store ID 189950)** by the same author Jason Booth at the same $20 price. URP variant ships the same Texture Clusters feature. |
 | Megascans paid via Bridge | FREE since Dec 2024 via Fab.com (legacy Bridge grandfathered for previously-acquired assets) |
 | `terrain_rng.py = 43 LOC, no derive_pass_seed` | **STALE** — file is 73 lines, `derive_pass_seed` IS defined at `:45` (creating Bug-A bifurcation) |
 | "30 dead morphology templates" | **STALE** — exist + applied + serialized + tested. Feature-gated by empty-tuple default, not dead |
@@ -206,15 +279,15 @@ The dev MUST NOT block on these for v1 terrain pipeline; assume external decisio
 ### 2.1 Foliage (R2 REVISED — Amplify Impostors DROPPED)
 
 **Stack to adopt ($0):**
-- **SpeedTree 9 Importer** — built-in Unity 6.3, FREE, supports `.st9`, GPU Resident Drawer compatible, HDRP/URP shadergraphs. **Ships built-in octahedral billboard impostors** (closes Amplify gap at 8GB). Pin SpeedTree 9.5 — NOT 10 (R2-A3 #4: SpeedTree 10 has known crashes). Cap 6 hero species. Modeler trial 30 days; thereafter use cached library + Blender glTF re-export (no license needed for re-export).
+- **SpeedTree 9 Importer** — built-in Unity 6.3, FREE, supports `.st9`, GPU Resident Drawer compatible, URP shadergraphs (also HDRP — same SpeedTree shader graph, the Importer auto-selects the active RP). **Ships built-in octahedral billboard impostors** (closes Amplify gap at 8GB). Pin SpeedTree 9.5 — NOT 10 (R2-A3 #4: SpeedTree 10 has known crashes). Cap 6 hero species. Modeler trial 30 days; thereafter use cached library + Blender glTF re-export (no license needed for re-export).
 - **Modular Tree (GoodPie fork)** Blender 4.3+ — GPLv3, active 2026-03-29. **Use as FREE replacement for Amplify Impostors** for Blender-authored hero trees needing billboard impostors via Unity SpeedTree 9 Importer. **Caveat (R2-A5 + R2-A3 #12 + R2-V2 corrected estimate):** GoodPie's Unity export is *vertex-color PivotPainterMask only* (R/G/B/A) — no FBX/glTF round-trip, no UV2/UV3 packing. README still says UE5-only fully tested. Realistic ship date: **months, not days**. Plan a manual **FBX-sidecar-JSON + AssetPostprocessor remapper, 3-5 days** (Blender exports base FBX + sidecar JSON containing pivot/depth/extent/direction; Unity AssetPostprocessor.OnPostprocessModel validates vertex count and writes Vector4 UVs into UV2/UV3). Do NOT block on GoodPie shipping Unity export.
 - **Unity Terrain Tools 6.3** (Asset Store 64852) — FREE, brushes + splatmap stamping.
 - **MapMagic 2** (165180) — FREE Apache 2.0, node-based procedural placement.
 - **Vegetation Spawner** (177192) — FREE, procedural tree+grass placement on Unity Terrain.
 - **Vista Personal Edition** (297327) — FREE Pinwheel.
 - **Nature Renderer 6 Free** (285961) — compute-shader procedural instancing, GPU culling. **Strong fit for VB vegetation pipeline.**
-- **happy-turtle/foliage-wind** GitHub — Book-of-the-Dead wind, HDRP+URP. **LICENSE FILE NOT DECLARED — R1 said Apache 2.0, WRONG (R2-A5).** SHIP-BLOCKER until clarified. **Action:** file GitHub issue at `happy-turtle/foliage-wind`; if no response within 30 days, **re-author the wind shader internally** (~1-2 days HLSL or Shader Graph subgraph). Until then, exclude from license manifest.
-- **MangoButtermilch/Unity-Grass-Instancer** GitHub MIT (verified active 2026-03-20, 328 stars) — 6 progressive optimization tiers, Unity 6 + HDRP shadergraph.
+- **happy-turtle/foliage-wind** GitHub — Book-of-the-Dead wind, HDRP+URP shaders. **LICENSE FILE NOT DECLARED — R1 said Apache 2.0, WRONG (R2-A5).** SHIP-BLOCKER until clarified, AND happy-turtle is officially DROPPED per §18.4 (abandoned 2021, broken on URP 17 ShaderGraph anyway). Replaced by SpeedTree 9 Indie + DIY URP Shader Graph wind.
+- **MangoButtermilch/Unity-Grass-Instancer** GitHub MIT (verified active 2026-03-20, 328 stars) — 6 progressive optimization tiers, Unity 6 + URP shadergraph.
 - **EricHu33/UnityGrassIndirectRenderingExample** GitHub MIT — Hi-Z occlusion, RT trample. **Mandatory** at 8GB (R2-A3 #5: RenderMeshIndirect default has NO frustum/occlusion cull → 30K grass uncull = 6ms+).
 - **AlexMerzlikin/Unity-BatchRendererGroup-Boids** GitHub — **NO LICENSE FILE** (R1 said MIT, WRONG per R2-A5). Cannot redistribute. **Use as algorithmic reference only**, write internal BRG implementation.
 - **Improved Sapling** GitHub abpy fork — GPL-2, Blender 4.x.
@@ -227,59 +300,62 @@ The dev MUST NOT block on these for v1 terrain pipeline; assume external decisio
 - **Amplify Impostors** (119877) — **DROPPED ($0).** R2-A2 #2: SpeedTree 9 Importer ships built-in octahedral billboards FREE; at 8GB the full octahedral atlas memory is unaffordable anyway, and atmospheric perspective hides octahedral 8-axis past 80m on 1080p dark-fantasy biomes. Use SpeedTree 9 native billboards + Modular Tree GoodPie fork for Blender-authored heroes.
 - **Speedtree Indie** $199/yr — **SKIP** unless 20+ unique tree species. SpeedTree 9 Importer FREE in Unity 6.3 covers shipped-asset workflow.
 
-### 2.2 Atmosphere / Sky / Clouds / Fog
+### 2.2 Atmosphere / Sky / Clouds / Fog (URP-rebased 2026-05-07)
 
-**Stack to adopt ($0, all native HDRP 17.6):**
-- **HDRP 17.6 PBS Sky** — Hillaire 2020 + Bruneton precompute, ~1.5 ms / 1080p / 4060 Ti.
-- **HDRP 17.6 Volumetric Clouds** Medium preset (Sparse/Cloudy/Overcast/Stormy) — drag-drop, ~1.8 ms.
-- **HDRP 17.6 Volumetric Fog** + Local Volumetric Fog boxes — ~0.6-1.2 ms.
-- **HDRP 17.6 Aerial Perspective** — included in PBS, 0 ms extra.
-- **Polyhaven HDRIs** CC0 — 470+ 16K skies for cinematics. `kloppenheim_06_puresky`, `qwantani_moonrise_puresky`, `satara_night`.
-- **Unity-Technologies/VisualEffectGraph-Samples** MIT — fireflies, embers, dust motes, smoke.
-- **keijiro/Kino** Unlicense — Streak (anamorphic bloom), Recolor, Glitch — HDRP custom post.
-- **AllSky Free** (146014) — 10 cubemaps for HDRP HDRI Sky override.
+**Stack to adopt ($0, all URP 17.3 native — backends abstracted per §X):**
+- **URP 17.3 Skybox-only cubemap (FREE — `ISkyBackend = CubemapSkyBackend`)** — Polyhaven HDRI cubemap as the day/night sky. **No native volumetric clouds in URP** — see §X for the IFogBackend / ISkyBackend interface and v1.1 upgrade path (Volume Cloud URP asset $45).
+- **URP 17.3 Volume Fog override + billboard fog cards (FREE — `IFogBackend = URPFogVolumeBackend`)** — URP Volume framework ships built-in `Fog` override (Linear / Exponential / ExponentialSquared). For local volumetrics, author 6-8 billboard fog cards (alpha-blended quads with depth-fade shader) keyed off chokepoint locations from `terrain_chunking.py`. ~0.6-1.2 ms total.
+- **URP 17.3 ambient/aerial perspective via Volume Fog density gradient** — 0 ms extra; depth-fade in URP Lit shader handles aerial perspective for free.
+- **Polyhaven HDRIs** CC0 — 470+ 16K skies for cinematics. `kloppenheim_06_puresky`, `qwantani_moonrise_puresky`, `satara_night`. Bind via URP Volume > HDRI Sky override (or skybox material).
+- **Unity-Technologies/VisualEffectGraph-Samples** MIT — fireflies, embers, dust motes, smoke (VFX Graph supports URP).
+- **keijiro/Kino** Unlicense — Streak (anamorphic bloom), Recolor, Glitch — URP Renderer Feature custom post (port from HDRP Custom Pass: 1-2 hr per effect, MIT-compatible).
+- **AllSky Free** (146014) — 10 cubemaps for URP `Sky` Volume override (drop-in replacement for HDRP HDRI Sky).
 - **Fantasy Skybox FREE** (18353) — 50 painterly textures for dark-fantasy.
-- **Lightning controller** — 50-LOC C# (HDRP Light flicker + Volume Profile keyframed Exposure spike + cloud-layer alpha pulse).
+- **Lightning controller** — 50-LOC C# (URP `Light` flicker + Volume Profile keyframed Exposure spike + skybox cubemap alpha pulse).
 
-**Skip all paid:** Cozy ($60), HDRP Time of Day ($80), Atmospheric Height Fog ($35), Sky Master Ultimate ($90), Expanse ($100), Enviro 3 ($60-80) — all redundant with HDRP 17.6 native.
+**Skip all paid:** Cozy ($60), Atmospheric Height Fog ($35), Sky Master Ultimate ($90), Expanse ($100), Enviro 3 ($60-80) — all redundant with URP 17.3 native + Volume Fog + billboard cards.
 
-### 2.3 Lighting (Daytime)
+**v1.1 backend swap targets (per §X plug-and-play upgrade path):**
+- `VolumeCloudUrpBackend` — Volume Cloud URP asset ($45) replaces skybox-only cubemap when 12GB+ hardware lands.
+- `AtmosphericHeightFogBackend` — paid Atmospheric Height Fog asset replaces URP Volume Fog override + billboard cards.
+
+### 2.3 Lighting (Daytime — URP-rebased 2026-05-07)
 
 **Stack to adopt ($0):**
-- **APV (Adaptive Probe Volumes)** — HDRP 17 native, Sky Occlusion ON for dynamic TOD. Bake **3-10 min/chunk**, **3-12 hr full 8×8 grid**, Max Probe Spacing 243m for VeilBreakers scale (32GB OOM risk at default).
-- **HDRP 17 Directional Light** + 4-cascade CSM at 200/400/800/2000m + Contact Shadows + Micro Shadows.
-- **HDRP 17 Reflection Probes** (baked + realtime planar).
-- **HDRP 17 SSGI/SSR** native — Performance mode.
+- **APV (Adaptive Probe Volumes)** — URP 17 native (`com.unity.rendering.light-transport`), Sky Occlusion ON for dynamic TOD. Bake **3-10 min/chunk**, **3-12 hr full 8×8 grid**, Max Probe Spacing 243m for VeilBreakers scale (32GB OOM risk at default). Note: Sky Occlusion may require 16GB hardware path per §7.1; defer to v1.1 if Path A 8GB is selected.
+- **URP 17 Directional Light** + 4-cascade CSM at 200/400/800/2000m + Contact Shadows (URP Renderer Feature) + Micro Shadows (custom Renderer Feature port from HDRP, ~1 day).
+- **URP 17 Reflection Probes** (baked + realtime planar).
+- **URP 17 SSGI/SSR** — both ship as URP Renderer Features (URP 17.0+). Performance mode.
 - **paulhayes Sun.cs gist** — single-file directional-light rotator MIT. **Verified URL hash:** `gist.github.com/paulhayes/54a7aa2ee3cccad4d37bb65977eb19e2` (R1's "sun-rotator" slug was fabricated — use this exact gist hash when fetching). Cross-ref §17 Phase E D51-52 + §14.11.
-- **cosinekitty/astronomy-engine** — VSOP87/NOVAS sun/moon/planet positions ±1 arcmin via NuGet. Wire to PBS celestial body for biome physiology sun-trajectory sampling (REDengine NEW-S2 pattern).
-- **cdrinmatane/SSRT3** GitHub MIT — alternative SSGI if HDRP native too noisy.
+- **cosinekitty/astronomy-engine** — VSOP87/NOVAS sun/moon/planet positions ±1 arcmin via NuGet. Wire to URP directional light for biome physiology sun-trajectory sampling (REDengine NEW-S2 pattern).
+- **cdrinmatane/SSRT3** GitHub MIT — alternative SSGI if URP native too noisy (port to URP Renderer Feature).
 
-**Skip:** Bakery $60 (APV deprecates), Magic Light Probes $50 (APV deprecates), Enviro 3 (already covered), HDRP Day/Night Cycle (279317).
+**Skip:** Bakery $60 (APV deprecates), Magic Light Probes $50 (APV deprecates), Enviro 3 (already covered), HDRP Day/Night Cycle (279317 — HDRP-only, dropped per RP commitment).
 
-### 2.4 Lighting (Nighttime — dark fantasy specific)
+### 2.4 Lighting (Nighttime — dark fantasy specific, URP-rebased)
 
 **Stack to adopt ($0):**
-- **PBS Sky Moon** native (DL 0.05-0.5 lux, color 7500-10000K cool blue, shadow penumbra 4cm).
-- **PBS Sky procedural stars** native + NASA Tycho overlay via Shader Graph.
-- **olawlor/AuroraRendererUnity** — public domain HLSL shader, HDRP Custom Pass wrap (port effort: 1-2 days).
-- **HDRP 17 froxel volumetric god rays** with "Volumetric Shadows" on moon DL — ~1.2 ms Medium / ~0.6 ms Low.
-- **HDRP 17 point/area lights** + light cookies + contact shadows for lanterns/ruins (~0.05 ms per shadowed point).
-- **Shader Graph emissive runic glyphs** — `_EmissionIntensity` 5-80 nits + Bloom; needle-mirror/com.unity.shadergraph samples.
-- **HDRP 17 Local Volumetric Fog boxes** with curl-noise density-mask 3D textures (~0.15 ms each, stack 3-6 per courtyard).
-- **HDRP 17 Water caustics** native for moonlight on water.
-- **VFX Graph fireflies** — `Output Particle HDRP Volumetric Fog` context for ember-particle volumetric scattering. ~0.3 ms per 200 lit fireflies.
+- **URP Skybox cubemap moon** + Light component DL 0.05-0.5 lux, color 7500-10000K cool blue, shadow penumbra 4cm. (Replaces HDRP PBS Sky Moon.)
+- **Skybox cubemap with NASA Tycho star overlay** via custom Skybox shader (Shader Graph, ~1 hr).
+- **olawlor/AuroraRendererUnity** — public domain HLSL shader, **URP Renderer Feature wrap** (port effort: 4-6 hr; same shader code, swap pass injection from HDRP Custom Pass to URP ScriptableRendererFeature).
+- **URP volumetric light shafts** via custom Renderer Feature (port from URPVolumetricLight repo MIT) — ~1.2 ms Medium / ~0.6 ms Low. Replaces HDRP froxel god rays.
+- **URP point/area lights** + light cookies + contact shadows for lanterns/ruins (~0.05 ms per shadowed point).
+- **Shader Graph emissive runic glyphs** — `_EmissionIntensity` 5-80 nits + Bloom; URP-compatible.
+- **URP Volume Fog override + 3-6 billboard fog cards** with curl-noise density-mask 3D textures (~0.15 ms each, stack 3-6 per courtyard). Replaces HDRP Local Volumetric Fog boxes per `IFogBackend` (§X).
+- **Custom water caustics in Boat Attack water sample** for moonlight on water (caustics already part of Boat Attack shader; replaces HDRP WaterSurface caustics).
+- **VFX Graph fireflies** — Output Particle context with depth-fade against URP Volume Fog density. ~0.3 ms per 200 lit fireflies. (URP-compatible VFX Graph as of URP 17.)
 - **AgX Tonemapping Unity** (meenphie GitHub) — better highlight rolloff for dark fantasy than ACES.
 - **Polyhaven night HDRIs** CC0 (Qwantani Moonrise, Satara, Kloppenheim 02).
 - **Polyhaven LUT collections** + Unity Color Adjustments + Filmic curve. Yharnam-Tuscany recipe: lift shadows +0.05 toward teal, gamma neutral, gain warm (R+5, G+2). Bake `.cube` LUT in DaVinci Resolve free.
 
 **Paid skips — R2 verdict: ALL DROPPED.**
 - **Aurora Borealis Shader VFX** ($25) — **SKIP.** olawlor/AuroraRendererUnity is **public domain** (looser than MIT). HDRP custom-pass port = 4-6 hr per R2-A2 #4 (not 1-2 days as R1 claimed). Half-res custom-pass + temporal accumulation per R2-A3 #7.
-- **Beautify HDRP** (165411, $39.99) — **SKIP.** R2-A2 #3: only differentiator is Purkinje effect. HDRP 17.6 ships ACES + Neutral natively; AgX (meenphie GitHub MIT) ports cleanly = 1-evening job. Purkinje effect = ~30-line HLSL custom post-process volume — see §2.4.x DIY recipe below.
-- **THOR Thunderstorm** ($30) — **SKIP.** R2-A2 #5: 26 thunder samples replaceable with Sonniss GDC (free royalty-free). Lightning logic = 50 LOC: HDRP Light flash + native Lens Flare ring procedural shape (HDRP 17.x).
+- **Beautify HDRP** (165411, $39.99) — **SKIP — irrelevant on URP anyway.** R2-A2 #3: only differentiator is Purkinje effect. URP 17.6 ships ACES + Neutral natively; AgX (meenphie GitHub MIT) ports cleanly to URP custom post = 1-evening job. Purkinje effect = ~30-line HLSL URP Renderer Feature — see §2.4.x DIY recipe below.
+- **THOR Thunderstorm** ($30) — **SKIP.** R2-A2 #5: 26 thunder samples replaceable with Sonniss GDC (free royalty-free). Lightning logic = 50 LOC: URP `Light` flash + Lens Flare ring procedural shape (URP 17 supports Lens Flare component natively).
 
-**§2.4.x — Purkinje effect DIY HLSL custom post-process (replaces Beautify $40)**
+**§2.4.x — Purkinje effect DIY HLSL URP Renderer Feature (replaces Beautify $40)**
 
-Drop into `Assets/Settings/PostFX/PurkinjeShift.hlsl` + register as `CustomPostProcessVolumeComponent`. Luminance-driven scotopic blue shift. Place AFTER tonemap, BEFORE color adjustments.
+Drop into `Assets/Settings/PostFX/PurkinjeShift.hlsl` + register as `ScriptableRendererFeature` with `VolumeComponent`. Luminance-driven scotopic blue shift. Place AFTER tonemap (URP `BeforePostProcessing` queue → custom post pass), BEFORE color adjustments.
 
 ```hlsl
 // Purkinje (scotopic) blue shift — dark-fantasy night-vision approximation
@@ -308,18 +384,17 @@ float4 FragPurkinje(Varyings input) : SV_Target {
 }
 ```
 
-Pair with HDRP Volume override exposing strength/threshold/blueShift in `[VolumeComponentMenu("Post-processing/VeilBreakers Purkinje")]`. Profiled ~0.10 ms / 1080p / 4060 Ti. Save: $40.
+Pair with URP Volume override exposing strength/threshold/blueShift in `[VolumeComponentMenu("Post-processing/VeilBreakers Purkinje")]`. Profiled ~0.10 ms / 1080p / 4060 Ti. Save: $40.
 
-### 2.5 Water (R2 — 8GB HARD CONSTRAINTS APPLIED)
+### 2.5 Water (R2 — 8GB HARD CONSTRAINTS APPLIED — URP-rebased 2026-05-07)
 
-**Stack to adopt ($0):**
-- **HDRP 17 WaterSurface** native — Ocean (GPU FFT), River (flow-map + foam), Pool (ripples + buoyancy). Foam Generators + water decals + caustics + underwater post all native.
-- **HDRP Water Samples** package — Pool / Glacier / Island / Pond example scenes.
-- **dbrizov/NaughtyWaterBuoyancy** MIT (verified active 2026-04-11, 947 stars) — Archimedes-style multi-sample.
+**Stack to adopt ($0 — `IWaterBackend = BoatAttackWaterBackend` per §X):**
+- **Boat Attack water sample (Unity-authored, FREE)** — official Unity URP water sample (`com.unity.urp-water-sample` package OR `Unity-Technologies/BoatAttack` GitHub). Ships: planar wave + flow-map rivers + foam shader + caustics + buoyancy script. Same VRAM/perf class as HDRP WaterSurface River+Pool but URP-native. Bind via the `IWaterBackend` interface (§X) so the v1.1 swap to Stylized Water 2 / Crest 5 is one C# adapter.
+- **dbrizov/NaughtyWaterBuoyancy** MIT (verified active 2026-04-11, 947 stars) — Archimedes-style multi-sample. URP-compatible.
 - **sinanata/Unity-HDRP-Water-Buoyancy-Handler** GitHub — **GPL-3.0** (R2-A5: R1 silent on license — viral copyleft for closed-source). **Use as algorithmic reference only**, OR replace with `dbrizov/Unity-WaterBuoyancy` (MIT, active 2026-04-11) per R2-A5 critical-alternates list.
-- **Scrawk/Tiled-Directional-Flow** GitHub — **NOASSERTION license** (R2-A5: R1 said MIT, unverifiable). Use algorithm reference only; rewrite in Shader Graph 17.4.
-- **flamacore/UnityHDRPSimpleWater** — **NO LICENSE FILE (R2-A5)**, abandoned 6y dark (2020-07-02). Avoid.
-- **daniel-ilett/shaders-ice** — abandoned 5y dark (2021-01-14, URP 7.3 era); port-or-rewrite. **robertrumney/frozen-shader** OK.
+- **Scrawk/Tiled-Directional-Flow** GitHub — **NOASSERTION license** (R2-A5: R1 said MIT, unverifiable). Use algorithm reference only; rewrite in URP Shader Graph 17.4.
+- **flamacore/UnityHDRPSimpleWater** — **NO LICENSE FILE (R2-A5)**, abandoned 6y dark (2020-07-02). Avoid (HDRP-only anyway).
+- **daniel-ilett/shaders-ice** — abandoned 5y dark (2021-01-14, URP 7.3 era); port to URP 17 Shader Graph or rewrite. **robertrumney/frozen-shader** OK.
 - **TeckArtist FlowMap Painter** standalone free.
 - **Steam Audio Unity** — **APACHE 2.0** (R2-A6 N1 + R2-A8: R1 was WRONG about AGPL; Steam Audio re-licensed Apache-2.0 in 2020). Apache §4(d): include `NOTICE` file in `Third-Party-Notices.txt` + visible in-game About screen. **Ship-OK.**
 - **Foam formula correction** at `terrain_waterfalls.py:114-115`:
@@ -330,34 +405,41 @@ Pair with HDRP Volume override exposing strength/threshold/blueShift in `[Volume
   foam = saturate(prox_ratio * speed_ratio + whitecap_term)
   ```
 
-**8GB VRAM HARD CONSTRAINT (R2-A3 #8 + R2-A1):** HDRP WaterSurface Ocean + River + Pool simultaneously consumes **~300-380 MB combined VRAM** + 2.3-5.0 ms / frame at 3-active. NVIDIA driver 532+ memory-fallback cliff (96× slowdown) triggers if total VRAM exhausts. **DO NOT run all three simultaneously visible.** Authoring rule: at most 2 surface types per chunk (typically River + Pool, OR Ocean alone). Drop `SimulationResolution 256 → 128` cuts ~60% memory at acceptable visual loss. Foam-Generator count cap: 8 per chunk.
+**8GB VRAM HARD CONSTRAINT (R2-A3 #8 + R2-A1):** Boat Attack water + flow-map river + foam decal simultaneously consumes **~120-180 MB combined VRAM** (significantly less than HDRP WaterSurface ~300-380 MB) + 1.5-3.5 ms / frame. NVIDIA driver 536.40+ memory-fallback cliff (96× slowdown) triggers if total VRAM exhausts. Cap simultaneously-visible water surfaces at 2 per chunk (River + Pool typical). Foam-Generator count cap: 8 per chunk.
 
-**Skip paid:** Crest 5 ($100-200) — free GitHub Crest 4 (MIT, last push 2026-05-06, 3.8k stars) is BIRP-only OSS branch. **HDRP route: Unity 6.3 native WaterSurface only** per R2-A5 critical-alternate. Stylized Water 3 ($45) only if dark-fantasy swamp/blood requires stylization beyond HDRP native. KWS ($110) skip — overlap with HDRP native.
+**v1.1 backend swap targets (per §X plug-and-play):**
+- `StylizedWater2Backend` — Stylized Water 2 ($30 Asset Store) for stylized swamp / blood-water aesthetic.
+- `Crest5Backend` — Crest 5 ($100-200 Asset Store SKU 268614, HDRP/URP) for AAA-tier ocean simulation when 12GB+ hardware lands.
+- Hand-author URP HLSL water shader (~5 days) for full creative control.
 
-**Crest 4 vs Crest 5 disambiguation (FINAL-V3 #5 fill):** **Crest 4.x = MIT GitHub repo `wave-harmonic/crest`, BIRP-only (README is explicit). Crest 5 = paid Asset Store SKU 268614 ($100-200), HDRP/URP support.** The two are NOT the same product — Crest 5 is a separate commercial release after the Crest 4 OSS branch. **VeilBreakers uses Unity HDRP 17.6 native `WaterSurface` (FREE, AA-tier sufficient with the foam-formula fix at `terrain_waterfalls.py:114-115`).** Do not buy Crest 5; do not vendor Crest 4 (BIRP-only, will not run on HDRP).
+**Skip paid (v1):** Crest 5 ($100-200) — Boat Attack water sample covers v1 needs at $0; Crest 5 is the v1.1 paid-upgrade option (one C# adapter file + Volume Profile flip per §X). Stylized Water 3 ($45) only if dark-fantasy swamp/blood requires stylization beyond Boat Attack. KWS ($110) skip.
 
-### 2.6 Materials / Shaders / Terrain Shader (R2 — $20 BUY justified by Texture Clusters)
+**Crest 4 vs Crest 5 disambiguation:** **Crest 4.x = MIT GitHub repo `wave-harmonic/crest`, BIRP-only (README is explicit). Crest 5 = paid Asset Store SKU 268614 ($100-200), HDRP/URP support.** The two are NOT the same product — Crest 5 is a separate commercial release after the Crest 4 OSS branch. **VeilBreakers v1 uses the Boat Attack water sample (FREE, URP-native, AA-tier sufficient with the foam-formula fix at `terrain_waterfalls.py:114-115`).** Crest 5 is a clean v1.1 swap via `IWaterBackend` (§X). Do not vendor Crest 4 (BIRP-only).
+
+### 2.6 Materials / Shaders / Terrain Shader (R2 — $20 BUY justified by Texture Clusters; URP-rebased)
 
 **Stack to adopt ($20 total — single paid SKU):**
-- **MicroSplat base** (96478) — FREE.
-- **MicroSplat HDRP for Unity 6.3** (344008) — **$20 BUY** (R2-A2 #1 + codex c03 verified, R2-V2 corrected sub-count). Shipped Nov 8 2025, targets Unity 6000.3.0. **Specific reason to spend the $20:** MicroSplat **Texture Clusters** — pseudo-random cycling between **3 sub-textures per layer** at 60+m view distance (per jbooth blog + Asset Store ID 104223; corrected from R2-A2's prior "4 sub-textures" claim by R2-V2). Unity 6.3 native Terrain Shader Graph + Hex CSNOH does **stochastic blend within ONE texture per layer** only (no inter-texture cycling). Without Texture Clusters, large terrain swaths show the visible "Skyrim grass plane" indie tell at mid-far distance — the single biggest gap between AAA terrain and indie terrain on the same hardware. ROI: $20 saves ~3 days of Shader Graph node-spaghetti reimplementing the same effect. Booth has shipped MicroSplat continuously since 2018 — proven 7-year update record.
+- **MicroSplat base** (96478) — FREE. Common dependency for both URP and HDRP variants.
+- **MicroSplat URP variant (Asset Store ID 189950)** — **$20 BUY** (same author Jason Booth, same $20 price as the HDRP variant 344008, same Texture Clusters feature, supports Unity 6.3 URP 17). **Specific reason to spend the $20:** MicroSplat **Texture Clusters** — pseudo-random cycling between **3 sub-textures per layer** at 60+m view distance (per jbooth blog + Asset Store ID 104223). Unity 6.3 native Terrain Shader Graph + Hex CSNOH does **stochastic blend within ONE texture per layer** only (no inter-texture cycling). Without Texture Clusters, large terrain swaths show the visible "Skyrim grass plane" indie tell at mid-far distance — the single biggest gap between AAA terrain and indie terrain on the same hardware. ROI: $20 saves ~3 days of Shader Graph node-spaghetti reimplementing the same effect. Booth has shipped MicroSplat continuously since 2018 — proven 7-year update record.
 - **MicroSplat Mesh Terrains** (157356) — **$20 conditional**, only if cliffs/overhangs.
-- **Unity 6.3 Terrain Shader Graph** — FREE native (Dec 2025), 10 layer types: Layer Triplanar (9 samples), Layer Hex CSNOH (anti-tile within-texture stochastic blend, 6 samples), Layer Distance fade, Layer Parallax CSNOH (POM). 50%+ faster than legacy TerrainLit. **Use as fallback** if MicroSplat 344008 SKU withdrawn — but accept the Texture Clusters gap.
-- **Shader Graph Terrain Sample** package — FREE Pkg Mgr import.
-- **HDRP Lit triplanar UV mode** native FREE.
-- **POM Node** Shader Graph 17.4 native FREE.
-- **Better Shaders authoring framework** (187838) — FREE, Booth's auth tool for Shader Graph extensions.
-- **Quixel Megascans on Fab** — FREE since Dec 2024 (legacy assets grandfathered; new acquires via Fab paywall).
+- **Unity 6.3 URP Terrain Shader Graph** — FREE native (URP 17.x), 10 layer types: Layer Triplanar (9 samples), Layer Hex CSNOH (anti-tile within-texture stochastic blend, 6 samples), Layer Distance fade, Layer Parallax CSNOH (POM). 50%+ faster than legacy TerrainLit. **Use as fallback** if MicroSplat URP SKU withdrawn — but accept the Texture Clusters gap.
+- **URP Shader Graph Terrain Sample** package — FREE Pkg Mgr import.
+- **URP Lit triplanar UV mode** native FREE (URP 17 Lit shader supports triplanar via Surface Options).
+- **POM Node** URP Shader Graph 17.4 native FREE.
+- **Better Shaders authoring framework** (187838) — FREE, Booth's auth tool for Shader Graph extensions (URP-compatible).
+- **Quixel Megascons on Fab** — FREE since Dec 2024 (legacy assets grandfathered; new acquires via Fab paywall).
 - **Megascans Bridge for Blender** add-on — FREE.
 - **ozgurdegil/triplanar-shader-graph** — **NO LICENSE FILE (R2-A5)**. Avoid vendoring; reference algorithm only.
 - **GameDevBox/Advanced-Triplanar-Shader** GitHub — FREE reference.
 - **gihuncho/unity-procedural-stochastic-tiling-triplanar** — **NO LICENSE (single-commit GPT-4 generated, R2-A5)**. Avoid.
-- **Material Maker 1.5** — open-source Substance Designer alternative, free, Jan 2026 release, exports for HDRP.
+- **Material Maker 1.5** — open-source Substance Designer alternative, free, Jan 2026 release, exports PBR (URP-compatible texture set).
 - **GenPBR** — image → PBR maps + MaterialX, free browser tool.
 
-**8GB constraint (R2-A1 #3, R2-A3 #3):** 8-layer Tex2DArray BC7 4K with mips = ~430-520 MB. Combined with cloud history + APV + atlases consumes 60% of VRAM budget. **Cap layers at 4 (1080p/8GB profile) or use 2K instead of 4K.** Unity 6.3 native at 10 layers = 3-pass shader = 3× pixel cost — unacceptable at 8GB.
+**Splatmap RGBA pack (URP-rebased):** Unity Terrain Lit (URP and HDRP) both consume the same RGBA splatmap pack. The exporter writes `material_mask_map.raw` (renamed from `hdrp_mask_map.raw`); Unity Terrain Lit reads identical RGBA channels on both pipelines. **No bake-side change required for the URP commit beyond the filename rename.** See §X for the bake-side neutrality note.
 
-**Skip:** MicroSplat Anti-Tiling Module ($30) — **Built-in pipeline only, NOT HDRP**. Better Lit Shader ($50) — Unity 6.3 Terrain Shader Graph + Hex CSNOH covers it free for within-texture stochastic blend (does NOT close Texture Clusters gap). Stochastic Height Sampling ($paid) — broken at HDRP 5.7. Corvo URP/HDRP, TerraTess, TerraFormer, Repetitionless — all redundant.
+**8GB constraint (R2-A1 #3, R2-A3 #3):** 8-layer Tex2DArray BC7 4K with mips = ~430-520 MB. Combined with cloud history + APV + atlases consumes 60% of VRAM budget. **Cap layers at 4 (1080p/8GB profile, R2-A1 quality preset) or use 2K instead of 4K.** Unity 6.3 native at 10 layers = 3-pass shader = 3× pixel cost — unacceptable at 8GB. Bumped to 8 layers in `UnityExportConfig.AAA_16GB` profile when v1.1 hits 16GB target.
+
+**Skip:** MicroSplat Anti-Tiling Module ($30) — **Built-in pipeline only, NOT URP/HDRP**. Better Lit Shader ($50) — Unity 6.3 URP Terrain Shader Graph + Hex CSNOH covers it free for within-texture stochastic blend (does NOT close Texture Clusters gap). Stochastic Height Sampling ($paid) — broken at HDRP 5.7 era, untested URP. Corvo URP, TerraTess, TerraFormer, Repetitionless — all redundant.
 
 ### 2.7 Scatter / GPU Instancing (R2 — Hi-Z mandatory + GoodPie remapper required)
 
@@ -387,7 +469,7 @@ Pair with HDRP Volume override exposing strength/threshold/blueShift in `[Volume
 **SpeedTree 9 Importer billboard impostors — codex c08 verdict (2026-05-07):**
 - Unity 6.3 imports `.st`/`.st9`, auto-generates per-LOD materials, creates prefab with configured `LODGroup`. Billboard exists only if SpeedTree export includes billboards.
 - SpeedTree Modeler 9 exports billboards as a final LOD with multi-view images packed into a billboard atlas. Unity renders them through `BillboardAsset`/`BillboardRenderer`: camera-facing cutout mesh, several baked Y-axis views, atlas coords + normal texture. **Native is multi-view vertical billboard — NOT octahedral, NOT crossboard.**
-- At **80m+ distance** with HDRP fog/atmospheric perspective, the octahedral-vs-multi-view difference is not player-visible at 1080p; silhouette + alpha mip + fog match dominate over parallax accuracy.
+- At **80m+ distance** with URP Volume Fog + atmospheric perspective, the octahedral-vs-multi-view difference is not player-visible at 1080p; silhouette + alpha mip + fog match dominate over parallax accuracy.
 - **Memory:** SpeedTree native 2 maps (diffuse+alpha, normal): `2048 RGBA32 ×2 + mips ≈ 42.7 MiB` raw / `~10.7 MiB` BC3/BC7. Amplify standard 4 maps: `2048 ×4` compressed + mips ≈ `21.3 MiB` / raw `85.3 MiB`. **At 8GB the Amplify 4-map atlas is unaffordable for 6+ hero species.**
 - **Verdict: SpeedTree 9 native billboards SUFFICIENT for 8GB / 1080p / dark-fantasy.** Spend budget on atlas BC compression + alpha mip coverage + fog match + LOD threshold tuning + billboard shadow settings, not on Amplify. Re-evaluate ONLY if a screenshot A/B at 80-140m shows obvious native failure on hero silhouettes.
 
@@ -438,9 +520,9 @@ Pair with HDRP Volume override exposing strength/threshold/blueShift in `[Volume
 ### 2.10 Editor productivity & visual gates
 
 **Stack to adopt ($0):**
-- **Unity Recorder 5.1** — FREE package, accumulates HDRP path-traced sub-frames into PNG sequences. **The golden-screenshot pipeline.**
-- **HDRP Path Tracing** — native HDRP 17, RTX 4060 Ti supports DXR.
-- **Cinemachine 3.1+** — FREE Package Manager, HDRP volume adapters, supports Unity 6.4.
+- **Unity Recorder 5.1** — FREE package, accumulates Camera frames into PNG sequences. **The golden-screenshot pipeline.** (URP-compatible — Recorder is RP-agnostic.)
+- **Blender Cycles 4K via RunPod (renderer-agnostic golden bake)** — replaces HDRP Path Tracer. Headless Blender Cycles renders identical PNG goldens off-rig (~$0.40/hr RTX 4090 spot, see §18.6). RP-agnostic (does not depend on Unity HDRP / URP). Native Unity rasterized goldens cover SSIM-vs-self via Graphics Test Framework; Cycles 4K covers SSIM-vs-AAA-anchor.
+- **Cinemachine 3.1+** — FREE Package Manager, URP Volume adapters, supports Unity 6.4.
 - **Unity Test Framework + Graphics Test Framework 8.6** — FREE, built-in `ImageAssert.AreEqual(camera, refImage, settings)` MSE/RMSE thresholds. Replaces hand-roll dssim.
 - **dssim (kornelski)** Rust CLI — multiscale SSIM L*a*b*, AGPL/commercial dual. AGPL fine for build-side CI (not shipped).
 - **Animation Rigging 1.4** — FREE Two Bone IK for foot placement.
@@ -454,41 +536,48 @@ Pair with HDRP Volume override exposing strength/threshold/blueShift in `[Volume
 
 ---
 
-## §3. PAID TOOL DECISIONS (R2 FINAL — REVISED 2026-05-07: SpeedTree 9 Indie restored, happy-turtle DROPPED)
+## §3. PAID TOOL DECISIONS (R2 FINAL — REVISED 2026-05-07: URP-rebased; SpeedTree 9 Indie restored; happy-turtle, Beautify HDRP, Crest 5 DROPPED)
 
-R2-A2 verified each "BUY" against VRAM constraint + free-equivalent availability. **MicroSplat HDRP-for-6.3 + SpeedTree 9 Indie are the two positive-ROI paid tools** (foliage stack pivoted from happy-turtle to SpeedTree 9 Indie 2026-05-07 — happy-turtle abandoned 2021, broken on HDRP 17 ShaderGraph, no commercial ship history). This table supersedes all R1/R1.5 paid-tool tables.
+R2-A2 verified each "BUY" against VRAM constraint + free-equivalent availability. **MicroSplat URP variant + SpeedTree 9 Indie are the two positive-ROI paid tools** post-URP commit (foliage stack pivoted from happy-turtle to SpeedTree 9 Indie 2026-05-07 — happy-turtle abandoned 2021, broken on URP 17 ShaderGraph, no commercial ship history; Crest 5 dropped because Boat Attack water sample is the v1 backend per §X). This table supersedes all R1/R1.5 paid-tool tables.
+
+**Cost ceiling drops $130 → $50-$70 ($20 MicroSplat URP + $19 first month SpeedTree + $20 conditional Mesh Terrains; Crest 5 + Beautify HDRP both removed).**
 
 | Tool | Cost | Decision | Reason |
 |------|------|----------|--------|
-| MicroSplat base (96478) | FREE | adopt | required dep for HDRP-for-6.3 |
-| **MicroSplat HDRP for Unity 6.3 (344008)** | **$20 BUY (one-time)** | **BUY** | Closes Texture Clusters gap (3 sub-textures cycled per layer pseudo-randomly per jbooth blog + Asset Store ID 104223). Unity 6.3 native does NOT cycle — produces visible "Skyrim grass plane" tiling at 60+m. Saves ~3 days of Shader Graph node-spaghetti. Booth ships continuously since 2018 — 7-year update record. |
-| **SpeedTree 9 Indie subscription** | **$19/mo or $199/yr** | **BUY (foliage canonical)** | REPLACES happy-turtle/foliage-wind decision (4.5y abandoned, broken on HDRP 17 ShaderGraph, no commercial ship history). Unity 6.3 SpeedTree 9 Importer is FREE; Indie subscription unlocks **Modeler + .st9 export** with HDRP 17 GRD-compatible native wind. AAA foliage-wind parity with Witcher 3 NG / Hellblade 2 / Cyberpunk 2.0. Subscription is monthly-cancellable so cost rolls off after authoring sprints. |
-| MicroSplat Mesh Terrains (157356) | $20 | **conditional** | Only if cliffs/overhangs gameplay-critical. No free alternative at this fidelity tier. |
-| **Cloud bake-rig (RunPod RTX 4090 spot)** | **~$31/mo (optional)** | **adopt-recommended** | Path-traced goldens + APV bakes off-rig at ~$0.40/hr, ~80 hr/mo realistic usage. Keeps local 4060 Ti 8GB free for editor work. See §18 setup. |
+| MicroSplat base (96478) | FREE | adopt | required dep for URP variant |
+| **MicroSplat URP variant (Asset Store ID 189950)** | **$20 BUY (one-time)** | **BUY** | Same author Jason Booth, same $20 price as the HDRP variant 344008, same Texture Clusters (3 sub-textures cycled per layer pseudo-randomly per jbooth blog + Asset Store ID 104223). Unity 6.3 URP native Terrain Shader Graph does NOT cycle — produces visible "Skyrim grass plane" tiling at 60+m. Saves ~3 days of Shader Graph node-spaghetti. Booth ships continuously since 2018 — 7-year update record. |
+| **SpeedTree 9 Indie subscription** | **$19/mo or $199/yr** | **BUY (foliage canonical)** | REPLACES happy-turtle/foliage-wind decision (4.5y abandoned, broken on URP 17 ShaderGraph, no commercial ship history). Unity 6.3 SpeedTree 9 Importer is FREE; Indie subscription unlocks **Modeler + .st9 export** with URP 17 GRD-compatible native wind. AAA foliage-wind parity with Witcher 3 NG / Hellblade 2 / Cyberpunk 2.0. Subscription is monthly-cancellable so cost rolls off after authoring sprints. |
+| MicroSplat Mesh Terrains (157356) | $20 | **conditional** | Only if cliffs/overhangs gameplay-critical. No free alternative at this fidelity tier. URP-compatible. |
+| **Cloud bake-rig (RunPod RTX 4090 spot)** | **~$31/mo (optional)** | **adopt-recommended** | Blender Cycles 4K goldens + APV bakes off-rig at ~$0.40/hr, ~80 hr/mo realistic usage. Keeps local 4060 Ti 8GB free for editor work. See §18 setup. |
 | Auto-Rig Pro | OWNED | acknowledge | user has installed (already paid) |
 | Amplify Impostors (119877) | $30 | **DROP — $0** | SpeedTree 9 Importer (FREE, Unity 6.3 native) ships built-in octahedral billboards driven by .st9 export from SpeedTree 9 Indie. |
-| Beautify HDRP (165411) | $39.99 | **DROP — $0** | HDRP 17.6 ships ACES + Neutral natively. AgX (meenphie GitHub MIT) ports cleanly = 1-evening. Purkinje effect = ~30 lines of HLSL custom post-process volume (R2-A2 #3). |
-| Aurora Borealis Shader VFX | $25 | **DROP — $0** | olawlor/AuroraRendererUnity public domain. HDRP custom-pass port = 4-6 hr (R2-A2 #4). |
+| Beautify HDRP (165411) | $39.99 | **DROP — $0** | HDRP-only asset; irrelevant on URP. URP 17.6 ships ACES + Neutral natively. AgX (meenphie GitHub MIT) ports cleanly to URP custom post = 1-evening. Purkinje effect = ~30 lines of HLSL URP Renderer Feature (R2-A2 #3). |
+| Aurora Borealis Shader VFX | $25 | **DROP — $0** | olawlor/AuroraRendererUnity public domain. URP Renderer Feature port = 4-6 hr (R2-A2 #4). |
 | THOR Thunderstorm | $30 | **DROP — $0** | 26 thunder samples replaceable with Sonniss GDC (free royalty-free). 50-LOC LightningController.cs covers logic (R2-A2 #5). |
-| **happy-turtle/foliage-wind** | n/a | **DROP — abandoned** | Last commit 2021; broken on HDRP 17 ShaderGraph node API; no commercial ship history. Replaced by SpeedTree 9 Indie above + DIY HDRP Shader Graph wind (~2 days) for procedural filler density. |
+| **happy-turtle/foliage-wind** | n/a | **DROP — abandoned** | Last commit 2021; broken on URP 17 ShaderGraph node API; no commercial ship history. Replaced by SpeedTree 9 Indie above + DIY URP Shader Graph wind (~2 days) for procedural filler density. |
 | Wwise Indie | FREE | adopt | <$250K dev BUDGET threshold (NOT revenue — see §7.2). 1% royalty above. |
 | Wwise Pro (above-Indie tier) | **$8,000 first platform + $4,000 each extra platform** OR 1% gross-sales royalty | conditional | FINAL-V3 #6 fill: triggers when production BUDGET exceeds Indie threshold ($250K). The $250K threshold is dev BUDGET not revenue. Royalty alternative is post-launch waivable below $10K revenue. Maintain `docs/license/wwise_budget_audit.md` snapshot at greenlight + pre-launch + 6/12mo post-launch. (R2-A8, codex c06.) |
 | Steam Audio Unity | FREE | adopt | **APACHE-2.0 since 2020 — NOT AGPL.** R1 was wrong. NOTICE-file attribution only. Runtime occlusion/portals/transmission (R2-A6 N1, R2-A8). |
-| Crest 5 HDRP (268614) | $100-200 | **SKIP** | free GitHub Crest 4 is BIRP-only; HDRP 17.6 native WaterSurface + foam fix covers AAA-tier with DLSS 4.5 SR Quality |
+| **Boat Attack water sample (Unity URP)** | **FREE** | **adopt (v1 IWaterBackend)** | Unity-authored URP water sample. Replaces HDRP WaterSurface for v1. v1.1 swap to Stylized Water 2 ($30) or Crest 5 ($100-200) is one C# adapter file via `IWaterBackend` interface (§X). |
+| Stylized Water 2 (Asset Store) | $30 | **defer v1.1** | Optional v1.1 IWaterBackend swap for stylized swamp/blood-water aesthetic. Plug-and-play via §X interface. |
+| Crest 5 (Asset Store SKU 268614) | $100-200 | **SKIP (v1) / defer v1.1** | DROPPED from v1. Crest 4 free GitHub is BIRP-only; Crest 5 is the paid HDRP/URP SKU. v1 uses Boat Attack water sample (FREE); Crest 5 is the v1.1 IWaterBackend upgrade for AAA ocean simulation when 12GB+ hardware lands. |
+| Volume Cloud URP asset | $45 | **defer v1.1** | Optional v1.1 ISkyBackend swap. v1 uses skybox cubemap (FREE). Plug-and-play via §X interface. |
+| Atmospheric Height Fog | $35 | **defer v1.1** | Optional v1.1 IFogBackend swap. v1 uses URP Volume Fog override + billboard cards (FREE). |
 | Gaea 2 Pro | $199 | **SKIP** | Indie tier ($99) cannot automate; not needed for v1 |
 | Bakery GPU Lightmapper | $60 | **SKIP** | APV native deprecates |
 | Magic Light Probes | $50 | **SKIP** | APV native deprecates |
-| Enviro 3 / Cozy / Sky Master / Expanse / Atmospheric Height Fog / HDRP Time of Day | $35-100 | **SKIP** | redundant with HDRP 17.6 native |
+| Enviro 3 / Cozy / Sky Master / Expanse / HDRP Time of Day | $35-100 | **SKIP** | redundant with URP 17.3 Volume Fog + skybox cubemap + day-night Volume interpolation (HDRP TOD asset is HDRP-only — irrelevant) |
 | Botaniq Trees Pro | $89 | **SKIP** | SpeedTree 9 Indie above is canonical; Modular Tree GoodPie + Sapling covers stylized filler (R2 §1.6 confirms headless works) |
 | Geo-Scatter full library | $69 | **SKIP** | free tier headless verified working (R2 §1.6) |
 | GPU Instancer Pro | $70 | **SKIP** | GRD native equivalent now |
 | GPU Instancer legacy free | n/a | **EXCLUDE** | non-commercial license — legal trap |
 | BBC Sound Effects | n/a | **EXCLUDE** | RemArc license non-commercial only — fail-PR risk |
 
-**Day-1 spend: $20 one-time (MicroSplat HDRP-for-6.3) + $19 (SpeedTree 9 Indie first month).**
+**Day-1 spend: $20 one-time (MicroSplat URP variant 189950) + $19 (SpeedTree 9 Indie first month).**
 **Recurring during active dev: $19/mo SpeedTree + ~$31/mo cloud bake-rig (optional but recommended) = ~$40-50/mo.**
 **Annual SpeedTree Indie alternative: $199/yr (saves ~$30 vs 12 monthly).**
 **Conditional add: +$20 MicroSplat Mesh Terrains if cliffs/overhangs gameplay-critical.**
+**Cost ceiling: $50 baseline / $70 conditional ceiling (down from R1.5 $130; Crest 5 + Beautify HDRP both removed from URP commit per §X).**
 **See §14.1 + §18 for hardware-upgrade options (B/C) + per-domain AAA tier matrix.**
 
 ---
@@ -505,7 +594,7 @@ Repo: github.com/Jaysmito101/TerraForge3D — C++/GLSL/OpenCL desktop tool. Acti
 
 **Skip:** their CPU droplet (we have hero-exclusion + erodibility map), absence of thermal erosion (gap on their side), no biome system.
 
-**Visual quality:** their renders are proceduralist-tool internal preview, NOT AAA. Closer to World Machine v1 demo than Houdini/Gaea. Our HDRP stack will exceed if we close aeolian gap.
+**Visual quality:** their renders are proceduralist-tool internal preview, NOT AAA. Closer to World Machine v1 demo than Houdini/Gaea. Our URP stack will exceed if we close aeolian gap.
 
 ---
 
@@ -528,7 +617,7 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 
 ## §6. IMPLEMENTATION PATH (R2-A7 60-day plan — REPLACES R1's 30-day)
 
-**Why 60 not 30:** R2-A7 verified the 30-day plan covers only 30-40% of P0 surface. Spec §11 v3 has 114 PRs and Decision 3.3 budgets 30-45 days for spec critical path ALONE — R1 added new TerraForge3D + PFG ports + Unity HDRP scene + APV bake + foliage + audio + visual gate on top. This new plan targets ~80% of P0 at $0 spend / 8GB constraint.
+**Why 60 not 30:** R2-A7 verified the 30-day plan covers only 30-40% of P0 surface. Spec §11 v3 has 114 PRs and Decision 3.3 budgets 30-45 days for spec critical path ALONE — R1 added new TerraForge3D + PFG ports + Unity URP scene + APV bake + foliage + audio + visual gate on top. This new plan targets ~80% of P0 at $0 spend / 8GB constraint.
 
 ### PHASE A (Days 1-15) — Bake-side blockers + spec critical-path PRs ✅ COMPLETE
 - **D1-2:** PRs #1+#2 (gitignore + LFS hygiene + pyproject CVE fixes) cleanup; pip-audit zero-CRITICAL gate. ✅
@@ -557,31 +646,31 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 - **D34:** PR #43 + #44 streaming budget cap (`QualitySettings.streamingMipmapsMemoryBudget = 3072`).
 - **D35:** PR #42 missing emitters (vb_aspect_deg, vb_aspect_north, vb_canopy_openness, vb_TWI via new `pass_topographic_indices` ~150 LOC; consumer `requires_channels=` updates on foliage-catalog/scatter passes). **GATE D35** = `pass_topographic_indices` produces all 4 spec channels + foliage-stack consumer wiring complete.
 
-### PHASE D (Days 36-45) — Unity ingestion + Block 5a visual gate
-- **D36-37:** B5-U1 Unity 6.3 LTS + HDRP 17.6 project bootstrap + **4-layer splat config (NOT 8-layer — 8GB constraint)** + APV Sky Occlusion **OFF** at 8x8 grid. `Packages/manifest.json` + `VbHDRPAsset_HighFidelity_8GB.asset` (4 cascades, Sky Occ off, Tex2DArray 4-layer, Volumetric Clouds Low slice 64).
+### PHASE D (Days 36-45) — Unity ingestion + Block 5a visual gate (URP-rebased)
+- **D36-37:** B5-U1 Unity 6.3 LTS + URP 17.3 project bootstrap + **4-layer splat config (NOT 8-layer — 8GB constraint)** + APV Sky Occlusion **OFF** at 8x8 grid. `Packages/manifest.json` (URP 17.3 + Visual Effect Graph 17 + Adaptive Probe Volumes + Addressables + Burst + Collections + Mathematics) + `Assets/Settings/VeilBreakersURP.asset` (UniversalRenderPipelineAsset, Forward+, MSAA 4x, 4 cascades, shadow distance 150m, FSR 3.1 upscaler, ColorSpace=Linear).
 - **D38:** B5-U3 SetHoles consumer (`holes.png` was never read; wire up).
 - **D39:** B5-U4 normal-Y flip handedness + B5-U5 edges.json contract.
-- **D40-41:** B5-U2 HDRP WaterSurface stub (river + pool only — no ocean at 8GB).
+- **D40-41:** B5-U2 Boat Attack water sample integration via `IWaterBackend = BoatAttackWaterBackend` (river + pool only — no ocean at 8GB). See §X for the IWaterBackend interface.
 - **D42:** B5-U8 flow_map RG16 EXR + RenderMeshIndirect for foliage (replaces `DrawMeshInstanced` 1023-cap; **Hi-Z occlusion mandatory** per R2-A3 #5).
-- **D43-44:** Visual gate `scripts/run_unity_recorder_gate.py` + Graphics Test Framework `ImageAssert.AreEqual` SSIM ≥ 0.95 per spec §11.5b PR #6.5 (rasterized goldens at 8GB; **HDRP Path Tracer flagged v1.1** — 8GB OOMs at 1080p/300spp).
-- **D45:** NotImplementedError shim for `compute_nonblack_ratio` (after replacement gate is live, NOT before — prevents 17-day CI break per V2 self-contradiction #3). **GATE D45** = visual gate SSIM ≥ 0.95 (per spec §11.5b PR #6.5) against rasterized goldens.
+- **D43-44:** Visual gate `scripts/run_unity_recorder_gate.py` + Graphics Test Framework `ImageAssert.AreEqual` SSIM ≥ 0.95 per spec §11.5b PR #6.5 (rasterized URP goldens locally; **Blender Cycles 4K via RunPod for AAA-anchor goldens** — replaces HDRP Path Tracer per §18.6 cloud bake-rig). Integrate **URP FSR 3.1 native upscaler** (URP Asset > Quality > Upscaling Filter = FSR 3.1) per `IUpscalerBackend = FSR31UpscalerBackend` (§X).
+- **D45:** NotImplementedError shim for `compute_nonblack_ratio` (after replacement gate is live, NOT before — prevents 17-day CI break per V2 self-contradiction #3). **GATE D45** = visual gate SSIM ≥ 0.95 (per spec §11.5b PR #6.5) against rasterized URP goldens; FSR 3.1 verified at 1080p output / 720p internal / 16.6ms frame budget at 1080p/60 LOCKED.
 
-### PHASE E (Days 46-60) — Performance, atmosphere, audio, hero render, decision gate
+### PHASE E (Days 46-60) — Performance, atmosphere, audio, hero render, decision gate (URP-rebased)
 - **D46-47:** PR #19 Numba/Taichi erosion (integer atomics ONLY — atomic-float ban per spec §8.4). TerraForge3D #1 GPU erosion compute kernel port (gated by §10 confirmation that existing Cordonnier 2016 SPL is genuinely the bottleneck — see §14.9 disagreement #2).
 - **D48:** B15-P0-09 SPL solver wired (V1 confirms; V3 disagreement — verify before wiring).
-- **D49-50:** Foliage RenderMeshIndirect + **Modular Tree GoodPie billboard impostors** (replaces Amplify $30 — see §2.1; **budget +3-5d for manual FBX-sidecar-JSON + AssetPostprocessor remapper** since GoodPie Unity export is months not days, per R2-V2 §13.5). NR6 compute-shader grass instancing 30K+ blades/chunk.
-- **D51-52:** Volumetric Clouds Low slice 64 + 3 Local Volumetric Fog boxes (8GB cap — not 6) + 50-LOC `LightningController.cs` (HDRP Light flash + native Lens Flare ring shape).
-- **D53:** AgX Tonemapping LUT bake + **Purkinje effect HLSL volume** (~30-LOC custom post-process per §2.4.x — replaces Beautify $40).
+- **D49-50:** Foliage RenderMeshIndirect + **SpeedTree 9 Indie** authoring (~$19/mo) → `.st9` import via SpeedTree 9 Importer (FREE, URP-compatible) — replaces Amplify $30 + happy-turtle. NR6 compute-shader grass instancing 30K+ blades/chunk. DIY URP Shader Graph wind (~2 days) for procedural filler density.
+- **D51-52:** Skybox cubemap (`ISkyBackend = CubemapSkyBackend`) + URP Volume Fog override + 3 billboard fog cards (`IFogBackend = URPFogVolumeBackend`, 8GB cap) + 50-LOC `LightningController.cs` (URP Light flash + Lens Flare component) **+ Sun.cs + day-night URP Volume interpolation (§14.11 v1 requirement)**.
+- **D53:** AgX Tonemapping LUT bake (DaVinci → .cube → URP Color Adjustments external LUT) + **Purkinje effect HLSL URP Renderer Feature** (~30-LOC custom post per §2.4.x — replaces Beautify $40, irrelevant on URP anyway).
 - **D54-55:** Wwise Indie + **Steam Audio (Apache 2.0 verified — see §7.2)** integration + AkRoom/AkPortal volumes from `audio_reverb_class` raster + Sonniss SFX + Footstepper free + day/night `AmbientAudioController`. Fallback FMOD Indie if Wwise authoring blocks.
 - **D56-57:** B15-P0-15 vectorize 22 biome-feature O(N²) loops (~1 TB transient at 1024² removed).
 - **D58:** Memory + spec doc updates (§14.8 supersession list).
-- **D59-60:** Hero shot render + decision gate. **Rubric (REVISED 2026-05-07 per §18.1 + §18.9):** ≤16.67 ms frame budget at 1080p output via DLSS 4.5 SR Quality (Preset L, 720p internal). Native 1080p/60 NOT required; SR Quality is the contract. SSIM ≥0.95 vs rasterized golden. Foliage placement >0 per chunk. PYTHONHASHSEED=0 byte-identical determinism. 4060 Ti 8GB VRAM peak ≤ 7.4 GB sustained. **GATE D60** = pilot ships at 1080p/60 via DLSS 4.5 SR Quality (which is *upscaling*, not frame-gen). DLSS3 frame-gen is the only thing **EXPLICITLY DEFERRED to v1.1** contingent on Streamline integration work (per §18.9 + R2-V2).
+- **D59-60:** Hero shot render + decision gate. **Rubric (REVISED 2026-05-07 per §18.1 + §18.9):** ≤16.67 ms frame budget at 1080p output via URP FSR 3.1 Quality (720p internal → 1080p). Native 1080p/60 raster acceptable if Forward+ hits it directly without upscaler (STP fallback also FREE). SSIM ≥0.95 vs rasterized URP golden. Foliage placement >0 per chunk. PYTHONHASHSEED=0 byte-identical determinism. 4060 Ti 8GB VRAM peak ≤ 7.4 GB sustained. **GATE D60** = pilot ships at 1080p/60 via URP FSR 3.1 (or native raster + STP). DLSS 4.5 SR is v1.1 (NVIDIA NGX SDK port pending packaging); frame-gen (any backend) is v1.1 contingent on plugin integration (per §18.9 + R2-V2 + §X plug-and-play upgrade path).
 
-**Deferred to v1.1:** APV Sky Occlusion (16GB rebake rig), 8-layer splatmap (16GB only), HDRP Path Tracer goldens (16GB rig), TerraForge3D GPU port (only if profiler confirms bottleneck), PFG #2 Bézier compute shader, refactors PR #49-#54, 30 Batch15 P1s, Aurora HDRP custom pass (4-6 hr — easy v1.1 win), 12 hero VFX Graph particle systems, Unity HLOD 2.0.
+**Deferred to v1.1:** APV Sky Occlusion (16GB rebake rig), 8-layer splatmap (16GB only), Blender Cycles 4K cloud-baked goldens at higher density (cloud-rig limit), TerraForge3D GPU port (only if profiler confirms bottleneck), PFG #2 Bézier compute shader, refactors PR #49-#54, 30 Batch15 P1s, Aurora URP Renderer Feature port (4-6 hr — easy v1.1 win), 12 hero VFX Graph particle systems, Unity HLOD 2.0, **DLSS 4.5 SR (NGX SDK URP port)**, **Volume Cloud URP asset ($45 ISkyBackend swap)**, **Stylized Water 2 ($30 IWaterBackend swap) or Crest 5 ($100-200 IWaterBackend swap)**, **Atmospheric Height Fog ($35 IFogBackend swap)**.
 
-**TOTAL: 60 working days (~12 weeks calendar). $20 spend (MicroSplat HDRP-for-Unity-6.3) + $20 conditional (Mesh Terrains if cliffs). All else free.**
+**TOTAL: 60 working days (~12 weeks calendar). $20 spend (MicroSplat URP variant 189950) + $20 conditional (Mesh Terrains if cliffs). All else free.**
 
-<details><summary>R1 30-day plan (HISTORICAL — REPLACED by 60-day above; do NOT execute)</summary>
+<details><summary>R1 30-day plan (HISTORICAL — REPLACED by 60-day above + URP-rebased 2026-05-07; do NOT execute. All HDRP-specific steps below are obsolete; see §17 for canonical URP plan.)</summary>
 
 ### Days 1-3: Code-state corrections + critical fixes
 1. **Fix Bug-A: derive_pass_seed bifurcation** — delete `terrain_rng.py:45` definition, re-export from `terrain_pipeline.derive_pass_seed`. Update `_scatter_engine.py:22` import path. (~0.5d)
@@ -693,7 +782,7 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 
 | Allocation | MB |
 |---|---|
-| HDRP camera + GBuffer + history | 100 |
+| URP camera + GBuffer (Forward+) + history | 100 |
 | VBuffer (clouds Low + fog) | 250 |
 | 4-layer terrain T2DArray BC7 + mips | 113 |
 | Reflection probe cache (4 × 256²) | 64 |
@@ -705,26 +794,26 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 | Driver/headroom | 500 |
 | **Total** | **~4000 + 1500 streaming = 5.5GB** |
 
-**R1 tools cut/swapped at 8GB (R2-A1):**
-1. **Path Tracing** → KILL from runtime (editor-only goldens, 720p / 64spp accumulation)
+**R1 tools cut/swapped at 8GB (R2-A1; URP-rebased):**
+1. **Path Tracing** → MOVED OFF-RIG (Blender Cycles 4K via RunPod cloud bake-rig per §18.6; URP runtime has no Path Tracer)
 2. **APV Sky Occlusion** → OFF at 8x8 grid (drop to 4x4 if needed)
-3. **8-layer terrain** → 4 layers (HDRP cap remains 8 but 4 effective at 8GB)
-4. **12 fog volumes** → 3-6 with 32³ density masks
+3. **8-layer terrain** → 4 layers (Unity Terrain Lit cap is 8 on URP; 4 effective at 8GB per R2-A1 quality preset)
+4. **Volumetric fog** → URP Volume Fog override + 3-6 billboard fog cards (replaces HDRP Local Volumetric Fog boxes per `IFogBackend`, §X)
 5. **8 cubemap probes resident** → 4 FIFO at 256²
-6. **Volumetric Clouds Medium** → Low slice 64
-7. **No realtime planar reflections for water** — SSR + cubemap fallback
+6. **Volumetric Clouds** → DROPPED in v1 — replaced with skybox cubemap (`ISkyBackend = CubemapSkyBackend`); v1.1 swap to Volume Cloud URP asset ($45) per §X
+7. **No realtime planar reflections for water** — SSR Renderer Feature + cubemap fallback
 
-**Frame-budget reality at 8GB / 1080p:**
-- **Day-time:** 22ms total measured (R2-A10 ship table) = **150% of 16.6ms = NOT 60fps achievable.** **Lock 1080p/45 v1** (22.2ms budget); 1080p/60 with DLSS3 FG is v1.1 contingent on Streamline integration per R2-V2. **Spec must lock this — see §14.10.**
-- **Night-time:** ~16.1ms (alpha/fog overdraw lower) → comfortable at 60fps for night scenes only.
+**Frame-budget reality at 8GB / 1080p (URP-rebased):**
+- **Day-time:** ~16-19ms total estimated on URP Forward+ (URP 17 closes ~80% of HDRP gap with ~10-15% lower base cost — Volumetric Clouds dropped, no HDRP overhead). **Target 1080p/60 via URP FSR 3.1 Quality** (16.6ms budget; 720p internal upscaled to 1080p output). Native 1080p/60 raster acceptable if Forward+ profiles green directly.
+- **Night-time:** ~13-16ms (alpha/fog overdraw lower; URP Volume Fog cheaper than HDRP Local Volumetric Fog) → comfortable at 60fps native.
 - **APV bake reality:** 3-10 min per chunk; 3-12 hr full 8×8 grid (chunk-batched overnight). Max Probe Spacing 243m mandatory for 32GB system RAM safety.
-- **Path Tracer goldens:** editor-only at 720p / 64spp accumulation, restart Unity between bakes (denoiser leaks per R2-A3 #10).
+- **Cycles 4K cloud-baked goldens:** offloaded to RunPod RTX 4090 spot (~$31/mo per §18.6); replaces local HDRP Path Tracer entirely.
 
 **Verdict:** AA-ceiling shippable at 8GB / 1080p / 45fps with High preset. **Reference: PS4-Bloodborne 5GB pool (NOT Hellblade-2 Series-X 10GB)** — see §16.
 
 ### 7.2 License chain audit (R2 — Steam Audio CORRECTED to Apache 2.0)
 - **L-Py / PlantGL CGAL:** dual GPL/LGPL/commercial. Internal bake: $0. Binary ship: requires strict LGPL component selection or commercial CGAL.
-- **Steam Audio:** **APACHE 2.0 — NOT AGPL** (R1 was WRONG). Verified by R2-A8 + codex c02 against `github.com/ValveSoftware/steam-audio/blob/master/LICENSE.md`. Valve open-sourced as Apache 2.0 on **Feb 19 2024** (v4.5.2 — first open-source release of SDK source code; no Valve public record of the SDK ever being AGPL). **Ship-OK for commercial closed-source Unity HDRP.** Required: include Apache 2.0 license text in `Third-Party-Notices.txt` + ship `NOTICE` file content if upstream provides one + mark any modified Steam Audio files with change notices. **NOT required:** source release, AGPL copyleft compliance, modification disclosure to players.
+- **Steam Audio:** **APACHE 2.0 — NOT AGPL** (R1 was WRONG). Verified by R2-A8 + codex c02 against `github.com/ValveSoftware/steam-audio/blob/master/LICENSE.md`. Valve open-sourced as Apache 2.0 on **Feb 19 2024** (v4.5.2 — first open-source release of SDK source code; no Valve public record of the SDK ever being AGPL). **Ship-OK for commercial closed-source Unity URP.** Required: include Apache 2.0 license text in `Third-Party-Notices.txt` + ship `NOTICE` file content if upstream provides one + mark any modified Steam Audio files with change notices. **NOT required:** source release, AGPL copyleft compliance, modification disclosure to players.
 - **Procedural-Plant-and-Foliage-Generator:** GPL-3.0 — **clean-room ports only. Do not vendor code.**
 - **Crest free GitHub (Crest 4):** MIT, but BIRP-only. We're not using.
 - **happy-turtle/foliage-wind:** **NO LICENSE FILE — R1 said Apache 2.0, WRONG (R2-A5).** SHIP-BLOCKER. **Action:** file GitHub issue at upstream repo; if no response within 30 days, **re-author wind shader internally** (~1-2 days HLSL or Shader Graph subgraph). Until clarified, exclude from any vendored binary.
@@ -754,19 +843,19 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 - **Abandoned but works:** Unity-Technologies/HLODSystem (tested 2021.3.3, validate Unity 6 patch), Scrawk/Phillips-Ocean (2022), Scrawk/Brunetons-Ocean (2022).
 - **DO NOT USE — abandoned:** AlTheSlacker/HDRPDayNight (author flags broken), EmmetOT/HDRPGrass (Unity 2019.4 only), yangrc1234/VolumeCloud (won't be maintained), ColinLeung-NiloCat/UnityURP-MobileDrawMeshInstancedIndirectExample (URP-locked Unity 2019.4), mkrebser/GPUInstance (13 commits, Unity 2023.2 maybe), MTree main fork last release 2021-12-11 (use GoodPie fork instead).
 
-### 7.4 Cross-tool conflicts (17 verified + 5 NEW per R2-A6)
-1. **MicroSplat HDRP-for-6.3 vs Unity 6.3 native Terrain Shader Graph** — pick one, never mix on same chunk. Recommend MicroSplat ($20).
+### 7.4 Cross-tool conflicts (17 verified + 5 NEW per R2-A6; URP-rebased)
+1. **MicroSplat URP variant vs Unity 6.3 URP native Terrain Shader Graph** — pick one, never mix on same chunk. Recommend MicroSplat URP variant ($20, ID 189950).
 2. **APV vs SSGI** — configure SSGI "additive on top of APV" not "replace" to avoid double-count.
 3. **GRD vs MaterialPropertyBlock** — GRD silently disables; audit `VbFoliageManifestRenderer` after RenderMeshIndirect rewrite.
-4. **HDRP Path Tracer + MicroSplat shader** — Path Tracer goldens require TerrainLit fallback. Editor-only goldens at 8GB (cannot run runtime).
+4. **Cycles 4K cloud goldens vs MicroSplat shader** — cloud-rig bakes a Unity URP-rendered scene to PNG; MicroSplat URP runs on the local editor. No conflict; goldens are visual references, not runtime.
 5. **Wwise vs Unity native audio** — Wwise replaces AudioListener; pick one at scene init.
 6. **Steam Audio + Wwise** vs **Steam Audio + FMOD** — both work; Wwise pairing has tighter Rooms & Portals integration.
 7. **Auto-Rig Pro vs Unity Animation Rigging** — different scopes; not in conflict.
 8. **(NEW R2-A6 N1) Steam Audio license chain** — Apache 2.0 since 2020. Apache §4(d): include NOTICE file. NOT AGPL (R1 wrong).
 9. **(NEW R2-A6 N2) SpeedTree .st9 vs glTF Draco** — Draco strips morph targets used by SpeedTree wind. Decision: keep .st9 for trees; glTF/Draco for static props only.
 10. **(NEW R2-A6 N3) Blender Z-up vs Unity Y-up vs SpeedTree Y-up forward-Z chain** — FBX export from Blender with default `-Y forward, Z up` produces parent rotation `(-89.98°, 0, 0)` in Unity that breaks Auto-Rig Pro retarget. **Fix:** Apply Transform in FBX exporter or use Unity FBX Importer "Bake Axis Conversion".
-11. **(NEW R2-A6 N4) HDRP Decal Projector vs Terrain Holes** — decals project through hole alpha but lose depth. **Workaround:** tag decals `Affects Transparent = Off` in cave entrances.
-12. **(NEW R2-A6 N5) GPU Resident Drawer vs DLSS3 frame-gen** — GRD's per-frame BRG buffer updates fight with DLSS3 motion-vector reprojection. Verify DLSS plugin version 3.7.10+. Unity 6.3 added `_LastFrameWorldPos` write via DOTS-instanced motion-vector pass; older 6.0 = visible smearing.
+11. **(NEW R2-A6 N4) URP Decal Projector vs Terrain Holes** — URP Decal Projector (URP 17 Renderer Feature) projects through hole alpha but loses depth. **Workaround:** tag decals `Affects Transparent = Off` in cave entrances. (Same root issue as HDRP Decal Projector; URP version of the bug.)
+12. **(NEW R2-A6 N5) GPU Resident Drawer vs frame-gen plugins** — GRD's per-frame BRG buffer updates can fight with motion-vector reprojection used by frame-gen plugins. Currently moot for v1 since URP FSR 3.1 is the v1 upscaler (no frame-gen). Re-evaluate when DLSS NGX SDK URP port lands in v1.1.
 
 ### 7.5 NVIDIA driver 536.40+ introduced fallback / 546.01+ added the toggle — shared-memory cliff (NEW — CRITICAL 8GB risk)
 
@@ -780,19 +869,19 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 
 3. **Auto-degrade on threshold breach.** On `>7.2GB sustained 3sec` trigger one-step downgrade through preset chain: Ultra→High→Medium→Low. Each downgrade: log to `vram_degrade.log`, show toast "Quality reduced to <preset> for stability." Persist new setting.
 
-4. **`Assets/Settings/HDRP_4060Ti_Failsafe.asset` auto-activator.** Detects `SystemInfo.graphicsMemorySize <= 8192` at boot. Forces: Volumetric Clouds → Low; Tex2DArray → 4-layer 2K; WaterSurface SimulationResolution → 128; APV Sky Occlusion → bake-time only (runtime read disabled); shadow cascades 4→3; render scale 1.0→0.9 if frame >18ms.
+4. **`Assets/Settings/URP_4060Ti_Failsafe.asset` auto-activator.** Detects `SystemInfo.graphicsMemorySize <= 8192` at boot. Forces: skybox cubemap (no Volume Cloud asset); Tex2DArray → 4-layer 2K; Boat Attack water SimulationResolution → 128; APV Sky Occlusion → bake-time only (runtime read disabled); shadow cascades 4→3; URP render scale 1.0→0.9 if frame >18ms.
 
-**Phase-0 hardware capture harness:** Before locking the stack, build `tools/hwcap/capture_4060ti.py` that runs an empty HDRP scene + each R1 feature toggle individually and logs VRAM peak via `nvidia-smi --query-gpu=memory.used --format=csv -lms 100`. Lock the stack only after capture confirms each pick fits in <600 MB headroom against 7.4 GB working ceiling.
+**Phase-0 hardware capture harness:** Before locking the stack, build `tools/hwcap/capture_4060ti.py` that runs an empty URP scene + each R1 feature toggle individually and logs VRAM peak via `nvidia-smi --query-gpu=memory.used --format=csv -lms 100`. Lock the stack only after capture confirms each pick fits in <600 MB headroom against 7.4 GB working ceiling.
 
-**Stacked-feature memory ceiling (R2-A3 #2):** APV 250MB + Volumetric Clouds Medium 450MB + WaterSurface Ocean+River 250MB + 8-layer 4K Tex2DArray 500MB + foliage Indirect 50MB + HDRP base 700MB + shadows 250MB + 8 hero SpeedTree species 800MB = **~3.25GB before any gameplay assets**. Leaves only ~4.5GB for animations, characters, particles, post-FX, audio, frame-N+1 streaming. **No headroom for hot-loading new chunks — preset reductions in §7.1 mandatory.**
+**Stacked-feature memory ceiling (R2-A3 #2; URP-rebased):** APV 250MB + skybox cubemap 50MB (replaces Volumetric Clouds Medium 450MB) + Boat Attack water River+Pool 120MB (replaces HDRP WaterSurface 250MB) + 4-layer 4K Tex2DArray 250MB (capped at 4 per §2.6) + foliage Indirect 50MB + URP Forward+ base ~500MB (down from HDRP 700MB) + shadows 250MB + 8 hero SpeedTree species 800MB = **~2.27GB before any gameplay assets** (down from HDRP's ~3.25GB). Leaves ~5.5GB for animations, characters, particles, post-FX, audio, frame-N+1 streaming — significantly more headroom than HDRP path. Preset reductions in §7.1 still mandatory but there's now room for v1.1 backend swaps (Volume Cloud URP $45, Stylized Water 2 $30) without exhausting 8GB.
 
-**Texture streaming + HDRP virtual texturing (R2-A3 #5, NOT in R1):** Default Unity streaming on 8GB cards uses 6GB, leaving HDRP only 2GB → instant fallback. Must set `QualitySettings.streamingMipmapsMemoryBudget = 3072` (3GB) explicitly at boot.
+**Texture streaming + URP streaming budget (R2-A3 #5, NOT in R1):** Default Unity streaming on 8GB cards uses 6GB, leaving URP only 2GB → instant fallback. Must set `QualitySettings.streamingMipmapsMemoryBudget = 3072` (3GB) explicitly at boot.
 
 **GPU compute contention (R2-A3 #3):** Spec runs Taichi-CUDA bakes on the same 4060 Ti during dev. Editor + Taichi share VRAM context → bake-while-editing OOMs Unity Editor. **Mitigation:** sequential bake-then-edit workflow; never run Taichi while Unity Editor open.
 
-**Unity Terrain multi-pass shader stalls (R2-A3 #4):** With 10-layer Shader Graph terrain, first-time-seen terrain triggers async shader compilation 6-14 sec on 4060 Ti — pink/black tiles during fly-through. Recorder captures these stalls into goldens. **Mitigation:** prewarm shader variants at scene load via `ShaderVariantCollection.WarmUp()`.
+**Unity Terrain multi-pass shader stalls (R2-A3 #4):** With 10-layer URP Shader Graph terrain, first-time-seen terrain triggers async shader compilation 6-14 sec on 4060 Ti — pink/black tiles during fly-through. Recorder captures these stalls into goldens. **Mitigation:** prewarm shader variants at scene load via `ShaderVariantCollection.WarmUp()`.
 
-**DLSS3 Frame Generation memory cost (R2 codex r2c10):** Per NVIDIA Streamline DLSS-G guide, **1080p = 272MB** VRAM (NOT 120-160MB). Footprint same for single-frame and multi-frame modes. Unity HDRP 17.6 ships **DLSS 4.5 SR only — no native FG**. Streamline 2.11.1 (2026-04-21) has FG but no turnkey Unity plugin. **At 8GB with HDRP + textures + terrain + shadows + water + APV + GRD already at ~5.5GB, adding 272MB DLSS-G is feasible but tight.** Decision (§14.10): treat FG as optional PC setting, D3D12-first, with VRAM telemetry gate; lock 1080p/45 raster v1, evaluate Streamline integration for v1.1.
+**Upscaler memory cost (URP FSR 3.1 — v1 IUpscalerBackend):** URP 17.3 native FSR 3.1 is built into the URP Asset (Quality > Upscaling Filter); no extra VRAM allocation beyond URP's own internal scaler buffers (~30-50MB at 720p→1080p). Significantly cheaper than DLSS 4.5 SR's neural network model upload. Frame-gen (any backend including DLSS-G's 272MB at 1080p) remains v1.1 contingent. Decision (§14.10): URP FSR 3.1 v1 lock; STP fallback FREE if FSR sharpness unacceptable; DLSS NGX SDK URP port + frame-gen plugins both v1.1.
 
 ---
 
@@ -800,7 +889,7 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 
 ### 8.1 Existing gates (R1 baseline)
 
-1. **Visual fidelity:** SSIM ≥ 0.95 vs HDRP Path Tracer goldens (per spec §11.5b PR #6.5; raised from R1's 0.92). Replaces fake `compute_nonblack_ratio`.
+1. **Visual fidelity:** SSIM ≥ 0.95 vs Blender Cycles 4K goldens (renderer-agnostic AAA-anchor, baked via cloud rig per §18.6) AND vs rasterized URP self-goldens (drift detection). Replaces R1's HDRP Path Tracer goldens. Per spec §11.5b PR #6.5; raised from R1's 0.92. Replaces fake `compute_nonblack_ratio`.
 2. **Determinism:** subprocess byte-identity CI gate already wired at `terrain_bundle_n.py:421`. Expand artifact matrix from 3 of 18 → 18 of 18 (spec §11.5.4 PR B5-T4).
 3. **Channel-graph integrity:** `PassDefinition.overrides=` + `_STRICT_PROVENANCE` + `ChannelOwnershipError`. Run on every PR.
 4. **Biome name invariant:** `assert set(BIOME_CLIMATE_PARAMS) == set(CANONICAL_BIOME_IDS)` at module-import time.
@@ -944,7 +1033,7 @@ The reference summary below mirrors §14.8 entries; do not edit here without als
 | Unity-Technologies/HLODSystem (no LICENSE; Unity 2021.3 dead-end) | **Unity HLOD 2.0 in com.unity.hlod package** | Unity Companion | Unity 6 native |
 | CarterGames/SaveManager (GPL-3 — kills closed-source) | **DerKekser/unity-save-system** | MIT | 2024-08-22 |
 | sinanata/Unity-HDRP-Water-Buoyancy-Handler (GPL-3 viral) | **dbrizov/Unity-WaterBuoyancy (NaughtyWaterBuoyancy)** | MIT | 2026-04-11, 947 stars |
-| Crest free GitHub (BIRP-only) | **Unity HDRP WaterSurface native** | Unity built-in | Unity 6.3 native |
+| Crest free GitHub (BIRP-only) | **Boat Attack water sample (Unity URP, FREE)** — replaces both Crest BIRP-OSS and HDRP WaterSurface per URP commit 2026-05-07 + §X | Unity built-in | URP 17.3 native |
 
 **License corrections to memory (R2-A5 + R2-A8):**
 - `feedback_audit_artifacts.md`: Add note — R1 license claims for happy-turtle/foliage-wind (Apache 2.0), AlexMerzlikin BRG (MIT), Scrawk/Tiled-Directional-Flow (MIT) all WRONG. Verify against actual LICENSE file before claiming.
@@ -1145,33 +1234,36 @@ The doc is internally consistent and the new bug findings (Bug-A through Bug-E +
 
 R2 (10 Opus deep-scan + 10 codex deep-scan + 3 doc-updaters + 4 verifiers) replaces R1/R1.5 entirely on 8GB-VRAM grounds. **All R1 cost/calendar/preset claims are superseded.** Spend collapses to $20 baseline / $40 ceiling. Calendar replaces 30-day plan with R2-A7 60-day plan (§17). Hardware replaces "16GB assumed, confirm 8GB" with "8GB HARD CONSTRAINT" (§7.1).
 
-### 14.1 Money — R2 FINAL — REVISED 2026-05-07 (SpeedTree 9 Indie restored, hardware-upgrade options added)
+### 14.1 Money — R2 FINAL — REVISED 2026-05-07 (URP-rebased; SpeedTree 9 Indie restored, hardware-upgrade options added; Beautify HDRP + Crest 5 removed)
 
-**Day-1 spend: $39 ($20 MicroSplat HDRP-for-6.3 one-time + $19 SpeedTree 9 Indie first month).**
+**Day-1 spend: $39 ($20 MicroSplat URP variant 189950 one-time + $19 SpeedTree 9 Indie first month).**
 **Monthly during active dev: $19/mo SpeedTree + $31/mo cloud bake-rig (optional but recommended) = ~$50/mo.**
 **Annual SpeedTree Indie: $199/yr (saves ~$30 vs 12 monthly).**
+**Cost ceiling: $50 baseline / $70 conditional (down from R1.5 $130; Crest 5 + Beautify HDRP both removed per §X URP backend abstraction).**
 
 | Item | Cost | Decision | Notes |
 |------|------|----------|-------|
-| **MicroSplat HDRP-for-Unity-6.3** (344008) | **$20 one-time** | BUY day-1 | Closes Texture Clusters gap (3-sub-texture cluster cycling). Unity 6.3 native does NOT cycle. |
-| **SpeedTree 9 Indie subscription** | **$19/mo or $199/yr** | BUY day-1 (foliage canonical) | Unlocks Modeler + .st9 export with HDRP 17 GRD-compatible wind. REPLACES happy-turtle (abandoned 2021, broken on HDRP 17, no ship history). SpeedTree 9 Importer is FREE in Unity 6.3 (consumes .st9 but cannot author). |
-| **Cloud bake-rig (RunPod RTX 4090 spot)** | **~$31/mo (optional)** | adopt-recommended | Path-traced goldens + APV bakes off-rig at ~$0.40/hr × ~80 hr/mo. Keeps local 4060 Ti 8GB free for editor. Setup in §18. |
-| **MicroSplat Mesh Terrains** (157356) | $20 | conditional | only if cliffs/overhangs gameplay-critical |
+| **MicroSplat URP variant** (Asset Store ID 189950) | **$20 one-time** | BUY day-1 | Same author Jason Booth, same $20 price as the HDRP variant 344008, same Texture Clusters (3-sub-texture cluster cycling). Unity 6.3 URP native does NOT cycle. |
+| **SpeedTree 9 Indie subscription** | **$19/mo or $199/yr** | BUY day-1 (foliage canonical) | Unlocks Modeler + .st9 export with URP 17 GRD-compatible wind. REPLACES happy-turtle (abandoned 2021, broken on URP 17, no ship history). SpeedTree 9 Importer is FREE in Unity 6.3 (consumes .st9 but cannot author). |
+| **Cloud bake-rig (RunPod RTX 4090 spot)** | **~$31/mo (optional)** | adopt-recommended | Blender Cycles 4K goldens + APV bakes off-rig at ~$0.40/hr × ~80 hr/mo (renderer-agnostic — replaces HDRP Path Tracer). Keeps local 4060 Ti 8GB free for editor. Setup in §18.6. |
+| **MicroSplat Mesh Terrains** (157356) | $20 | conditional | only if cliffs/overhangs gameplay-critical (URP-compatible) |
 | Amplify Impostors (119877) | $30/$90 | DROP | SpeedTree 9 Importer ships built-in octahedral billboards via .st9 |
-| Beautify HDRP (165411) | $39.99 | DROP | HDRP 17.6 native ACES + AgX (MIT) port + 30-LOC Purkinje |
-| Aurora Borealis Shader VFX | $25 | DROP | olawlor/AuroraRendererUnity public domain |
+| Beautify HDRP (165411) | $39.99 | DROP | HDRP-only asset; irrelevant on URP. URP 17.6 native ACES + AgX (MIT) port + 30-LOC Purkinje URP Renderer Feature |
+| Aurora Borealis Shader VFX | $25 | DROP | olawlor/AuroraRendererUnity public domain (URP Renderer Feature port) |
 | THOR Thunderstorm | $30 | DROP | Sonniss GDC samples + 50-LOC LightningController |
-| **happy-turtle/foliage-wind** | n/a | **DROP — abandoned 2021** | Broken on HDRP 17 ShaderGraph; no commercial ship. Replaced by SpeedTree 9 Indie above. |
+| Crest 5 (Asset Store SKU 268614) | $100-200 | **DROP (v1) / defer v1.1** | DROPPED from v1. v1 uses Boat Attack water sample (FREE) per §X `IWaterBackend`. v1.1 swap is one C# adapter. |
+| **happy-turtle/foliage-wind** | n/a | **DROP — abandoned 2021** | Broken on URP 17 ShaderGraph; no commercial ship. Replaced by SpeedTree 9 Indie above. |
+| **v1.1 backend swaps (per §X)** | varies | **defer v1.1** | Stylized Water 2 ($30 IWaterBackend), Crest 5 ($100-200 IWaterBackend), Volume Cloud URP ($45 ISkyBackend), Atmospheric Height Fog ($35 IFogBackend), DLSS NGX SDK URP port (when packaged, IUpscalerBackend). All plug-and-play via §X interfaces — one C# adapter file each + inspector flip. |
 
-**Auto-Rig Pro: OWNED (user has installed).** Wwise Indie / Steam Audio (Apache-2.0) / Unity Recorder / HDRP Path Tracer / Graphics Test Framework / GRD / RenderMeshIndirect / SpeedTree 9 Importer (FREE consumer) / Cinemachine / A* Free / Animation Rigging / AI Navigation / Localization — **all FREE.**
+**Auto-Rig Pro: OWNED (user has installed).** Wwise Indie / Steam Audio (Apache-2.0) / Unity Recorder / Blender Cycles 4K via RunPod (renderer-agnostic golden bake) / Graphics Test Framework / GRD / RenderMeshIndirect / SpeedTree 9 Importer (FREE consumer) / Cinemachine / A* Free / Animation Rigging / AI Navigation / Localization / **Boat Attack water sample (FREE IWaterBackend) / skybox cubemap (FREE ISkyBackend) / URP Volume Fog override + billboard cards (FREE IFogBackend) / URP FSR 3.1 native (FREE IUpscalerBackend)** — **all FREE.**
 
 **Hardware paths (user-evaluated 2026-05-07; see §0.2 + §18):**
 
 | Path | Net cost delta | What it unlocks |
 |------|----------------|-----------------|
-| **(A) Keep 4060 Ti 8GB + DLSS 4.5 SR + cloud bake-rig** | $0 hardware (~$31/mo cloud) | 1080p/60 native via DLSS 4.5 SR Quality (Preset L, 720p internal). AAA-tier per-domain matrix in §18 (offload Path Tracer + APV bakes to cloud). |
-| **(B) Used RTX 4070 Ti Super 16GB** | **+~$450 net** ($750 buy − ~$300 sell of 4060 Ti 8GB) | Removes 8GB ceiling. Unlocks APV Sky Occlusion, 8-layer splat, in-process Path Tracer goldens (no cloud rig needed). |
-| **(C) RTX 5070 12GB** | **+$549** | +50% VRAM, native DLSS 4.5 SR support, GDDR7. Middle path; AAA-tier achievable per §18 R2 deep-dive table. |
+| **(A) Keep 4060 Ti 8GB + URP FSR 3.1 + cloud bake-rig** | $0 hardware (~$31/mo cloud) | 1080p/60 via URP FSR 3.1 Quality (720p internal) or native raster + STP fallback. AAA-tier per-domain matrix in §18 (offload Cycles 4K goldens + APV bakes to cloud). DLSS 4.5 SR is v1.1 swap via §X IUpscalerBackend when NGX SDK URP port lands. |
+| **(B) Used RTX 4070 Ti Super 16GB** | **+~$450 net** ($750 buy − ~$300 sell of 4060 Ti 8GB) | Removes 8GB ceiling. Unlocks APV Sky Occlusion, 8-layer splat, in-process Cycles goldens (no cloud rig needed). |
+| **(C) RTX 5070 12GB** | **+$549** | +50% VRAM, GDDR7. Middle path; AAA-tier achievable per §18 R2 deep-dive table. |
 
 **Day-1 cash for path A: $39 software + $31 first-month cloud = $70.** Paths B/C add hardware capex on top.
 
@@ -1234,7 +1326,7 @@ SUPERSEDE (5 critical alternates per §11 R2-A5):
   HLODSystem → Unity HLOD 2.0 (com.unity.hlod, Unity 6 native)
   CarterGames SaveManager (GPL) → DerKekser/unity-save-system (MIT, 2024-08)
   sinanata buoyancy (GPL) → dbrizov/Unity-WaterBuoyancy (MIT, 2026-04-11)
-  Crest free (BIRP-only) → HDRP WaterSurface native (Unity 6.3)
+  Crest free (BIRP-only) → Boat Attack water sample (URP 17.3 IWaterBackend, FREE; per §X URP commit 2026-05-07)
 
   project_truth_table_corrections_2026_05_06.md (terrain_rng.py count branch-vs-main)
   project_pickup_state_2026_05_06.md (Decision 3.2 spend $40 → $20 baseline)
@@ -1289,9 +1381,9 @@ DELETE/COLLAPSE:
 1. **Read §14 first.** Apply patches §14.1-§14.6 to your mental model.
 2. ~~**Confirm RTX 4060 Ti VRAM variant** — 8GB or 16GB?~~ — **RESOLVED by FINAL-V1:** §0.2 + §7.1 + memory `project_hardware_8gb_vram_2026_05_07.md` already locked 8GB. Skip this step.
 3. **Confirm Wwise vs FMOD** — recommendation Wwise (better Rooms & Portals). Either FREE under indie threshold.
-4. **Approve $20 baseline + $20 conditional Mesh Terrains spend** (per §0.3 / §3 / §14.1 — MicroSplat HDRP-for-Unity-6.3 only at baseline; +$20 MicroSplat Mesh Terrains conditional if cliffs/overhangs gameplay-critical).
+4. **Approve $20 baseline + $20 conditional Mesh Terrains spend** (per §0.3 / §3 / §14.1 — MicroSplat URP variant 189950 only at baseline; +$20 MicroSplat Mesh Terrains conditional if cliffs/overhangs gameplay-critical).
 5. **Approve Option β re-baseline 60-day plan (per §17)** — Phase A-E supersedes the R1 30-day plan; covers ~80% of P0 surface at $20-$40 spend with explicit v1.1 deferral.
-6. **Approve 1080p/45 raster lock OR DLSS3 frame-gen v1.1 contingent** (per §14.10 Option A). 1080p/60 native NOT achievable at 8GB on current art ceiling; DLSS3 frame-gen requires ~2-3 weeks Streamline integration deferred to v1.1.
+6. **Approve 1080p/60 via URP FSR 3.1 Quality (v1) OR DLSS NGX SDK URP port v1.1 contingent** (per §14.10 + §18.1). URP FSR 3.1 is FREE and ships in v1; DLSS 4.5 SR is the v1.1 IUpscalerBackend swap per §X (NGX SDK URP port pending packaging). Frame-gen any backend deferred v1.1.
 7. **Resolve §14.9 disagreements** — V1/V3 disagreed on B15-P0-09; need a code-Read pass.
 8. **Apply memory updates §14.8** — collapses 7+ stale entries.
 
@@ -1404,7 +1496,7 @@ Net verdict: R2 findings are **~88% accurate** on hardware/license axis. The 12%
 
 ### 16.1 Reference titles — Bloodborne PS4 5GB pool, NOT Hellblade-2 Series-X 10GB
 
-**Hardware reality:** RTX 4060 Ti 8GB = same VRAM class as PS4 (Bloodborne shipped on 8GB unified, ~5GB available to GPU). Hellblade 2 Series X is 10GB pool with mesh shaders + SVT — **VeilBreakers does not have those tools** on Unity HDRP 17. **Ceiling: PS4-Bloodborne-tier dark fantasy, NOT Series-X-Hellblade-tier.** Still shippable AA.
+**Hardware reality:** RTX 4060 Ti 8GB = same VRAM class as PS4 (Bloodborne shipped on 8GB unified, ~5GB available to GPU). Hellblade 2 Series X is 10GB pool with mesh shaders + SVT — **VeilBreakers does not have those tools** on Unity URP 17. **Per §18, this section's "AA-ceiling" framing is OBSOLETE — the user-restored target is AAA-tier per §18.2.** Reference titles in §18.2: Witcher 3 NG, Hellblade 2, Cyberpunk 2.0, Diablo IV, Alan Wake 2, Black Myth Wukong. URP 17 + cloud bake-rig (§18.6) + DLSS 4.5 SR v1.1 swap (§X) all together close ~80% of the URP↔HDRP gap and put AAA per-domain matrix (§18.7) within reach on path A 8GB.
 
 **The discipline transfers, not the renderer.** Per R2 codex r2c09 + Silicon Studio YEBIS press releases + DF launch analysis + Yamagiwa interview:
 - **YEBIS-style post stack** = bloom/glare + DoF + motion blur + lens + film + AgX/ACES grade as the visual signature, not just volumetric fog
@@ -1420,9 +1512,9 @@ Net verdict: R2 findings are **~88% accurate** on hardware/license axis. The 12%
 | **Terrain shape** | Bloodborne Yharnam outskirts | Taichi-CUDA 257² verts/chunk, 8x8 grid streamed; heightmap 130KB/chunk = 8MB resident | 8MB | <0.5ms |
 | **Materials** | Diablo IV swamp ground reads | MicroSplat $20 stack, 8 layers BC7 (1024² alb + 512² norm/mask = ~10MB/chunk × 4 streamed = 40MB). **Cut SVT** (deferred §11.7 #11), 4K hero rocks at hero moments only | 40MB | 1.5-3.5ms |
 | **Foliage** | **Bloodborne Yharnam + Diablo IV swamps + Alan Wake 2 medium-high — Witcher 3 NIGHT-tier with hand-placed hero trees + procedural fillers** | L-Py + MTree gets ~70% of *night-tier* SpeedTree quality for hero trees only (internally consistent night-vs-night comparator, not the prior daytime mix-up). 12 hero L-Py × 4 LODs (8K/800/200/impostor) + 200 mid MTree filler + 24 baked grass variants per biome on GPU instancing | ~600MB | 2-4ms |
-| **Atmosphere** | Bloodborne Yharnam fog | HDRP Volumetric Fog low-res 1/8 buffer + local fog at chokepoints + 2-layer Volumetric Clouds custom LUT | 120MB | 1.8-3.2ms |
+| **Atmosphere** | Bloodborne Yharnam fog | URP Volume Fog override low-res 1/8 buffer + 3-6 billboard fog cards at chokepoints + skybox cubemap (`IFogBackend = URPFogVolumeBackend`, `ISkyBackend = CubemapSkyBackend`) | 120MB | 1.8-3.2ms |
 | **Lighting** | Bloodborne PS4 baked GI + 1 dynamic sun | APV experimental + per-chunk reflection probe fallback + light probe groups. 4-cascade shadows 2048-1024-1024-512 + contact shadows on hero geo only. **No RTGI, no RT reflections** | ~200MB | 2-3ms |
-| **Water** | Bloodborne Yharnam + Diablo IV swamps + Alan Wake 2 medium-high (replaces prior Witcher 3 Skellige reference per R2-A10 + R2-V2) | HDRP free WaterSurface (1 ocean + 1 river deformer per chunk) + custom waterfall mesh + emissive lava | 80MB | 2.3-5.0ms |
+| **Water** | Bloodborne Yharnam + Diablo IV swamps + Alan Wake 2 medium-high (replaces prior Witcher 3 Skellige reference per R2-A10 + R2-V2) | Boat Attack water sample (`IWaterBackend = BoatAttackWaterBackend`, FREE — 1 river + 1 pool per chunk) + custom waterfall mesh + emissive lava | 80MB | 1.5-3.5ms |
 | **Audio** | Hellblade 1 binaural ambience | Wwise Indie + Steam Audio Apache 2.0 + 32 ambient loops + 8 hero stings + ADX-style streaming. **FINAL-V3 #8 cross-link: confirm spec §11.7 #14 deferral aligns with §16's ship-minimum scope.** If Wwise/FMOD authoring slips, fall back to Unity native AudioListener + Steam Audio + AudioReverbZone keyed off `audio_reverb_class` raster (§2.9 fallback). Spec §11.7 #14 flags audio middleware as deferred-confirm; this row commits Wwise-or-FMOD primary unless §11.7 #14 explicitly cuts. | ~150MB system | <0.5ms |
 | **VFX** | Bloodborne ritual-rune | VFX Graph fire/fireflies/runes; CPU particles for blood | ~50MB | 0.5-1ms |
 
@@ -1432,8 +1524,8 @@ Net verdict: R2 findings are **~88% accurate** on hardware/license axis. The 12%
 |---|---|---|---|---|---|
 | **Biome 1** | mountain_pass (high-relief silhouettes hide foliage cost) | 2.4GB | 9.5ms | 16 chunks, 12 hero trees, 8 grass variants | 14 |
 | **Biome 2** | corrupted_swamp (fog hides draw distance + low foliage) | 2.2GB | 8.8ms | 16 chunks, 8 dead trees, 12 swamp foliage | 12 |
-| Shared assets | shaders/water/decals/sky/audio | 1.4GB | 4ms | MicroSplat + HDRP Water + ~80 hero rocks | 8 |
-| GBuffer + post + transient | HDRP overhead 1080p | ~1.6GB | reserved | — | — |
+| Shared assets | shaders/water/decals/sky/audio | 1.2GB | 3ms | MicroSplat URP + Boat Attack water + ~80 hero rocks | 8 |
+| GBuffer + post + transient | URP Forward+ overhead 1080p | ~1.4GB | reserved | — | — |
 | **TOTAL** | | **~7.6GB** (450MB headroom) | **~22ms vs 16.6ms target** | | **~34 days** |
 
 **Plus:**
@@ -1532,53 +1624,54 @@ Path("renders/quality-audit/hwcap_4060ti_baseline.json").write_text(json.dumps(r
 | D34 | PR #43 + #44 streaming budget cap | |
 | D35 | PR #42 missing emitters | (**GATE D35**) |
 
-### 17.4 Phase D (Days 36-45) — Unity ingestion + visual gate (Block 5a)
+### 17.4 Phase D (Days 36-45) — Unity ingestion + visual gate (Block 5a) — URP-rebased 2026-05-07
 
 | Day | Item | Description |
 |-----|------|-------------|
-| D36-37 | B5-U1 Unity 6.3 + HDRP 17.6 bootstrap (~2 days, see expanded sub-steps below) | + 4-layer splat + APV OFF (8GB-locked per §7.1) |
+| D36-37 | B5-U1 Unity 6.3 + URP 17.3 bootstrap (~2 days, see expanded sub-steps below) | + 4-layer splat + APV OFF (8GB-locked per §7.1) |
 
 **D36-37 Unity project bootstrap sub-steps** (§19.8 #5 fill — explicit because §17 D36-37 presumes `Assets/`, `Packages/manifest.json`, `ProjectSettings/` exist; they don't):
 
 ```
-D36 morning (2 hrs): Unity Hub > Create New Project > 6000.3.0f1 > HDRP template. Project location: `unity_project/VbHeroDemo/`.
-D36 afternoon (2 hrs): Edit `unity_project/VbHeroDemo/Packages/manifest.json` to pin: HDRP 17.6.x, Visual Effect Graph 17.x, Adaptive Probe Volumes (auto), Addressables 2.x, Burst, Collections, Mathematics. Run `Unity Hub > Open Project` to fetch deps (~10 min).
-D36 evening: Create `Assets/VbTerrain/Plugins/` directory. Copy 5 .cs files from repo `unity_plugin/` to `Assets/VbTerrain/Plugins/`. Verify all 5 compile.
-D37 morning: Project Settings > Graphics > Pipeline Asset = create `VbHDRPAsset_HighFidelity.asset`. Project Settings > Quality > pipeline asset assignments per tier.
-D37 afternoon: Create `Assets/Scenes/vb_hero_demo.unity`. Add Directional Light + Camera + HDRP Volume (default profile).
+D36 morning (2 hrs): Unity Hub > Create New Project > 6000.3.0f1 > URP template. Project location: `unity_project/VbHeroDemo/`.
+D36 afternoon (2 hrs): Edit `unity_project/VbHeroDemo/Packages/manifest.json` to pin: URP 17.3.x, Visual Effect Graph 17.x, Adaptive Probe Volumes (auto), Addressables 2.x, Burst, Collections, Mathematics. Run `Unity Hub > Open Project` to fetch deps (~10 min).
+D36 evening: Create `Assets/VbTerrain/Plugins/` directory. Copy 5 .cs files from repo `unity_plugin/` to `Assets/VbTerrain/Plugins/`. Add asmdef + define symbols (`VB_WATER_BOAT_ATTACK`, `VB_SKY_CUBEMAP`, `VB_FOG_URP_VOLUME`, `VB_UPSCALER_FSR31`) per §X. Verify all 5 compile.
+D37 morning: Project Settings > Graphics > Render Pipeline Asset = create `Assets/Settings/VeilBreakersURP.asset` (UniversalRenderPipelineAsset, Forward+, MSAA 4x, 4 cascades, shadow distance 150m, FSR 3.1 upscaler, ColorSpace=Linear). Project Settings > Quality > pipeline asset assignments per tier.
+D37 afternoon: Create `Assets/Scenes/vb_hero_demo.unity`. Add Directional Light + Camera + URP Volume (default profile with Bloom + Tonemapping ACES).
 ```
 
 | D38 | B5-U3 SetHoles consumer | |
 | D39 | B5-U4 normal-Y flip | + B5-U5 edges.json |
-| D40-41 | B5-U2 HDRP WaterSurface | (river+pool only — no Ocean simultaneously per §7.1 stacked-feature ceiling) |
+| D40-41 | B5-U2 Boat Attack water sample integration via `IWaterBackend = BoatAttackWaterBackend` | (river+pool only — no Ocean simultaneously per §7.1 stacked-feature ceiling). See §X for the IWaterBackend interface contract. |
 | D42 | B5-U8 flow_map | + RenderMeshIndirect for foliage |
-| D43-44 | **Integrate HDRP native DLSS 4.5 SR (BEFORE foliage scatter — REVISED 2026-05-07)** | Set HDRP Asset > Dynamic Resolution > Enable + Enable DLSS + Quality preset. Force **Preset L via DLSS-Swapper sidecar**. Verify motion vectors enabled across all camera rigs. Author per-scene sharpness curves. Output 1080p, internal 720p, 16.6ms frame budget at 1080p/60 LOCKED. **3-5 days solo-dev integration.** Then run `run_unity_recorder_gate.py` + Graphics Test Framework SSIM ≥0.95 against DLSS-on goldens (rasterized + DLSS 4.5 SR Quality). Path Tracer goldens via cloud bake-rig (§18); DLSS3 frame-gen still v1.1 contingent on Streamline custom integration. **Pre-warm step (FINAL-V3 #2 fill — R2-A3 #4): before each golden capture, run scene flythrough 2 minutes to pre-warm shader cache, then capture goldens fresh.** First-time-seen 10-layer terrain triggers async shader compilation 6-14 sec on 4060 Ti — visible as pink/black tiles. Recorder otherwise captures these stalls *into goldens*, polluting the SSIM ratchet. Use `ShaderVariantCollection.WarmUp()` at scene load + 2-min camera flythrough across all biome chunks before snapshot. |
-| D45 | NotImplementedError shim | replaces fake `compute_nonblack_ratio` (**GATE D45 — DLSS 4.5 SR Quality verified at 1080p output, 720p internal, 16.6ms frame budget at 1080p/60 LOCKED; SSIM ≥0.95 against DLSS-on goldens; motion vectors verified all camera rigs; Preset L confirmed via DLSS-Swapper**) |
+| D43-44 | **Integrate URP FSR 3.1 native upscaler (BEFORE foliage scatter — REVISED 2026-05-07)** | Set URP Asset > Quality > Upscaling Filter = FSR 3.1 + Sharpness slider (`IUpscalerBackend = FSR31UpscalerBackend` per §X). Verify motion vectors enabled across all camera rigs. Author per-scene sharpness curves. Output 1080p, internal 720p, 16.6ms frame budget at 1080p/60 LOCKED. **1-2 days solo-dev integration** (faster than HDRP DLSS because it's a single dropdown — no NGX SDK packaging). Then run `run_unity_recorder_gate.py` + Graphics Test Framework SSIM ≥0.95 against URP rasterized goldens AND Blender Cycles 4K cloud-baked goldens (per §18.6). DLSS 4.5 SR is v1.1 swap (NGX SDK URP port pending packaging) via §X IUpscalerBackend; STP fallback FREE if FSR sharpness unacceptable. **Pre-warm step (FINAL-V3 #2 fill — R2-A3 #4): before each golden capture, run scene flythrough 2 minutes to pre-warm shader cache, then capture goldens fresh.** First-time-seen 10-layer terrain triggers async shader compilation 6-14 sec on 4060 Ti — visible as pink/black tiles. Recorder otherwise captures these stalls *into goldens*, polluting the SSIM ratchet. Use `ShaderVariantCollection.WarmUp()` at scene load + 2-min camera flythrough across all biome chunks before snapshot. |
+| D45 | NotImplementedError shim | replaces fake `compute_nonblack_ratio` (**GATE D45 — URP FSR 3.1 verified at 1080p output, 720p internal, 16.6ms frame budget at 1080p/60 LOCKED; SSIM ≥0.95 against URP rasterized + Cycles 4K goldens; motion vectors verified all camera rigs; FSR 3.1 confirmed via URP Asset Quality settings**) |
 
-### 17.5 Phase E (Days 46-60) — Performance + atmosphere + audio
+### 17.5 Phase E (Days 46-60) — Performance + atmosphere + audio (URP-rebased)
 
 | Day | Item | Description |
 |-----|------|-------------|
 | D46-47 | PR #19 Numba/Taichi erosion | (integer atomics ONLY, atomic-float ban §8.4) |
 | D48 | B15-P0-09 SPL solver wired | |
-| D49-50 | Foliage RenderMeshIndirect — REVISED 2026-05-07 | **SpeedTree 9 Indie subscription activate ($19/mo).** Author hero foliage in SpeedTree 9 Modeler; export `.st9`. **SpeedTree 9 Importer (Unity 6.3 native, FREE)** consumes `.st9` for HDRP 17 GRD-compatible wind. **DIY HDRP Shader Graph wind (~2 days)** for procedural filler density (grass + low-LOD shrubs). NR6 compute-shader grass instancing 30K+ blades/chunk. **NO happy-turtle integration** (abandoned 2021, broken on HDRP 17). **NO Modular Tree GoodPie billboard impostors** (replaced by SpeedTree 9 native octahedral billboards from .st9). |
-| D51-52 | Volumetric Clouds **Medium-High preset** | DLSS Quality (720p internal) makes Medium achievable; full High needs path B/C 12GB hardware. + Volumetric Fog + 3 Local + LightningController.cs **+ Sun.cs + day-night Volume interpolation (§14.11 v1 requirement)** |
-| D53 | AgX LUT bake | (DaVinci → .cube → HDRP) |
+| D49-50 | Foliage RenderMeshIndirect — URP-rebased 2026-05-07 | **SpeedTree 9 Indie subscription activate ($19/mo).** Author hero foliage in SpeedTree 9 Modeler; export `.st9`. **SpeedTree 9 Importer (Unity 6.3 native, FREE, URP-compatible)** consumes `.st9` for URP 17 GRD-compatible wind. **DIY URP Shader Graph wind (~2 days)** for procedural filler density (grass + low-LOD shrubs). NR6 compute-shader grass instancing 30K+ blades/chunk. **NO happy-turtle integration** (abandoned 2021, broken on URP 17). **NO Modular Tree GoodPie billboard impostors** (replaced by SpeedTree 9 native octahedral billboards from .st9). |
+| D51-52 | Skybox cubemap (`ISkyBackend = CubemapSkyBackend`) + URP Volume Fog override + 3 billboard fog cards (`IFogBackend = URPFogVolumeBackend`) | + LightningController.cs (URP Light flicker + Lens Flare component) **+ Sun.cs + day-night URP Volume interpolation (§14.11 v1 requirement)**. Volume Cloud URP asset ($45) is the v1.1 ISkyBackend swap per §X. |
+| D53 | AgX LUT bake | (DaVinci → .cube → URP Color Adjustments external LUT) + Purkinje URP Renderer Feature (~30-LOC per §2.4.x) |
 | D54-55 | Wwise Indie + Steam Audio | (Apache 2.0 confirmed — R2-A6 N1) OR fallback FMOD |
 | D56-57 | B15-P0-15 vectorize | 22 biome-feature O(N²) loops |
 | D58 | Memory + spec doc updates | |
 | D59-60 | Hero shot render — **2-biome ship-minimum** hero shots (mountain_pass + corrupted_swamp); 4-biome target deferred to v1.1 per §16.3. 4 hero camera moments per biome = 8 hero PNGs total. | + decision gate (**GATE D60**) |
 
-### 17.6 Deferred to v1.1 (R2-A7 explicit cuts)
+### 17.6 Deferred to v1.1 (R2-A7 explicit cuts; URP-rebased)
 
 - APV Sky Occlusion (16GB rebake required)
-- 8-layer splatmap (4 effective at 8GB)
-- HDRP Path Tracer goldens (editor-only at 720p/64spp; runtime kill per §7.1)
+- 8-layer splatmap (4 effective at 8GB; bumped to 8 in `UnityExportConfig.AAA_16GB` profile)
+- Cycles 4K cloud-baked goldens at higher density (cloud-rig rate limit)
 - TerraForge3D GPU port (defer unless profiler shows pure-Python is bottleneck — V14.9 disagreement)
 - PFG Bézier compute shader (clean-room cost 3-5d not 1.5d per V3)
 - Refactors PR #49-#54 (low-priority architecture polish)
 - 30 Batch15 P1s (post-v1 quality polish)
-- **DLSS3 frame-gen (EXPLICITLY DEFERRED v1.1 per R2-V2):** Unity HDRP 17.6 ships **DLSS 4.5 SR only — no native FG**. Streamline 2.11.1 (2026-04-21) has FG but no turnkey Unity plugin; custom integration ~2-3 weeks. FG VRAM = 272 MB at 1080p. v1 lock = 1080p/45 raster only.
+- **DLSS 4.5 SR (URP IUpscalerBackend swap, when NVIDIA NGX SDK URP port lands):** v1 lock is URP FSR 3.1 native (FREE). DLSS NGX SDK URP port is the v1.1 IUpscalerBackend (§X) when packaged. Frame-gen (Streamline FG, any backend) is also v1.1 contingent on plugin integration (~2-3 weeks).
+- **§X v1.1 backend swaps:** Volume Cloud URP ($45 ISkyBackend), Stylized Water 2 ($30 IWaterBackend), Crest 5 ($100-200 IWaterBackend), Atmospheric Height Fog ($35 IFogBackend), DLSS NGX SDK URP port (IUpscalerBackend), STP (URP-native, FREE alternate IUpscalerBackend).
 - `procedural_meshes.py` 22,607 LOC scope contamination relocation (defer per spec §11.7 #7)
 
 ### 17.7 v1.1 → v2 escalation path
@@ -1859,17 +1952,18 @@ FINAL-V2 closed all 10 external-fact corrections flagged by R2-V2 (§13.5) and R
 
 ---
 
-## §18. LATEST DECISIONS PATCH (2026-05-07 user mandates — supersedes earlier downgrade framing)
+## §18. LATEST DECISIONS PATCH (2026-05-07 user mandates — URP-rebased; supersedes earlier downgrade framing)
 
-**Status:** This section consolidates the user's latest decisions after pushback on prior 1080p/45 lock + AAA-reference downgrade + happy-turtle foliage choice. Where §0-§17 conflict with §18, **§18 wins.** The implementation auditor reads this section as authoritative.
+**Status:** This section consolidates the user's latest decisions after pushback on prior 1080p/45 lock + AAA-reference downgrade + happy-turtle foliage choice, then RP-rebased to URP per the 2026-05-07 URP commitment (memory `project_urp_commitment_2026_05_07.md`). Where §0-§17 conflict with §18, **§18 wins.** The implementation auditor reads this section as authoritative.
 
-### 18.1 Resolution lock — 1080p/60 native via DLSS 4.5 SR Quality
+### 18.1 Resolution lock — 1080p/60 via URP FSR 3.1 Quality (DLSS 4.5 SR is v1.1 swap)
 
-- **1080p/60 mandate maintained** — DLSS 4.5 SR Quality (Preset L) is the unlock, NOT a 1080p/45 raster downgrade.
-- HDRP 17.6 ships **native DLSS 4.5 SR support**; 3-5 day solo-dev integration window (HDRP Asset > Dynamic Resolution > Enable + Enable DLSS + Quality preset; force Preset L via DLSS-Swapper sidecar; verify motion vectors enabled all camera rigs; per-scene sharpness curves).
+- **1080p/60 mandate maintained** — URP FSR 3.1 Quality (720p internal → 1080p output) is the v1 unlock, NOT a 1080p/45 raster downgrade.
+- URP 17.3 ships **FSR 3.1 native** (URP Asset > Quality > Upscaling Filter = FSR 3.1 + Sharpness slider); 1-2 day solo-dev integration window. Native raster + STP fallback also FREE.
 - Output 1080p, internal 720p, **16.6ms frame budget at 1080p/60 LOCKED**.
-- DLSS3 frame-gen (Streamline FG) remains v1.1 contingent on ~2-3 weeks custom Unity plugin work — SR Quality is the v1 unlock, not FG.
-- **Supersedes §0.2 + §14.10 prior "1080p/45 raster lock" framing.** §17 Phase D D43-44 + GATE D45 carry the integration ordering.
+- DLSS 4.5 SR is the **v1.1 IUpscalerBackend swap** per §X (NVIDIA NGX SDK URP port pending packaging) — one C# adapter file + inspector flip, no bake-side changes.
+- Frame-gen (any backend including Streamline FG, DLSS-G) remains v1.1 contingent on plugin integration (~2-3 weeks).
+- **Supersedes §0.2 + §14.10 prior "1080p/45 raster lock" framing AND prior HDRP DLSS 4.5 SR framing.** §17 Phase D D43-44 + GATE D45 carry the integration ordering.
 
 ### 18.2 AAA reference targets RESTORED
 
@@ -1881,28 +1975,28 @@ FINAL-V2 closed all 10 external-fact corrections flagged by R2-V2 (§13.5) and R
 ### 18.3 v1 day/night cycle APPROVED
 
 - Day/night cycle ships in v1 (overrides spec §11.8 #2 deferral as already noted in §14.11 — this section reaffirms).
-- Sun.cs + day-night HDRP Volume interpolation in §17 Phase E D51-52 stays.
+- Sun.cs + day-night URP Volume interpolation in §17 Phase E D51-52 stays.
 
 ### 18.4 Foliage stack — happy-turtle DROPPED, SpeedTree 9 Indie canonical
 
-- **happy-turtle/foliage-wind: DROPPED.** Abandoned 2021. Broken on HDRP 17 ShaderGraph node API. No commercial ship history. Do not integrate.
-- **Canonical foliage-wind: SpeedTree 9 Indie subscription ($19/mo or $199/yr).** Unlocks Modeler + .st9 export with HDRP 17 GRD-compatible native wind.
-- **SpeedTree 9 Importer (Unity 6.3 native, FREE)** consumes `.st9` for in-engine wind; native octahedral billboards.
-- **DIY HDRP Shader Graph wind (~2 days)** for procedural filler density (grass + low-LOD shrubs).
+- **happy-turtle/foliage-wind: DROPPED.** Abandoned 2021. Broken on URP 17 ShaderGraph node API. No commercial ship history. Do not integrate.
+- **Canonical foliage-wind: SpeedTree 9 Indie subscription ($19/mo or $199/yr).** Unlocks Modeler + .st9 export with URP 17 GRD-compatible native wind.
+- **SpeedTree 9 Importer (Unity 6.3 native, FREE, URP-compatible)** consumes `.st9` for in-engine wind; native octahedral billboards.
+- **DIY URP Shader Graph wind (~2 days)** for procedural filler density (grass + low-LOD shrubs).
 - §3 + §14.1 + §17 Phase E D49-50 carry this decision.
 
-### 18.5 GPU upgrade matrix (3 paths)
+### 18.5 GPU upgrade matrix (3 paths) — URP-rebased
 
 | Path | Card | Net cost delta | Why pick |
 |------|------|----------------|----------|
-| **A** | Keep RTX 4060 Ti 8GB | $0 hardware (~$31/mo cloud bake-rig) | Day-1. DLSS 4.5 SR Quality unlocks 1080p/60. AAA-tier achievable per §18.7 with cloud bake offload. |
-| **B** | Used RTX 4070 Ti Super 16GB | **+~$450 net** ($750 buy − ~$300 sell of 4060 Ti 8GB) | Removes 8GB ceiling. Unlocks APV Sky Occlusion + 8-layer splat + in-process Path Tracer goldens (no cloud rig needed). |
-| **C** | RTX 5070 12GB | **+$549** | Middle path. +50% VRAM, native DLSS 4.5 SR, GDDR7 bandwidth. AAA-tier per §18.7 without cloud rig for most domains. |
+| **A** | Keep RTX 4060 Ti 8GB | $0 hardware (~$31/mo cloud bake-rig) | Day-1. URP FSR 3.1 Quality unlocks 1080p/60 (DLSS 4.5 SR is v1.1 IUpscalerBackend swap per §X). AAA-tier achievable per §18.7 with Blender Cycles 4K cloud bake offload. |
+| **B** | Used RTX 4070 Ti Super 16GB | **+~$450 net** ($750 buy − ~$300 sell of 4060 Ti 8GB) | Removes 8GB ceiling. Unlocks APV Sky Occlusion + 8-layer splat + in-process Cycles 4K goldens (no cloud rig needed). |
+| **C** | RTX 5070 12GB | **+$549** | Middle path. +50% VRAM, GDDR7 bandwidth. AAA-tier per §18.7 without cloud rig for most domains. |
 
-### 18.6 Cloud bake-rig setup (RunPod RTX 4090 spot, ~$31/mo)
+### 18.6 Cloud bake-rig setup (RunPod RTX 4090 spot, ~$31/mo) — renderer-agnostic
 
 - **Provider:** RunPod, RTX 4090 spot tier ~$0.40/hr × ~80 hr/mo realistic = ~$31/mo.
-- **Use cases:** path-traced HDRP goldens for hero shots, APV bake regenerations, MicroSplat Texture Cluster bakes too heavy for local 8GB.
+- **Use cases:** Blender Cycles 4K AAA-anchor goldens for hero shots (renderer-agnostic — does not depend on URP/HDRP), APV bake regenerations, MicroSplat Texture Cluster bakes too heavy for local 8GB.
 - **Setup outline:**
   ```
   # Local dev box
@@ -1938,22 +2032,22 @@ FINAL-V2 closed all 10 external-fact corrections flagged by R2-V2 (§13.5) and R
   ```
 - Spot tier can preempt; checkpoint bake state every 10 min via Unity script. For un-preemptible runs, use RunPod community RTX 4090 (~$0.69/hr) for hero-shot final passes only.
 
-### 18.7 Per-domain AAA tier achievable at 12GB + DLSS 4.5 SR (R2 deep-dive)
+### 18.7 Per-domain AAA tier achievable at 12GB + URP FSR 3.1 (R2 deep-dive; URP-rebased)
 
-Reproduced from R2 deep-dive table — applies to **path C (RTX 5070 12GB)** and effectively **path A + cloud bake-rig** (Path Tracer offloaded). Path B 16GB hits or exceeds every row.
+Reproduced from R2 deep-dive table — applies to **path C (RTX 5070 12GB)** and effectively **path A + cloud bake-rig** (Cycles 4K offloaded). Path B 16GB hits or exceeds every row.
 
-| Domain | AAA target tier | Achievable at 12GB + DLSS 4.5 SR? |
+| Domain | AAA target tier | Achievable at 12GB + URP FSR 3.1 (v1.1 swap to DLSS 4.5 SR via §X)? |
 |--------|------------------|------------------------------------|
-| Terrain | **Witcher 3 NG Ultra+** (10-layer splat with MicroSplat Texture Clusters) | YES |
-| Materials | **8-layer MicroSplat with Texture Clusters** (3-sub-texture cycling) | YES |
-| Foliage | **Witcher 3 NG parity** via SpeedTree 9 Indie + GRD wind | YES |
-| Atmosphere | **Witcher 3 NG parity** (HDRP 17.6 Volumetric Clouds Medium-High + 3 local fog vols) | YES |
-| Lighting (day) | **D4 RT-tier** (RT Reflections enabled day-time only; APV night) | YES |
-| Water | **HDRP FFT + Crest-hybrid parity** (HDRP 17.6 WaterSurface + foam fix) | YES |
-| VFX | **D4 storm parity** (LightningController.cs + Sonniss thunder + Volumetric Fog interactions) | YES |
-| Path Tracing | **Reserved for offline goldens** (cloud bake-rig in §18.6) | OFFLINE-ONLY |
+| Terrain | **Witcher 3 NG Ultra+** (10-layer splat with MicroSplat URP Texture Clusters) | YES |
+| Materials | **8-layer MicroSplat URP with Texture Clusters** (3-sub-texture cycling) | YES |
+| Foliage | **Witcher 3 NG parity** via SpeedTree 9 Indie + URP GRD wind | YES |
+| Atmosphere | **Witcher 3 NG parity** (skybox cubemap v1 / Volume Cloud URP $45 v1.1 swap per §X + URP Volume Fog override + 3 billboard fog cards) | YES (with v1.1 swap for full Volumetric Clouds parity; v1 ships skybox fallback) |
+| Lighting (day) | **D4 RT-tier** (URP RT Reflections enabled day-time only; APV night) | YES |
+| Water | **Boat Attack water + foam fix v1 / Crest 5 ($100-200) v1.1 swap per §X for HDRP FFT + Crest-hybrid parity** | YES (with v1.1 swap; v1 Boat Attack hits river+pool AAA-tier) |
+| VFX | **D4 storm parity** (LightningController.cs + Sonniss thunder + URP Volume Fog interactions) | YES |
+| AAA-anchor goldens | **Reserved for offline Blender Cycles 4K renders** (cloud bake-rig in §18.6) | OFFLINE-ONLY (renderer-agnostic) |
 
-Path A (8GB + DLSS 4.5 SR + cloud bake) hits every row above except in-process Path Tracer (which is offloaded to cloud — same final visual outcome).
+Path A (8GB + URP FSR 3.1 + cloud bake) hits every row above except in-process AAA-anchor goldens (which are offloaded to Cycles cloud rig — same final visual outcome).
 
 ### 18.8 NVIDIA driver gate (mandatory launcher check)
 
@@ -1962,18 +2056,19 @@ Path A (8GB + DLSS 4.5 SR + cloud bake) hits every row above except in-process P
 - Add to launcher (Unity boot or pre-bake CI): `--driver-required >=546.01`. Block boot with a clear message ("Update NVIDIA driver to ≥546.01 — older drivers cause 96× slowdown on this build").
 - Detection: WMI query `Win32_VideoController.DriverVersion` or `nvidia-smi --query-gpu=driver_version --format=csv,noheader`.
 
-### 18.9 Cross-section override map (where §18 supersedes earlier sections)
+### 18.9 Cross-section override map (where §18 supersedes earlier sections; URP-rebased)
 
-- §0.2 — 1080p/60 via DLSS 4.5 SR Quality replaces 1080p/45 raster lock. Hardware paths A/B/C added.
-- §3 — SpeedTree 9 Indie restored as paid tool; happy-turtle DROPPED row added; cloud bake-rig row added.
-- §14.1 — money table rewritten ($39 day-1 / ~$50/mo recurring; +$450 path B / +$549 path C hardware).
-- §14.10 — 1080p/60 DLSS SR Quality is v1 lock; 1080p/45 raster framing OBSOLETE.
+- §0.2 — 1080p/60 via URP FSR 3.1 Quality replaces 1080p/45 raster lock and prior HDRP DLSS 4.5 SR framing. Hardware paths A/B/C added.
+- §3 — SpeedTree 9 Indie restored as paid tool; happy-turtle DROPPED row added; cloud bake-rig row added; Crest 5 dropped (v1.1 swap per §X); MicroSplat URP variant 189950 replaces HDRP variant 344008.
+- §14.1 — money table rewritten ($39 day-1 / ~$50/mo recurring; +$450 path B / +$549 path C hardware; cost ceiling $50-$70 down from $130).
+- §14.10 — 1080p/60 URP FSR 3.1 Quality is v1 lock; 1080p/45 raster framing OBSOLETE; DLSS 4.5 SR is v1.1 IUpscalerBackend swap per §X.
 - §16.1 — "Bloodborne PS4 5GB" reference framing OBSOLETE; AAA refs in §18.2 are canonical.
-- §17 Phase D D43-44 — DLSS 4.5 SR integration step BEFORE foliage scatter (3-5d).
-- §17 Phase D GATE D45 — adds "DLSS 4.5 SR Quality verified at 1080p output, 720p internal, 16.6ms frame budget at 1080p/60 LOCKED."
-- §17 Phase E D49-50 — SpeedTree 9 Indie + DIY Shader Graph wind; happy-turtle and Modular Tree GoodPie billboards DROPPED.
-- §17 Phase E D51-52 — Volumetric Clouds bumped Low → Medium-High.
-- §17.6 — DLSS3 frame-gen still v1.1 deferred (this is unchanged); but DLSS 4.5 SR Quality is NOT deferred — it ships v1.
+- §17 Phase D D43-44 — URP FSR 3.1 integration step BEFORE foliage scatter (1-2d, simpler than HDRP DLSS); Cycles 4K cloud goldens replace HDRP Path Tracer.
+- §17 Phase D GATE D45 — adds "URP FSR 3.1 verified at 1080p output, 720p internal, 16.6ms frame budget at 1080p/60 LOCKED."
+- §17 Phase E D49-50 — SpeedTree 9 Indie + DIY URP Shader Graph wind; happy-turtle and Modular Tree GoodPie billboards DROPPED.
+- §17 Phase E D51-52 — skybox cubemap (v1 ISkyBackend) + URP Volume Fog + billboard fog cards (v1 IFogBackend); Volume Cloud URP asset $45 is the v1.1 ISkyBackend swap.
+- §17.6 — DLSS NGX SDK URP port + frame-gen plugins both v1.1 deferred; but URP FSR 3.1 is NOT deferred — it ships v1.
+- §X URP Backend Abstraction — added 2026-05-07 to formalize the plug-and-play upgrade path for Water/Sky/Fog/Upscaler interfaces.
 
 ### 18.10 Per-decision change-log marker
 
