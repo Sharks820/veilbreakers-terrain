@@ -1892,23 +1892,26 @@ __all__ = [
 ]
 
 
-# Phase C D30-32 — re-export structural label types so callers do not have
-# to know which submodule owns them. The actual implementations live in
-# ``terrain_labels`` to keep this module focused on pass orchestration.
-from .terrain_labels import (  # noqa: E402  (after __all__ for grouping)
-    LABEL_TO_LEGACY_CHANNEL,
-    LabelStack,
-    LabelStamp,
-    STRUCTURAL_LABELS,
-    pass_label_stamping,
-    register_pass_label_stamping,
-)
-
-__all__ += [
-    "LABEL_TO_LEGACY_CHANNEL",
-    "LabelStack",
-    "LabelStamp",
-    "STRUCTURAL_LABELS",
-    "pass_label_stamping",
-    "register_pass_label_stamping",
-]
+# Phase C D30-32 — structural label types live in ``terrain_labels``.
+# We DO NOT re-export them at module top here because that creates a
+# CodeQL-flagged static import cycle (terrain_pipeline -> terrain_labels
+# -> terrain_pipeline). Callers should import directly:
+#     from veilbreakers_terrain.handlers.terrain_labels import LabelStamp
+#
+# A lazy `__getattr__` provides backwards-compat for callers that still
+# reach for these on terrain_pipeline; it imports terrain_labels on first
+# access (after both modules are fully loaded), avoiding the cycle.
+def __getattr__(name: str) -> object:
+    """Lazy attribute access for terrain_labels re-exports (PEP 562)."""
+    _label_exports = {
+        "LABEL_TO_LEGACY_CHANNEL",
+        "LabelStack",
+        "LabelStamp",
+        "STRUCTURAL_LABELS",
+        "pass_label_stamping",
+        "register_pass_label_stamping",
+    }
+    if name in _label_exports:
+        from . import terrain_labels  # local import, after both modules loaded
+        return getattr(terrain_labels, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
