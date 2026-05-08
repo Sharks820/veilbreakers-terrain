@@ -530,18 +530,20 @@ def test_export_manifest_writes_detail_layers_hdrp_mask_and_descriptor_contract(
     with tempfile.TemporaryDirectory() as td:
         manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
         descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
-        hdrp_meta = manifest["files"]["hdrp_mask_map.raw"]
-        hdrp_raw = np.frombuffer((Path(td) / "hdrp_mask_map.raw").read_bytes(), dtype=np.uint8).reshape(
-            hdrp_meta["shape"]
-        )
+        # Phase D1 — canonical filename is now ``material_mask_map.raw``;
+        # the legacy ``hdrp_mask_map.raw`` is opt-in via the export config.
+        mask_meta = manifest["files"]["material_mask_map.raw"]
+        mask_raw = np.frombuffer(
+            (Path(td) / "material_mask_map.raw").read_bytes(), dtype=np.uint8
+        ).reshape(mask_meta["shape"])
 
-    assert hdrp_meta["encoding"] == "raw_rgba_u8_hdrp_mask"
-    assert hdrp_meta["channels"] == 4
-    assert hdrp_raw.shape == (5, 5, 4)
-    assert np.unique(hdrp_raw[..., 0]).tolist() == [0]
-    assert np.unique(hdrp_raw[..., 1]).tolist() == [64]
-    assert np.unique(hdrp_raw[..., 2]).tolist() == [0]
-    assert np.unique(hdrp_raw[..., 3]).tolist() == [64]
+    assert mask_meta["encoding"] == "raw_rgba_u8_material_mask"
+    assert mask_meta["channels"] == 4
+    assert mask_raw.shape == (5, 5, 4)
+    assert np.unique(mask_raw[..., 0]).tolist() == [0]
+    assert np.unique(mask_raw[..., 1]).tolist() == [64]
+    assert np.unique(mask_raw[..., 2]).tolist() == [0]
+    assert np.unique(mask_raw[..., 3]).tolist() == [64]
 
     detail = descriptor["detail_layers"][0]
     assert detail["kind"] == "grass"
