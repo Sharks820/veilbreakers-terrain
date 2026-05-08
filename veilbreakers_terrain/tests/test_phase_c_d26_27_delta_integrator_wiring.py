@@ -450,20 +450,25 @@ def test_normalize_places_integrator_after_stratigraphy_when_last_producer():
     snapshot = dict(TerrainPassController.PASS_REGISTRY)
     try:
         TerrainPassController.PASS_REGISTRY.clear()
+        # PR #56 thread 5: only register what this test needs (morphology +
+        # Bundle I + integrator). ``register_default_passes`` already calls
+        # ``register_integrator_pass`` internally, so calling it here in
+        # addition to the morphology / bundle-i registrations would emit a
+        # duplicate-pass-registration warning AND bring in ~20 unrelated
+        # default passes that aren't relevant to the placement contract this
+        # test pins. Mirror the sibling
+        # ``test_normalize_places_integrator_after_morphology_when_only_producer``
+        # which also keeps the registry minimal.
         from veilbreakers_terrain.handlers.terrain_delta_integrator import (
             register_integrator_pass,
         )
         from veilbreakers_terrain.handlers.terrain_morphology import (
             register_morphology_pass,
         )
-        from veilbreakers_terrain.handlers.terrain_pipeline import (
-            register_default_passes,
-        )
         from veilbreakers_terrain.handlers.terrain_geology_validator import (
             register_bundle_i_passes,
         )
 
-        register_default_passes(strict=False)
         register_morphology_pass()
         register_bundle_i_passes()
         register_integrator_pass()

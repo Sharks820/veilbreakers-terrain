@@ -1153,6 +1153,16 @@ class TerrainMaskStack:
             val = getattr(self, name, None)
             if val is None:
                 continue
+            # PR #56 thread 2: a (1,)-shape object ndarray wrapper around a
+            # JSON-serialisable dict (e.g. ``strata_cross_section``) would
+            # otherwise hit the json.dumps default=str fallback, which
+            # encodes via ``str(ndarray)`` — and that representation depends
+            # on numpy printoptions (truncation, threshold, edgeitems) and
+            # can leak object addresses for non-primitive payloads, breaking
+            # replay-determinism. Unwrap object arrays to the underlying
+            # Python scalar/dict so the hash sees a canonical JSON form.
+            if isinstance(val, np.ndarray) and val.dtype == object:
+                val = val.item() if val.size == 1 else val.tolist()
             hasher.update(name.encode("utf-8"))
             hasher.update(
                 json.dumps(val, sort_keys=True, default=str).encode("utf-8")
@@ -1272,6 +1282,27 @@ class TerrainMaskStack:
                     stack.set(dict_field, container, "__npz__")
             for name, value in meta.get("opaque_channels", {}).items():
                 if name in cls._OPAQUE_CHANNELS:
+                    # PR #56 thread 1: ``to_npz`` JSON-encodes opaque-channel
+                    # values via a default lambda that calls ``.tolist()`` on
+                    # ndarrays. ``strata_cross_section`` is uniquely stored as
+                    # a (1,)-shape object ndarray wrapping a single dict, so
+                    # after round-trip it lands as a 1-element ``list``.
+                    # Existing consumers
+                    # (terrain_macro_color._resolve_strata_color_map and the
+                    # cave strata-alignment check) only accept the original
+                    # ndarray wrapper or a bare dict and would silently drop
+                    # the channel if it returned as a list. Unwrap that one
+                    # channel back to the underlying dict; other opaque
+                    # channels (``wet_surface_decal``, ``cliff_mesh_specs``,
+                    # ``audio_zone_list``, etc.) are stored as native Python
+                    # lists of dicts and must stay as lists on round-trip.
+                    if (
+                        name == "strata_cross_section"
+                        and isinstance(value, list)
+                        and len(value) == 1
+                        and isinstance(value[0], dict)
+                    ):
+                        value = value[0]
                     stack.set(name, value, "__npz__")
             loaded_height_pass = stack.populated_by_pass.get("height", "__init__")
             stack.populated_by_pass.clear()

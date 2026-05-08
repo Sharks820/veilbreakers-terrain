@@ -690,8 +690,17 @@ def register_bundle_i_passes() -> None:
             # a folded height back to stack.height. Earlier producers
             # (macro_world / pass_generate_low_freq_hmap / erosion / composite)
             # already produced height, so stratigraphy must declare the
-            # overwrite explicitly. Without overrides=("height",) the
-            # ChannelOwnershipError registration check trips at module load.
+            # overwrite explicitly. Note: ``height`` is intentionally NOT in
+            # ``produces_channels`` here (the registration only declares the
+            # geology-specific outputs the pass owns), so the
+            # ``ChannelOwnershipError`` duplicate-producer check at register
+            # time does not apply. The relevant enforcement is the runtime
+            # undeclared-write / NaN-Inf validation in TerrainPassController:
+            # without ``overrides=("height",)`` the fold-deformation write to
+            # ``stack.height`` would be flagged as a wrote-undeclared-channel
+            # warning (and would silently bypass NaN-Inf checking for the
+            # height overwrite). Declaring it as an override makes the
+            # ownership transfer explicit and re-engages validation.
             # Phase A D8 deferred this to Phase C; D26-27 lands the fix.
             overrides=("height",),
             seed_namespace="stratigraphy",

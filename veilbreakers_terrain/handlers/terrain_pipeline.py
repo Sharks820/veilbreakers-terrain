@@ -205,17 +205,20 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     if validation_pass == "validation_full":
         insert_at = pass_sequence.index("validation_full")
         for prereq in (
-            # Phase A D8-9: explicitly schedule the 2 determinism-safe Bundle I
-            # orphan passes whose deltas are otherwise stranded. R1.5 verifier
-            # confirmed 3 real omissions (stratigraphy, wind_erosion, coastline);
-            # this PR lands ``wind_erosion`` + ``coastline`` only. Stratigraphy
-            # is DEFERRED to Phase B because it currently writes 4 undeclared
-            # channels (bedrock_height, height, sediment_height, strata_height)
-            # without ``overrides=("height",)`` — a pre-existing
-            # produces_channels gap discovered while writing this PR's
-            # determinism test (test_terrain_deep_qa::test_determinism_check
-            # fails when stratigraphy is scheduled because its height
-            # overwrite is non-determinism-safe today).
+            # Phase A D8-9 + Phase C D26-27: schedule the 3 determinism-safe
+            # Bundle I orphan passes whose deltas would otherwise be stranded.
+            # R1.5 verifier confirmed 3 real omissions (stratigraphy,
+            # wind_erosion, coastline); Phase A D8-9 landed ``wind_erosion``
+            # and ``coastline`` and DEFERRED ``stratigraphy`` because the
+            # pass wrote 4 undeclared channels (bedrock_height, height,
+            # sediment_height, strata_height) without ``overrides=("height",)``
+            # — a produces_channels gap that broke
+            # test_terrain_deep_qa::test_determinism_check.
+            # Phase C D26-27 closes that gap (see register_bundle_i_passes
+            # in terrain_geology_validator.py: aux-height channels declared
+            # + overrides=("height",) for the fold deformation overwrite)
+            # and schedules ``stratigraphy`` below alongside ``wind_erosion``
+            # so its ``strat_erosion_delta`` lands in the integrator.
             #
             # karst + glacial are already scheduled (glacial via the
             # has_scene_read insert in the early validation_full block;
