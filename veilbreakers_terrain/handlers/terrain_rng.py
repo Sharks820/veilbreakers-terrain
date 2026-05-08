@@ -67,7 +67,7 @@ def _resolve_canonical_derive_pass_seed():  # pragma: no cover - trivial dispatc
     return _canonical
 
 
-_CANONICAL_DERIVE_PASS_SEED: _Optional[_Any] = None
+_canonical_derive_pass_seed_cache: _Optional[_Any] = None
 
 
 def derive_pass_seed(
@@ -91,16 +91,16 @@ def derive_pass_seed(
     (the historical default) is coerced to ``None`` so empty-string
     callers do not crash on ``.to_tuple()`` access.
     """
-    global _CANONICAL_DERIVE_PASS_SEED
-    if _CANONICAL_DERIVE_PASS_SEED is None:
-        _CANONICAL_DERIVE_PASS_SEED = _resolve_canonical_derive_pass_seed()
+    global _canonical_derive_pass_seed_cache
+    if _canonical_derive_pass_seed_cache is None:
+        _canonical_derive_pass_seed_cache = _resolve_canonical_derive_pass_seed()
     canonical_region: _Any = region
     if isinstance(region, str):
         # Historical str regions were never meaningful; treat as None
         # to avoid the canonical helper trying to call .to_tuple().
         canonical_region = None
     return int(
-        _CANONICAL_DERIVE_PASS_SEED(
+        _canonical_derive_pass_seed_cache(
             int(seed),
             str(pass_name),
             int(tile_x),

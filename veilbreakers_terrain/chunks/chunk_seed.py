@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 
 # Maximum 32-bit unsigned value for masking BLAKE2b output to numpy
@@ -147,7 +147,7 @@ def derive_pass_seed_blake2b(
     seed_namespace: str,
     tile_x: int,
     tile_y: int,
-    region: Optional[object] = None,
+    region: "Any" = None,
 ) -> int:
     """Drop-in replacement for ``terrain_pipeline.derive_pass_seed``.
 
