@@ -311,12 +311,19 @@ def run_determinism_check_subprocess(
     size: int = 32,
     scale: float = 50.0,
     terrain_type: str = "mountains",
+    tile_x: int = 0,
+    tile_y: int = 0,
 ) -> Dict[str, Any]:
     """Run ``generate_tile`` ``runs`` times in isolated subprocesses, compare output hashes.
 
     Each run starts a fresh interpreter so module-level globals, numpy RNG
     state, and threading locals cannot leak between runs — the in-process
     ``run_determinism_check`` cannot guarantee this.
+
+    ``tile_x`` / ``tile_y`` are forwarded to the underlying ``generate_tile``
+    CLI so the bake samples a tile-specific slice of world space.  Without
+    this plumbing every tile would hash identically (PR #46 Codex/Copilot
+    threads 2 + 6).
 
     Returns the same shape dict as ``run_determinism_check`` so callers are
     interchangeable::
@@ -346,6 +353,10 @@ def run_determinism_check_subprocess(
                     str(scale),
                     "--terrain-type",
                     terrain_type,
+                    "--tile-x",
+                    str(int(tile_x)),
+                    "--tile-y",
+                    str(int(tile_y)),
                 ],
                 capture_output=True,
                 text=True,
@@ -359,6 +370,8 @@ def run_determinism_check_subprocess(
         "seed": int(seed),
         "run_count": runs,
         "requires_subprocess": True,
+        "tile_x": int(tile_x),
+        "tile_y": int(tile_y),
     }
 
 

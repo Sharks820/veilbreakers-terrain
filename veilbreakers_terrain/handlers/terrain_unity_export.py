@@ -1758,10 +1758,12 @@ def _truncate_splatmap_to_top_k(
     Behaviour
     ---------
     * If ``weights.shape[2] <= max_layers_per_pixel``: return the input
-      unchanged with ``truncated_layers = 0``.
-    * Otherwise: per-pixel argpartition to find the top-K layer indices,
-      zero all non-top-K weights, then renormalise so the surviving weights
-      sum to 1.0 (or 0.0 if the pixel had zero total weight already).
+      array (the same object — no copy) with ``truncated_layers = 0``.
+    * Otherwise: per-pixel argpartition to find the top-K layer indices and
+      zero all non-top-K weights.  **No renormalisation is performed here**
+      — the post-cap sum-to-1 step lives in :func:`_write_splatmap_groups`
+      so callers that consume the unnormalised top-K slice (e.g. raw
+      diagnostics) are not forced to re-introduce a divide.
 
     Parameters
     ----------
@@ -1777,6 +1779,9 @@ def _truncate_splatmap_to_top_k(
         non-zero entries per pixel.  Same shape as the input — truncated
         layers remain present as zero columns rather than being deleted, so
         the per-layer index → terrain-layer-asset mapping is preserved.
+        When ``L <= K`` the input array is returned **directly** (no copy);
+        do not mutate the result in place if you also retain the original
+        reference.
     truncated_layers:
         Count of layers truncated **per pixel** when ``L > K``: ``L - K``.
         This is reported in the manifest as ``splatmap_truncated_layers`` so
@@ -1791,7 +1796,12 @@ def _truncate_splatmap_to_top_k(
     if K < 1:
         raise ValueError("max_layers_per_pixel must be >= 1")
     if L <= K:
-        return weights_np.copy(), 0
+        # Return the input directly when no truncation is needed.  The caller
+        # in :func:`_write_splatmap_groups` runs the array through a
+        # ``np.where`` + ``astype(np.float32)`` pipeline which produces a new
+        # buffer, so the returned reference is not mutated in place.  See
+        # the ``Returns`` note above re: aliasing if you reuse this helper.
+        return weights_np, 0
 
     # argpartition is O(L) per pixel; we only need the indices of the top-K,
     # not a full sort.  Negate for descending order on weight magnitude.

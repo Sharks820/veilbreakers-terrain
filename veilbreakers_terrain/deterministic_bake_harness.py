@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import subprocess
 import sys
 from typing import Sequence
 
@@ -149,13 +150,69 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return _EXIT_CONFIG_ERROR
 
-    result = run_determinism_check_subprocess(
-        seed=int(args.seed),
-        runs=int(args.runs),
-        size=int(args.size),
-        scale=float(args.scale),
-        terrain_type=str(args.terrain_type),
-    )
+    # PR #46 thread 8: surface configuration errors (invalid --terrain-type,
+    # malformed --size, etc.) as a structured JSON payload + exit code 2 so
+    # the CLI contract is consistently enforced.  Without this wrap a bad
+    # ``--terrain-type`` would propagate ``CalledProcessError`` and exit
+    # with an unstructured Python traceback + code 1 — indistinguishable
+    # from a real non-determinism failure.
+    try:
+        result = run_determinism_check_subprocess(
+            seed=int(args.seed),
+            runs=int(args.runs),
+            size=int(args.size),
+            scale=float(args.scale),
+            terrain_type=str(args.terrain_type),
+            tile_x=int(args.tile[0]),
+            tile_y=int(args.tile[1]),
+        )
+    except subprocess.CalledProcessError as exc:
+        # ``generate_tile`` exited non-zero — bubble up its stderr (truncated)
+        # so CI logs show why without the raw traceback.
+        stderr_text = (exc.stderr or "").strip()
+        # Cap the captured stderr to keep the JSON payload bounded for log
+        # consumers.  The underlying CalledProcessError still references the
+        # full stream if a developer needs it locally.
+        stderr_excerpt = stderr_text if len(stderr_text) <= 2000 else (
+            stderr_text[:2000] + "...[truncated]"
+        )
+        print(
+            json.dumps(
+                {
+                    "error": "subprocess generate_tile failed",
+                    "exit_code": int(exc.returncode),
+                    "stderr": stderr_excerpt,
+                    "deterministic": False,
+                    "seed": int(args.seed),
+                    "tile": [int(args.tile[0]), int(args.tile[1])],
+                    "platform": platform.system().lower(),
+                    "python_version": platform.python_version(),
+                },
+                sort_keys=True,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        return _EXIT_CONFIG_ERROR
+    except (ValueError, TypeError, OSError) as exc:
+        # Configuration / I/O errors: surface as structured JSON + exit 2
+        # so callers can distinguish "bake bug" from "user passed garbage".
+        print(
+            json.dumps(
+                {
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "deterministic": False,
+                    "seed": int(args.seed),
+                    "tile": [int(args.tile[0]), int(args.tile[1])],
+                    "platform": platform.system().lower(),
+                    "python_version": platform.python_version(),
+                },
+                sort_keys=True,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        return _EXIT_CONFIG_ERROR
 
     payload = {
         "deterministic": bool(result["deterministic"]),

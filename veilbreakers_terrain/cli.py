@@ -60,12 +60,24 @@ def _generate_tile(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Tile coordinates translate into a world-space origin offset so the
+    # noise field samples the correct slice for this tile.  Without this
+    # plumbing, --tile-x / --tile-y would be metadata-only and bakes for
+    # different tiles would hash identically (PR #46 Codex/Copilot threads
+    # 2 + 6).
+    tile_x = int(getattr(args, "tile_x", 0) or 0)
+    tile_y = int(getattr(args, "tile_y", 0) or 0)
+    world_origin_x = float(tile_x) * float(args.size) * float(args.scale)
+    world_origin_y = float(tile_y) * float(args.size) * float(args.scale)
+
     height = generate_heightmap(
         int(args.size),
         int(args.size),
         scale=float(args.scale),
         seed=int(args.seed),
         terrain_type=str(args.terrain_type),
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
         normalize=True,
     )
     height_u16 = _normalize_u16(height)
@@ -92,6 +104,10 @@ def _generate_tile(args: argparse.Namespace) -> int:
         "size": int(args.size),
         "scale": float(args.scale),
         "terrain_type": str(args.terrain_type),
+        "tile_x": tile_x,
+        "tile_y": tile_y,
+        "world_origin_x": world_origin_x,
+        "world_origin_y": world_origin_y,
         "artifacts": {
             "heightmap.bin": _artifact_sha256(height_path),
             "splatmap_0.png": _artifact_sha256(splat_path),
@@ -115,6 +131,12 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--size", type=int, default=32)
     gen.add_argument("--scale", type=float, default=50.0)
     gen.add_argument("--terrain-type", default="mountains")
+    # PR #46 threads 2 + 6: --tile-x / --tile-y must influence the bake so
+    # different tile coordinates produce different artifact bytes.  Default
+    # 0,0 keeps the existing call-site behaviour for the (0, 0) cell of
+    # the GATE D25 matrix.
+    gen.add_argument("--tile-x", dest="tile_x", type=int, default=0)
+    gen.add_argument("--tile-y", dest="tile_y", type=int, default=0)
     gen.set_defaults(func=_generate_tile)
     return parser
 
