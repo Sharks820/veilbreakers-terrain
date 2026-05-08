@@ -341,6 +341,12 @@ def pass_horizon_lod(
 def register_bundle_l_horizon_lod_pass() -> None:
     from .terrain_pipeline import TerrainPassController
 
+    # B15-P0-21: both registrations declare `overrides=` so the topo-sort
+    # edge-suppression treats both as the canonical writer. Without this
+    # the primary `horizon_lod` registration's bundle was silently dropped
+    # via ChannelOwnershipError when any other pass touched
+    # `horizon_elevation_angles` first; only the alias `pass_horizon_lod`
+    # had the override.
     for name in ("horizon_lod", "pass_horizon_lod"):
         TerrainPassController.register_pass(
             PassDefinition(
@@ -348,7 +354,7 @@ def register_bundle_l_horizon_lod_pass() -> None:
                 func=pass_horizon_lod,
                 requires_channels=("height",),
                 produces_channels=("lod_bias", "horizon_elevation_angles"),
-                overrides=("lod_bias", "horizon_elevation_angles") if name == "pass_horizon_lod" else (),
+                overrides=("lod_bias", "horizon_elevation_angles"),
                 seed_namespace=name,
                 requires_scene_read=False,
                 description="Bundle L: silhouette-preserving far-terrain LOD + 360-sample horizon map",

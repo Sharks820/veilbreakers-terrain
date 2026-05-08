@@ -88,6 +88,9 @@ def saturate(x: "np.ndarray | float") -> "np.ndarray | float":
     return np.clip(x, 0.0, 1.0) if isinstance(x, np.ndarray) else max(0.0, min(1.0, float(x)))
 
 
+_FOAM_BEAUFORT_REF_SPEED: float = 3.4  # m/s — Beaufort 4 onset of whitecaps
+
+
 def bake_foam_vertex_alpha(
     obstacle_proximity: "np.ndarray | float",
     flow_speed: "np.ndarray | float",
@@ -96,24 +99,46 @@ def bake_foam_vertex_alpha(
 ) -> "np.ndarray | float":
     """Bake per-vertex foam alpha for water mesh export (Fix 13.1).
 
-    Formula (AAA reference: obstacle-driven foam suppressed by high velocity):
-        foam = saturate(obstacle_proximity / foam_radius)
-               * (1.0 - flow_speed / max_foam_speed)
-    Output is clamped to [0, 1].
+    Formula (AAA reference: Beaufort/Monahan 1986 whitecap model):
+        prox_ratio    = 1 - saturate(obstacle_proximity / foam_radius)
+        speed_ratio   = saturate(flow_speed / max_foam_speed)
+        whitecap_term = 0.3 * saturate((flow_speed / 3.4) ** 3)
+        foam = saturate(prox_ratio * speed_ratio + whitecap_term)
+
+    Pre-fix (P0 in §1.2 of the implementation guide) used
+    ``speed_ratio = 1 - flow_speed/max_foam_speed`` which is physically
+    inverted: high flow near obstacles produces whitecaps, not less foam.
+    The corrected formula scales obstacle-foam UP with flow speed, then
+    adds an open-water whitecap term that is independent of obstacle
+    proximity (Beaufort 4 onset at ~3.4 m/s, cubic falloff per Monahan
+    & O'Muircheartaigh 1986).
 
     Args:
         obstacle_proximity: Distance in metres to the nearest rock/shore obstacle.
             If not available, approximate from rock_mask scipy EDT before calling.
-        flow_speed: Velocity magnitude in m/s at each vertex.
-        foam_radius: Distance (m) at which foam reaches full intensity. Default 2.0.
-        max_foam_speed: Flow speed (m/s) above which foam cannot form. Default 5.0.
+        flow_speed: Velocity magnitude in m/s at each vertex. NOTE: the
+            ``flow_speed`` channel produced by ``pass_water_flow_speed``
+            is normalised to [0, 1] — callers must scale it to m/s
+            (e.g. multiply by ``MAX_FOAM_SPEED_DEFAULT``) before passing
+            here, otherwise visible foam vanishes.
+        foam_radius: Distance (m) at which obstacle-foam transitions from
+            full to zero. Default 2.0.
+        max_foam_speed: Flow speed (m/s) at which obstacle-foam reaches
+            full intensity. Default 5.0. Above this the obstacle term
+            saturates at its product cap (1.0) and the whitecap term
+            saturates at 0.3 (cubic ratio clamped to 1 by the inner
+            ``saturate``); the formula does NOT continue to grow beyond
+            this point.
 
     Returns:
         Per-vertex foam alpha in [0, 1].  Use as vertex alpha channel in water mesh.
     """
     prox_ratio = 1.0 - saturate(obstacle_proximity / max(foam_radius, 1e-9))
-    speed_ratio = 1.0 - flow_speed / max(max_foam_speed, 1e-9)
-    result = prox_ratio * speed_ratio
+    speed_ratio = saturate(flow_speed / max(max_foam_speed, 1e-9))
+    whitecap_term = 0.3 * saturate(
+        (flow_speed / max(_FOAM_BEAUFORT_REF_SPEED, 1e-9)) ** 3
+    )
+    result = prox_ratio * speed_ratio + whitecap_term
     return saturate(result)
 
 
@@ -148,9 +173,17 @@ def export_water_mesh_vertices(stack: "TerrainMaskStack") -> "List[dict[str, Any
     flow_speed_field = stack.get("flow_speed") if hasattr(stack, "get") else None
     if flow_speed_field is None:
         flow_speed_field = np.zeros((rows, cols), dtype=np.float32)
+    # PR #39 Codex P2: pass_water_flow_speed produces a normalised
+    # [0, 1] channel; bake_foam_vertex_alpha expects m/s. Scale to m/s
+    # so the Beaufort cubic formula sees physically meaningful values
+    # (without scaling, even max-rapid flow_speed=1 produces only 0.21
+    # foam — visible foam disappears).
+    flow_speed_ms = (
+        np.asarray(flow_speed_field, dtype=np.float32) * MAX_FOAM_SPEED_DEFAULT
+    )
 
     foam_alpha_grid = np.asarray(
-        bake_foam_vertex_alpha(obstacle_prox, flow_speed_field),
+        bake_foam_vertex_alpha(obstacle_prox, flow_speed_ms),
         dtype=np.float32,
     )
 
