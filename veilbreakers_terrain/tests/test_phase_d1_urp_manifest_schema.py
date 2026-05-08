@@ -222,6 +222,70 @@ def test_validate_upgrade_compat_helper_rejects_unknown_and_self_ref():
         )
 
 
+def test_canonical_alt_order_is_permutation_of_backend_registry():
+    """Codex review fix on Hardening PR B PR #52 thread 5.
+
+    ``CANONICAL_ALT_ORDER`` must contain exactly the same set of backend
+    strings as ``BACKEND_REGISTRY`` for every slot.  This is enforced at
+    module import time by ``_validate_canonical_alt_order``; this test
+    pins the contract so a future PR that adds a backend to one map and
+    forgets the other fails fast.
+    """
+    from veilbreakers_terrain.handlers.terrain_unity_backends import (
+        BACKEND_REGISTRY,
+        CANONICAL_ALT_ORDER,
+        _validate_canonical_alt_order,
+    )
+
+    # Same slot set in both maps.
+    assert set(CANONICAL_ALT_ORDER.keys()) == set(BACKEND_REGISTRY.keys())
+    for slot, registry in BACKEND_REGISTRY.items():
+        assert set(CANONICAL_ALT_ORDER[slot]) == set(registry), (
+            f"slot {slot!r} permutation mismatch: "
+            f"CANONICAL_ALT_ORDER={CANONICAL_ALT_ORDER[slot]!r} vs "
+            f"BACKEND_REGISTRY={registry!r}"
+        )
+
+    # The validator itself runs at import; calling it directly here
+    # documents the failure mode for future readers and pins the helper
+    # against accidental signature changes.
+    _validate_canonical_alt_order()
+
+
+def test_canonical_alt_order_upscaler_substitution_priority_pinned():
+    """Upscaler alt ordering is locked in substitution-priority order.
+
+    The pinned default of ``UpscalerManifest.upgrade_compat`` is
+    ``("fsr_3_1", "fsr_1_0", "dlss_4_5", "off")``.  The
+    ``build_unity_urp_manifest_section`` helper must derive the SAME
+    order (with the active backend filtered out) when no explicit
+    manifest is supplied.  Pinning this avoids the regression Codex
+    flagged on PR #52: registry order would yield
+    ``("fsr_1_0", "fsr_3_1", "dlss_4_5", "off")`` — different priority.
+    """
+    from veilbreakers_terrain.handlers.terrain_unity_backends import (
+        CANONICAL_ALT_ORDER,
+        UpscalerManifest,
+    )
+
+    # CANONICAL_ALT_ORDER pins substitution priority WITH default first.
+    assert CANONICAL_ALT_ORDER["upscaler"] == (
+        "stp_1_0", "fsr_3_1", "fsr_1_0", "dlss_4_5", "off"
+    )
+
+    # UpscalerManifest pinned default upgrade_compat = priority order
+    # WITH the default removed.
+    assert UpscalerManifest().upgrade_compat == (
+        "fsr_3_1", "fsr_1_0", "dlss_4_5", "off"
+    )
+
+    # build_unity_urp_manifest_section must emit the same order.
+    section = build_unity_urp_manifest_section()
+    assert section["upscaler"]["upgrade_compat"] == [
+        "fsr_3_1", "fsr_1_0", "dlss_4_5", "off"
+    ]
+
+
 def test_water_manifest_custom_field_overrides_persist():
     # Hardening PR B Fix #2: when backend != default, supply an
     # upgrade_compat tuple that doesn't list the active backend (recursive

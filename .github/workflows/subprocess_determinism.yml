@@ -24,28 +24,85 @@ name: subprocess-determinism
 on:
   push:
     branches: ["**"]
-    # Hardening PR B Fix #12 (VC finding): docs-only PRs should not pay
-    # the 18-cell matrix cost — skip when only documentation / planning
-    # artifacts changed.
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-      - '.planning/**'
   pull_request:
     branches: ["main", "master"]
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-      - '.planning/**'
 
 # Permissions: read-only — this workflow does not write artefacts back to
 # the repo.  CodeQL and other static analyses ignore this file.
+# ``pull-requests: read`` is needed by the docs-only detection job so it
+# can list the files changed in the PR via the GitHub API.
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  # Hardening PR B Fix #12 (VC finding) revised per Codex review:
+  # Detect docs-only changes INSIDE a job rather than via a top-level
+  # ``paths-ignore`` filter.  GitHub keeps the workflow Pending forever
+  # when ``paths-ignore`` skips it entirely, which would make docs-only
+  # PRs unmergeable because the required ``subprocess-determinism (18/18)``
+  # check is documented in this same file.  Instead we:
+  #
+  #   1. Always trigger the workflow.
+  #   2. Run a lightweight ``detect-docs-only`` job that flips an output
+  #      flag when EVERY changed path matches docs/**, *.md, or .planning/**.
+  #   3. Gate the expensive 18-cell matrix on that flag.
+  #   4. Still publish ``subprocess-determinism (18/18)`` from the summary
+  #      job — it short-circuits to PASS for docs-only PRs because there
+  #      is no source-side determinism risk to validate.
+  detect-docs-only:
+    name: detect-docs-only
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs-only change set
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Collect changed files for the event.  ``pull_request`` uses the
+          # GitHub API (handles forks + cross-branch diffs); ``push`` falls
+          # back to ``git diff`` between before/after SHAs.  When neither
+          # surfaces a useful list we conservatively assume NOT docs-only
+          # (i.e. run the full matrix) so we never silently skip safety work.
+          if [ -n "${PR_NUMBER:-}" ]; then
+            files="$(gh pr view "$PR_NUMBER" --json files --jq '.files[].path' || true)"
+          elif [ -n "${BEFORE_SHA:-}" ] && [ "${BEFORE_SHA:-}" != "0000000000000000000000000000000000000000" ]; then
+            files="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}" || true)"
+          else
+            files=""
+          fi
+          if [ -z "$files" ]; then
+            echo "Could not enumerate changed files — running full matrix."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          docs_only=true
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            case "$path" in
+              docs/*|*.md|.planning/*) ;;
+              *) docs_only=false; break ;;
+            esac
+          done <<< "$files"
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "Detected docs_only=$docs_only across $(printf '%s\n' "$files" | wc -l) changed paths."
+
   cell:
     name: cell (${{ matrix.os }} / py${{ matrix.python-version }} / seed=${{ matrix.seed-seq }}${{ matrix.randomized_hashseed && ' / randomized_hashseed' || '' }}${{ matrix.strict_provenance && ' / strict_provenance' || '' }})
+    needs: detect-docs-only
+    if: ${{ needs.detect-docs-only.outputs.docs_only != 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -203,17 +260,40 @@ jobs:
   summary:
     name: subprocess-determinism (18/18)
     runs-on: ubuntu-latest
-    needs: cell
+    needs: [detect-docs-only, cell]
+    # ``always()`` so this job still runs (and publishes the required
+    # check) even when the matrix is skipped (docs-only PR) or some
+    # cells fail — we inspect ``needs`` results manually below.
     if: always()
     steps:
       - name: Assert all 18 fixed-seed cells succeeded
         # ``needs.cell.result`` aggregates the matrix outcome.  When ANY
         # cell fails, ``result`` is "failure"; "success" only when all
         # cells passed.  GATE D25 fails the summary check if not 18/18.
+        #
+        # Docs-only short-circuit: when ``detect-docs-only`` reports
+        # ``docs_only=true`` the matrix is intentionally skipped (Codex
+        # review fix on Hardening PR B), so ``needs.cell.result`` will be
+        # ``skipped``.  We treat that as a PASS for the required check
+        # because no source-side determinism risk exists for docs-only
+        # changes.  The subprocess-determinism matrix runs again on the
+        # next non-docs PR that touches source.
+        shell: bash
         run: |
-          echo "matrix result: ${{ needs.cell.result }}"
-          if [ "${{ needs.cell.result }}" != "success" ]; then
-            echo "::error::GATE D25 failed — subprocess-determinism matrix did not reach 18/18 (result: ${{ needs.cell.result }})"
+          docs_only="${{ needs.detect-docs-only.outputs.docs_only }}"
+          cell_result="${{ needs.cell.result }}"
+          echo "detect-docs-only.docs_only=$docs_only"
+          echo "cell.result=$cell_result"
+          if [ "$docs_only" = "true" ]; then
+            if [ "$cell_result" = "skipped" ]; then
+              echo "GATE D25 SHORT-CIRCUIT PASS — docs-only PR; matrix correctly skipped."
+              exit 0
+            fi
+            echo "::error::detect-docs-only reported docs_only=true but matrix did not skip (cell_result=$cell_result) — workflow logic broken."
+            exit 1
+          fi
+          if [ "$cell_result" != "success" ]; then
+            echo "::error::GATE D25 failed — subprocess-determinism matrix did not reach 18/18 (result: $cell_result)"
             exit 1
           fi
           echo "GATE D25 PASSED — 18/18 subprocess-determinism cells green."

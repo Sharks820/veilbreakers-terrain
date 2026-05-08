@@ -65,15 +65,21 @@ def _frame_namespace(namespace: str) -> bytes:
 
     Hardening PR B Fix #8 (VC finding): the ``<I`` (uint32) length-prefix
     silently truncates if ``len(encoded)`` exceeds 4 GiB.  Real callers
-    pass <100-byte namespaces, but a defensive assertion catches a
+    pass <100-byte namespaces, but a defensive check catches a
     pathological caller before they produce a colliding hash.
+
+    Codex review fix: raise ``ValueError`` rather than ``assert`` so the
+    overflow guard remains active when CPython is run with ``-O`` (which
+    strips ``assert`` statements).  Silent uint32 truncation is a
+    collision-resistance bug regardless of interpreter flags.
     """
     encoded = str(namespace).encode("utf-8")
-    assert len(encoded) < (1 << 32), (
-        f"namespace too long: {len(encoded)} bytes exceeds uint32 length-prefix "
-        "(2**32-1 == 4 GiB).  This would silently truncate the framing length "
-        "and break collision-resistance."
-    )
+    if len(encoded) >= (1 << 32):
+        raise ValueError(
+            f"namespace too long: {len(encoded)} bytes exceeds uint32 length-prefix "
+            "(2**32-1 == 4 GiB).  This would silently truncate the framing length "
+            "and break collision-resistance."
+        )
     return struct.pack("<I", len(encoded)) + encoded
 
 
@@ -126,10 +132,15 @@ def chunk_seed_bytes(
     # silent uint32 truncation of ``len(extra)`` would break collision-
     # resistance.  Real callers pass <16-byte salt but this catches a
     # pathological caller before the hash silently aliases.
-    assert len(extra_bytes) < (1 << 32), (
-        f"extra salt too long: {len(extra_bytes)} bytes exceeds uint32 "
-        "length-prefix (2**32-1 == 4 GiB)."
-    )
+    #
+    # Codex review fix: raise ``ValueError`` rather than ``assert`` so the
+    # overflow guard remains active when CPython is run with ``-O`` (which
+    # strips ``assert`` statements).
+    if len(extra_bytes) >= (1 << 32):
+        raise ValueError(
+            f"extra salt too long: {len(extra_bytes)} bytes exceeds uint32 "
+            "length-prefix (2**32-1 == 4 GiB)."
+        )
     payload = (
         struct.pack("<I", int(intent_seed) & 0xFFFFFFFF)
         + _frame_namespace(namespace)

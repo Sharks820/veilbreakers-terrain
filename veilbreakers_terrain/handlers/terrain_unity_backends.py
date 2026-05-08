@@ -26,8 +26,14 @@ Phase D1 of the §17 60-day plan locks four FREE URP-default backends:
   sky           skybox_cubemap         volume_cloud_urp
   fog           urp_fog_volume_plus_   atmospheric_height_fog
                 cards
-  upscaler      stp_1_0                fsr_1_0, fsr_3_1, dlss_4_5, off
+  upscaler      stp_1_0                fsr_3_1, fsr_1_0, dlss_4_5, off
   ============  =====================  =========================================
+
+  The ``upscaler`` row's alternates are listed in **substitution priority
+  order** (highest-quality replacement first) — this matches the pinned
+  ``UpscalerManifest.upgrade_compat`` default and the per-slot canonical
+  alt ordering used by ``build_unity_urp_manifest_section`` (Codex review
+  fix on Hardening PR B).
 
 Hardening PR B (2026-05-08): Default upscaler changed from ``fsr_3_1`` (which
 is an external ``FSR3-Unity-URP`` package) to ``stp_1_0``, which ships
@@ -77,6 +83,60 @@ BACKEND_REGISTRY: dict[str, tuple[str, ...]] = {
     "fog": FOG_BACKENDS,
     "upscaler": UPSCALER_BACKENDS,
 }
+
+
+# ---------------------------------------------------------------------------
+# Canonical alternate ordering (Codex review fix on Hardening PR B)
+# ---------------------------------------------------------------------------
+# ``BACKEND_REGISTRY`` orders entries with the bake-time default first
+# (``stp_1_0`` before ``fsr_3_1`` for upscalers, etc).  That is correct for
+# "what defaults exist" but WRONG for "if I have to substitute, what is the
+# next-best choice?".  The registry order would yield
+# ``("fsr_1_0", "fsr_3_1", "dlss_4_5", "off")`` for the upscaler slot when
+# filtered against the active backend, which contradicts the pinned
+# ``UpscalerManifest.upgrade_compat`` default of
+# ``("fsr_3_1", "fsr_1_0", "dlss_4_5", "off")``.
+#
+# Substitution priority is dataclass-pinned per-slot below.  Each tuple is a
+# permutation of the matching registry tuple — ``_validate_canonical_alt_order``
+# enforces this at module import so the two stay in sync.
+CANONICAL_ALT_ORDER: dict[str, tuple[str, ...]] = {
+    "water": ("boat_attack", "stylized_water_2", "crest_5", "hand_authored_urp"),
+    "sky": ("skybox_cubemap", "volume_cloud_urp"),
+    "fog": ("urp_fog_volume_plus_cards", "atmospheric_height_fog"),
+    # Substitution priority: highest-quality replacement first.  STP 1.0 is
+    # the bake-time default; if it is unavailable at runtime we prefer FSR
+    # 3.1 (best image quality), then FSR 1.0 (widest hardware), then DLSS
+    # 4.5 (NVIDIA-only), then ``off`` (no upscaling).
+    "upscaler": ("stp_1_0", "fsr_3_1", "fsr_1_0", "dlss_4_5", "off"),
+}
+
+
+def _validate_canonical_alt_order() -> None:
+    """Assert each ``CANONICAL_ALT_ORDER`` entry is a permutation of the registry.
+
+    Catches typos at import time so a divergence between
+    ``BACKEND_REGISTRY`` and ``CANONICAL_ALT_ORDER`` surfaces immediately
+    rather than silently producing a manifest whose ``upgrade_compat``
+    omits a registered backend.
+    """
+    for slot, registry in BACKEND_REGISTRY.items():
+        canonical = CANONICAL_ALT_ORDER.get(slot)
+        if canonical is None:
+            raise RuntimeError(
+                f"CANONICAL_ALT_ORDER missing entry for slot {slot!r}; "
+                "every BACKEND_REGISTRY slot needs a substitution-priority "
+                "ordering."
+            )
+        if set(canonical) != set(registry):
+            raise RuntimeError(
+                f"CANONICAL_ALT_ORDER[{slot!r}] = {canonical!r} is not a "
+                f"permutation of BACKEND_REGISTRY[{slot!r}] = {registry!r}; "
+                "they must contain exactly the same backend strings."
+            )
+
+
+_validate_canonical_alt_order()
 
 
 # ---------------------------------------------------------------------------
@@ -536,8 +596,14 @@ def build_unity_urp_manifest_section(
     # the canonical upgrade_compat tuple so the active backend never
     # appears as its own alternate (recursive self-reference is rejected
     # by __post_init__).
+    #
+    # Codex review fix on Hardening PR B: source per-backend alternate
+    # ordering from ``CANONICAL_ALT_ORDER`` rather than ``BACKEND_REGISTRY``
+    # so the emitted ``upgrade_compat`` matches each manifest dataclass's
+    # pinned canonical default exactly (substitution-priority order, not
+    # default-first registry order).
     def _alts_for(slot: str, active: str) -> Tuple[str, ...]:
-        return tuple(b for b in BACKEND_REGISTRY[slot] if b != active)
+        return tuple(b for b in CANONICAL_ALT_ORDER[slot] if b != active)
 
     if water is not None:
         water_m = water
@@ -593,6 +659,7 @@ __all__ = [
     "UpscalerManifest",
     "UnityExportConfig",
     "BACKEND_REGISTRY",
+    "CANONICAL_ALT_ORDER",
     "WATER_BACKENDS",
     "SKY_BACKENDS",
     "FOG_BACKENDS",
