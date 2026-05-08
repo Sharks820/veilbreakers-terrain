@@ -364,8 +364,31 @@ def apply_differential_erosion(
     #    Proxy: where hardness increases sharply going upward (positive
     #    vertical gradient of hardness), the soft cell is being undercut.
     # ------------------------------------------------------------------
-    # Edge-reflect: last row repeats rather than wrapping to row 0.
-    hardness_above = np.pad(hardness, ((0, 1), (0, 0)), mode="edge")[1:]
+    # B15-P0-18: hardness_above must be the rock at elevation + 1m
+    # (gravity-up Z direction), NOT a row-shift on the heightmap grid.
+    # The previous `np.pad(hardness, ((0,1),(0,0)), mode="edge")[1:]`
+    # shifted along axis 0 (Y on the heightmap), so for horizontal-bedded
+    # mesas with hard caprock above soft shale, the contrast was zero
+    # (rows have identical hardness) and undercutting never fired.
+    #
+    # Correct fix: look up hardness at h + 1m via the strat_stack layer
+    # table when available; fall back to zero contrast (no undercut)
+    # when no stratigraphic column is provided. The pre-fix row-shift
+    # was demonstrably wrong; "no undercut" is a strict improvement.
+    if strat_stack is not None and strat_stack.layers:
+        thicks_above = np.array(
+            [L.thickness_m for L in strat_stack.layers], dtype=np.float64
+        )
+        hards_above = np.array(
+            [L.hardness for L in strat_stack.layers], dtype=np.float64
+        )
+        cum_tops = np.cumsum(thicks_above)
+        z_above = (h + 1.0 - float(strat_stack.base_elevation_m)).clip(min=0.0)
+        idx_above = np.searchsorted(cum_tops, z_above, side="right")
+        idx_above = np.clip(idx_above, 0, len(strat_stack.layers) - 1)
+        hardness_above = hards_above[idx_above]
+    else:
+        hardness_above = hardness  # contrast = 0 → no undercut term
     hardness_contrast = np.clip(hardness_above - hardness, 0.0, 1.0)
     soft = np.clip(1.0 - hardness, 0.0, 1.0)
     undercut = undercutting_strength * soft * hardness_contrast
@@ -1075,9 +1098,19 @@ def pass_stratigraphy(
     stack.set("strat_erosion_delta", erosion_delta, "stratigraphy")
     sediment_height = np.maximum(-np.asarray(erosion_delta, dtype=np.float32), 0.0)
     height = stack.height
-    bedrock_height = (
-        np.asarray(height, dtype=np.float32) - sediment_height
-    ).astype(np.float32)
+    # B15-P0-17: bedrock_height must reflect the surface AFTER the delta
+    # integrator has applied strat_erosion_delta. Computing against the
+    # pre-integration `stack.height` would give consumers (foliage,
+    # texture-layer, hero-zone) reading bedrock_height between this pass
+    # and integrate_deltas a value inconsistent with the post-integrated
+    # height channel. We predict the post-integrated surface here so
+    # bedrock_height is consistent regardless of where in the pass
+    # sequence consumers read it.
+    predicted_post_height = (
+        np.asarray(height, dtype=np.float32)
+        + np.asarray(erosion_delta, dtype=np.float32)
+    )
+    bedrock_height = (predicted_post_height - sediment_height).astype(np.float32)
     stack.set("sediment_height", sediment_height, "stratigraphy")
     stack.set("bedrock_height", bedrock_height, "stratigraphy")
     stack.set("strata_height", np.asarray(height, dtype=np.float32), "stratigraphy")

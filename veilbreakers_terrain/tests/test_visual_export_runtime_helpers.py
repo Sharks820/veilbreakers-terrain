@@ -402,8 +402,15 @@ def test_waterfall_foam_helpers_and_vertex_export_contract():
     assert saturate(-1.0) == 0.0
     assert saturate(2.0) == 1.0
     assert np.allclose(saturate(np.array([-1.0, 0.5, 2.0])), [0.0, 0.5, 1.0])
-    assert math.isclose(bake_foam_vertex_alpha(0.0, 0.0, foam_radius=2.0), 1.0)
+    # D14: Beaufort/Monahan whitecap formula — pre-D14 these asserted
+    # the inverted `1 - flow_speed/max` form; corrected expectations:
+    #   prox=0,  speed=0   → still water at obstacle, no foam
+    #   prox=2,  speed=0   → far + still, no foam
+    #   prox=2,  speed=10  → open water + high flow, whitecap term only (~0.3)
+    assert math.isclose(bake_foam_vertex_alpha(0.0, 0.0, foam_radius=2.0), 0.0)
     assert math.isclose(bake_foam_vertex_alpha(2.0, 0.0, foam_radius=2.0), 0.0)
-    assert math.isclose(bake_foam_vertex_alpha(2.0, 10.0, foam_radius=2.0), 0.0)
+    assert math.isclose(
+        bake_foam_vertex_alpha(2.0, 10.0, foam_radius=2.0), 0.3, abs_tol=1e-6
+    )
     assert len(vertices) == 4
     assert {"position", "foam_alpha"} <= set(vertices[0])

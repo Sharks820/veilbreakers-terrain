@@ -88,6 +88,9 @@ def saturate(x: "np.ndarray | float") -> "np.ndarray | float":
     return np.clip(x, 0.0, 1.0) if isinstance(x, np.ndarray) else max(0.0, min(1.0, float(x)))
 
 
+_FOAM_BEAUFORT_REF_SPEED: float = 3.4  # m/s — Beaufort 4 onset of whitecaps
+
+
 def bake_foam_vertex_alpha(
     obstacle_proximity: "np.ndarray | float",
     flow_speed: "np.ndarray | float",
@@ -96,24 +99,39 @@ def bake_foam_vertex_alpha(
 ) -> "np.ndarray | float":
     """Bake per-vertex foam alpha for water mesh export (Fix 13.1).
 
-    Formula (AAA reference: obstacle-driven foam suppressed by high velocity):
-        foam = saturate(obstacle_proximity / foam_radius)
-               * (1.0 - flow_speed / max_foam_speed)
-    Output is clamped to [0, 1].
+    Formula (AAA reference: Beaufort/Monahan 1986 whitecap model):
+        prox_ratio    = 1 - saturate(obstacle_proximity / foam_radius)
+        speed_ratio   = saturate(flow_speed / max_foam_speed)
+        whitecap_term = 0.3 * saturate((flow_speed / 3.4) ** 3)
+        foam = saturate(prox_ratio * speed_ratio + whitecap_term)
+
+    Pre-fix (P0 in §1.2 of the implementation guide) used
+    ``speed_ratio = 1 - flow_speed/max_foam_speed`` which is physically
+    inverted: high flow near obstacles produces whitecaps, not less foam.
+    The corrected formula scales obstacle-foam UP with flow speed, then
+    adds an open-water whitecap term that is independent of obstacle
+    proximity (Beaufort 4 onset at ~3.4 m/s, cubic falloff per Monahan
+    & O'Muircheartaigh 1986).
 
     Args:
         obstacle_proximity: Distance in metres to the nearest rock/shore obstacle.
             If not available, approximate from rock_mask scipy EDT before calling.
         flow_speed: Velocity magnitude in m/s at each vertex.
-        foam_radius: Distance (m) at which foam reaches full intensity. Default 2.0.
-        max_foam_speed: Flow speed (m/s) above which foam cannot form. Default 5.0.
+        foam_radius: Distance (m) at which obstacle-foam transitions from
+            full to zero. Default 2.0.
+        max_foam_speed: Flow speed (m/s) at which obstacle-foam reaches
+            full intensity. Default 5.0. Above this the whitecap term
+            still scales further via the cubic Beaufort formula.
 
     Returns:
         Per-vertex foam alpha in [0, 1].  Use as vertex alpha channel in water mesh.
     """
     prox_ratio = 1.0 - saturate(obstacle_proximity / max(foam_radius, 1e-9))
-    speed_ratio = 1.0 - flow_speed / max(max_foam_speed, 1e-9)
-    result = prox_ratio * speed_ratio
+    speed_ratio = saturate(flow_speed / max(max_foam_speed, 1e-9))
+    whitecap_term = 0.3 * saturate(
+        (flow_speed / max(_FOAM_BEAUFORT_REF_SPEED, 1e-9)) ** 3
+    )
+    result = prox_ratio * speed_ratio + whitecap_term
     return saturate(result)
 
 
