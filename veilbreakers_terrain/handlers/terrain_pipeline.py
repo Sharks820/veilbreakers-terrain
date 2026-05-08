@@ -239,6 +239,24 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # entry is already populated by the macro/banded/erosion passes
             # earlier in the sequence.
             *(("wind_erosion",) if has_scene_read else ()),
+            # Phase C D26-27 (Task #39 follow-up to Phase A D8-9):
+            # ``stratigraphy`` is the third Bundle I orphan called out by
+            # the R1.5 verifier. Phase A D8 deferred it because its
+            # registration was missing produces_channels for
+            # (sediment_height, bedrock_height, strata_height) and
+            # overrides=("height",) for the fold-deformation overwrite.
+            # Phase C D26-27 closes that gap in register_bundle_i_passes
+            # (terrain_geology_validator.py) and schedules the pass HERE
+            # so its strat_erosion_delta is composed into ``height`` by
+            # ``integrate_deltas`` (placement is normalised by
+            # ``_normalize_delta_integration_sequence`` after the last
+            # delta producer). The companion PR #17 morphology delta
+            # integrator wiring continues to flow through the existing
+            # ``pass_morphology`` insert in the early validation_full
+            # block (line 197) since pass_morphology already produces
+            # ``morphology_delta`` and is followed by ``integrate_deltas``
+            # via the same normalisation.
+            *(("stratigraphy",) if has_scene_read else ()),
             # C-7: terrain feature carving before scatter
             "pass_terrain_features",
             # C-8: sightline framing before scatter
