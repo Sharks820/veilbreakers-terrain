@@ -1738,11 +1738,83 @@ def _quantize_detail_density(arr: np.ndarray) -> np.ndarray:
     return np.rint(density * _DETAIL_DENSITY_MAX_PER_CELL).astype(np.uint16)
 
 
+_SPLATMAP_MAX_LAYERS_PER_PIXEL = 4
+
+
+def _truncate_splatmap_to_top_k(
+    weights: np.ndarray,
+    max_layers_per_pixel: int = _SPLATMAP_MAX_LAYERS_PER_PIXEL,
+) -> tuple[np.ndarray, int]:
+    """Cap each pixel's active splat layers to the top-K highest-weight layers.
+
+    Unity TerrainData stores weights in RGBA splatmap textures (4 layers per
+    texture).  At the 8GB shipping config (R2-A1 quality preset, see
+    IMPLEMENTATION_FIX_GUIDE_2026_05_07_FINAL §17 D33) we lock the **effective**
+    layer count to 4 per pixel even when the materials pipeline emits more
+    layer channels.  This keeps the visible blend tied to the dominant 4
+    materials per pixel and avoids tail-end layers leaking through quantisation
+    when Unity samples a single splatmap_00.raw at runtime (B15-P0-07).
+
+    Behaviour
+    ---------
+    * If ``weights.shape[2] <= max_layers_per_pixel``: return the input
+      unchanged with ``truncated_layers = 0``.
+    * Otherwise: per-pixel argpartition to find the top-K layer indices,
+      zero all non-top-K weights, then renormalise so the surviving weights
+      sum to 1.0 (or 0.0 if the pixel had zero total weight already).
+
+    Parameters
+    ----------
+    weights:
+        ``(H, W, L)`` float32 array of layer weights, expected non-negative.
+    max_layers_per_pixel:
+        Per-pixel cap.  Defaults to 4 (Unity RGBA splatmap channel count).
+
+    Returns
+    -------
+    capped_weights:
+        ``(H, W, L)`` float32 array with at most ``max_layers_per_pixel``
+        non-zero entries per pixel.  Same shape as the input — truncated
+        layers remain present as zero columns rather than being deleted, so
+        the per-layer index → terrain-layer-asset mapping is preserved.
+    truncated_layers:
+        Count of layers truncated **per pixel** when ``L > K``: ``L - K``.
+        This is reported in the manifest as ``splatmap_truncated_layers`` so
+        consumers can detect when the export silently dropped tail layers
+        rather than having to diff the layer count.
+    """
+    weights_np = np.asarray(weights, dtype=np.float32)
+    if weights_np.ndim != 3:
+        raise ValueError("splatmap weights must be 3D (H, W, L)")
+    H, W, L = weights_np.shape
+    K = int(max_layers_per_pixel)
+    if K < 1:
+        raise ValueError("max_layers_per_pixel must be >= 1")
+    if L <= K:
+        return weights_np.copy(), 0
+
+    # argpartition is O(L) per pixel; we only need the indices of the top-K,
+    # not a full sort.  Negate for descending order on weight magnitude.
+    flat = weights_np.reshape(-1, L)
+    # np.argpartition kth selects items at positions [0..K-1] as the K largest
+    # when we negate (i.e. K smallest of -w == K largest of w).
+    top_k_idx = np.argpartition(-flat, kth=K - 1, axis=1)[:, :K]
+    keep_mask_flat = np.zeros_like(flat, dtype=bool)
+    np.put_along_axis(keep_mask_flat, top_k_idx, True, axis=1)
+    keep_mask = keep_mask_flat.reshape(H, W, L)
+
+    capped = np.where(keep_mask, weights_np, np.float32(0.0))
+    truncated_layers = L - K
+    return capped, int(truncated_layers)
+
+
 def _write_splatmap_groups(
     files: Dict[str, Dict[str, Any]],
     output_dir: Path,
     stack: TerrainMaskStack,
-) -> list[str]:
+    *,
+    max_layers_per_pixel: int = _SPLATMAP_MAX_LAYERS_PER_PIXEL,
+) -> tuple[list[str], int]:
     """Write splatmap groups as Unity-compliant RGBA uint8 RAW files.
 
     Unity TerrainData splatmap format requirements
@@ -1760,10 +1832,28 @@ def _write_splatmap_groups(
       them without manual slot assignment.
     * Y-flip: applied by ``_write_raw_array`` → ``_flip_for_unity``.
     * Endianness: single-byte (uint8) — no endian tag needed.
+
+    B15-P0-07 — splatmap L>4 truncation
+    -----------------------------------
+    Unity terrain materials cap visible splatmap layers at 4 per RGBA texture.
+    When the input weights tensor exceeds 4 layers we apply a per-pixel
+    top-K (K=4) cap via :func:`_truncate_splatmap_to_top_k` then renormalise.
+    This ships at the 8GB quality preset (lock effective 4 layers — see
+    IMPLEMENTATION_FIX_GUIDE_2026_05_07_FINAL §17 D33).  The truncation count
+    is returned to the caller and surfaced in the manifest as
+    ``splatmap_truncated_layers`` so consumers can detect the drop without
+    diffing layer counts.
+
+    Returns
+    -------
+    group_files:
+        List of RAW filenames written, one per RGBA splatmap group.
+    splatmap_truncated_layers:
+        Number of layers dropped per pixel when L > 4 (i.e. ``max(0, L-4)``).
     """
     weights = stack.splatmap_weights_layer
     if weights is None:
-        return []
+        return [], 0
 
     weights_np = np.asarray(weights, dtype=np.float32)
     if weights_np.ndim != 3:
@@ -1775,14 +1865,22 @@ def _write_splatmap_groups(
             "splatmap_weights_layer spatial dimensions must match stack.height"
         )
 
-    H, W, L = weights_np.shape
+    # B15-P0-07: enforce per-pixel top-K cap before normalisation.  When L<=K
+    # this is a no-op + truncated_count=0; when L>K we zero non-top-K layers
+    # so the subsequent sum-to-1 renorm only redistributes weight across the
+    # surviving 4 layers.
+    capped, splatmap_truncated_layers = _truncate_splatmap_to_top_k(
+        weights_np, max_layers_per_pixel=max_layers_per_pixel
+    )
+
+    H, W, L = capped.shape
 
     # Normalise per-pixel so all active layers across the full stack sum to 1.
     # This matches Unity's expectation: SetAlphamaps requires normalised weights.
-    total_weight = weights_np.sum(axis=2, keepdims=True)
+    total_weight = capped.sum(axis=2, keepdims=True)
     # Only normalise pixels where total > 0; leave zero pixels as zero.
     safe_total = np.where(total_weight > 1e-7, total_weight, 1.0)
-    weights_norm = (weights_np / safe_total).astype(np.float32)
+    weights_norm = (capped / safe_total).astype(np.float32)
 
     group_files: list[str] = []
     group_count = max(1, (L + 3) // 4)
@@ -1833,10 +1931,14 @@ def _write_splatmap_groups(
                     },
                     # Normalisation applied before quantisation (required by Unity).
                     "weights_normalised": True,
+                    # B15-P0-07: per-group view of the global truncation count.
+                    # Each group writes the same count so consumers reading any
+                    # single splatmap_NN.raw entry can detect truncation.
+                    "splatmap_truncated_layers": int(splatmap_truncated_layers),
                 },
             )
         )
-    return group_files
+    return group_files, int(splatmap_truncated_layers)
 
 
 _MANIFEST_REQUIRED_FIELDS = (
@@ -1959,7 +2061,9 @@ def export_unity_manifest(
         },
         flip_vertical=True,
     )
-    splatmap_files = _write_splatmap_groups(files, output_dir, stack)
+    splatmap_files, splatmap_truncated_layers = _write_splatmap_groups(
+        files, output_dir, stack
+    )
 
     # P1-22: Channels to skip in the generic binary export loop — either handled
     # by dedicated writers above, or not suitable for raw .bin export.
@@ -2377,6 +2481,9 @@ def export_unity_manifest(
         ),
         "splatmap_group_count": len(splatmap_files),
         "splatmap_layer_count": len(splatmap_layer_meta),
+        # B15-P0-07: count of layers truncated per pixel when L>4 (Unity RGBA cap).
+        # 0 means the input had <=4 layers and no truncation was applied.
+        "splatmap_truncated_layers": int(splatmap_truncated_layers),
         "splatmap_layers": splatmap_layer_meta,
         "tile_biome_id": biome_manifest["primary_biome_id"],
         "tile_biome_name": biome_manifest["primary_biome_name"],
