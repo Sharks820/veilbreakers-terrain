@@ -8,12 +8,12 @@ attributes required by the Unity shader + geometry-node consumer.
 
 from __future__ import annotations
 
-import json
 from importlib import metadata as importlib_metadata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from .terrain_io import atomic_write_json
 from .terrain_semantics import TerrainMaskStack, ValidationIssue
 
 
@@ -161,7 +161,9 @@ def write_export_manifest(output_dir: Path, files: Dict[str, Dict[str, Any]]) ->
                 )
     manifest_path = output_dir / "manifest.json"
     payload = {"version": CONTRACT_VERSION, "files": files}
-    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    # FIX-D24-PR12: atomic temp+fsync+os.replace via shared helper so a crash
+    # mid-write can never leave a half-written manifest.json on disk.
+    atomic_write_json(manifest_path, payload)
     return manifest_path
 
 

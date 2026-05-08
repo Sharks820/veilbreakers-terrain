@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from .terrain_io import atomic_write_text
 from .terrain_semantics import (
     BBox,
     PassDefinition,
@@ -577,8 +578,12 @@ def export_navmesh_json(
             return o.tolist()
         return repr(o)
 
-    output_path.write_text(
-        json.dumps(descriptor, indent=2, sort_keys=True, default=_json_default)
+    # FIX-D24-PR12: atomic temp+fsync+os.replace via shared helper so the
+    # navmesh descriptor JSON cannot be observed half-written by Unity's
+    # AssetPostprocessor.
+    atomic_write_text(
+        output_path,
+        json.dumps(descriptor, indent=2, sort_keys=True, default=_json_default),
     )
 
     # FIX-B14-P1-23: Unity reads the .bin navmesh asset, not a .obj sidecar.
