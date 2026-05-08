@@ -703,7 +703,10 @@ class TerrainMaskStack:
             "unconformity_mask",
             "intrusion_mask",
             "albedo_shift_rgb",
-            "strata_cross_section",
+            # Phase C D26-27: ``strata_cross_section`` moved to
+            # _OPAQUE_CHANNELS so it is hashed via json.dumps
+            # instead of object-array tobytes() (which leaks Python
+            # object-pointer addresses and breaks determinism).
             # Bundle F AAA cave depth channels (cave system upgrade)
             "cave_depth_hint",
             "cave_underground_depth",
@@ -915,6 +918,11 @@ class TerrainMaskStack:
         "foam_atlas_path",
         "caustic_atlas_path",
         "water_depth_atlas_path",
+        # Phase C D26-27: stratigraphy cross-section is a JSON-serialisable
+        # dict wrapped in a (1,)-shape object array. Hashing via tobytes()
+        # would leak Python object addresses and break replay determinism;
+        # _OPAQUE_CHANNELS routes it through json.dumps(sort_keys=True).
+        "strata_cross_section",
     )
 
     def set(self, channel: str, value: Any, pass_name: str) -> None:

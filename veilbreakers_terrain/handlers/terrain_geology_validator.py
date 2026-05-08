@@ -668,14 +668,35 @@ def register_bundle_i_passes() -> None:
                 "rock_hardness",
                 "strata_orientation",
                 "strat_erosion_delta",
+                # Phase C D26-27 (Task #39): the 3 sediment/bedrock/strata
+                # auxiliary heights ARE written by pass_stratigraphy (lines
+                # 1081-1083 of terrain_stratigraphy.py) but were previously
+                # absent from this registration declaration. They triggered
+                # "wrote undeclared channels" warnings and made cycle/contract
+                # detection blind to them. Declaring them closes the gap so
+                # consumers (terrain_unity_export reads sediment_height +
+                # bedrock_height; _terrain_world reads strat_erosion_delta)
+                # see a registered producer.
+                "sediment_height",
+                "bedrock_height",
+                "strata_height",
                 "unconformity_mask",
                 "intrusion_mask",
                 "albedo_shift_rgb",
                 "strata_cross_section",
             ),
+            # OVERRIDE: when hints.fold_enabled is True (default), the
+            # stratigraphy pass calls simulate_fold_deformation which writes
+            # a folded height back to stack.height. Earlier producers
+            # (macro_world / pass_generate_low_freq_hmap / erosion / composite)
+            # already produced height, so stratigraphy must declare the
+            # overwrite explicitly. Without overrides=("height",) the
+            # ChannelOwnershipError registration check trips at module load.
+            # Phase A D8 deferred this to Phase C; D26-27 lands the fix.
+            overrides=("height",),
             seed_namespace="stratigraphy",
             requires_scene_read=False,
-            description="Bundle I: rock hardness + strata orientation",
+            description="Bundle I: rock hardness + strata orientation + delta",
         )
     )
     TerrainPassController.register_pass(
