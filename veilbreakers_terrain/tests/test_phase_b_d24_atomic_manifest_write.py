@@ -120,6 +120,76 @@ class TestAtomicWriteBytesContract:
         with pytest.raises(FileNotFoundError, match="parent directory"):
             atomic_write_bytes(target, b"data")
 
+    def test_fsync_real_io_error_propagates(self, tmp_path: Path) -> None:
+        """Copilot PR #47: a real fsync I/O error must NOT be silently
+        swallowed.
+
+        Pre-fix behaviour: ``except (AttributeError, OSError): pass``
+        would let an ``OSError(ENOSPC, ...)`` from fsync slip through and
+        the subsequent ``os.replace`` would still fire, producing a
+        manifest file whose contents may not have reached durable
+        storage. The fix discriminates by ``errno``: only "fsync
+        unsupported" classes (EINVAL/ENOTSUP/EOPNOTSUPP/EROFS/EBADF) are
+        tolerated; ENOSPC / EIO / EDQUOT etc. propagate so the caller
+        sees the failure.
+        """
+        import errno as _errno
+
+        target = tmp_path / "out.bin"
+        target.write_bytes(b"PRIOR_CONTENT")
+
+        with _umock.patch(
+            "veilbreakers_terrain.handlers.terrain_io.os.fsync",
+            side_effect=OSError(_errno.ENOSPC, "no space left on device"),
+        ):
+            with pytest.raises(OSError) as excinfo:
+                atomic_write_bytes(target, b"NEW_CONTENT")
+        # Real I/O error surfaced — not silently swallowed.
+        assert excinfo.value.errno == _errno.ENOSPC
+
+        # Prior content untouched (the os.replace must not have run after
+        # a failed fsync).
+        assert target.read_bytes() == b"PRIOR_CONTENT"
+        # No tmp residue.
+        leftover = [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+        assert leftover == [], f"tmp residue: {leftover}"
+
+    def test_fsync_unsupported_errno_is_tolerated(self, tmp_path: Path) -> None:
+        """fsync raising EINVAL (e.g. on a pipe/socket pseudo-handle)
+        must still let the write succeed — we just lose the durability
+        guarantee on that particular fd.
+
+        Mirrors the real-world case of running tests against /dev/null
+        or a tempfs that legitimately doesn't implement fsync. The
+        ``os.replace`` should still fire and the file should be visible.
+        """
+        import errno as _errno
+
+        target = tmp_path / "out.bin"
+        with _umock.patch(
+            "veilbreakers_terrain.handlers.terrain_io.os.fsync",
+            side_effect=OSError(_errno.EINVAL, "fsync not supported"),
+        ):
+            atomic_write_bytes(target, b"PAYLOAD")
+
+        # File written despite the (tolerated) fsync failure.
+        assert target.read_bytes() == b"PAYLOAD"
+        leftover = [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+        assert leftover == []
+
+    def test_fsync_attribute_error_is_tolerated(self, tmp_path: Path) -> None:
+        """Mocked file objects whose ``fileno()`` raises ``AttributeError``
+        (e.g. when the test patches ``os.fsync`` to assume an
+        unconventional argument) must still let the write succeed.
+        """
+        target = tmp_path / "out.bin"
+        with _umock.patch(
+            "veilbreakers_terrain.handlers.terrain_io.os.fsync",
+            side_effect=AttributeError("no fileno"),
+        ):
+            atomic_write_bytes(target, b"PAYLOAD")
+        assert target.read_bytes() == b"PAYLOAD"
+
 
 class TestAtomicWriteTextContract:
     """``atomic_write_text`` encodes utf-8 by default and round-trips."""

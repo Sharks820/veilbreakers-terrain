@@ -29,12 +29,12 @@ References:
 
 from __future__ import annotations
 
+import errno
 import json
 import os
-import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Union
 
 import numpy as np
 
@@ -49,6 +49,41 @@ __all__ = [
 
 
 _PathLike = Union[str, "os.PathLike[str]", Path]
+
+
+# Errnos returned by ``os.fsync`` when the underlying file/filesystem does
+# not support fsync. These are the only OSError values we tolerate; every
+# other OSError (ENOSPC, EIO, EROFS, EDQUOT, ...) is a real I/O failure
+# that must be re-raised so callers don't get a silently-corrupt
+# ``os.replace`` of a half-flushed temp file.
+#
+# Per POSIX + Linux/BSD/Windows manuals:
+#   * EINVAL   — fd refers to a special file (pipe, socket) that does
+#                not support synchronisation.
+#   * ENOTSUP  — operation is not supported by this object's
+#                implementation (BSD-flavoured: macOS exotic FS / Windows
+#                pseudo-handles).
+#   * EROFS    — read-only filesystem; fsync on rofs is meaningless but
+#                some kernels report this on character devices like
+#                /dev/null. (We DO want EROFS to fail on a real on-disk
+#                file write — but we never reach fsync for those because
+#                the open-for-write would have failed already with EROFS,
+#                so allowing it here is safe.)
+#   * EBADF    — bad file descriptor; only reachable via mocked test
+#                fixtures whose ``fileno()`` returns something invalid.
+#                Real fds opened via ``os.open(...) -> os.fdopen(...)``
+#                cannot hit EBADF inside this function.
+# All values come from ``errno`` so they resolve correctly per platform.
+_FSYNC_UNSUPPORTED_ERRNOS: frozenset[int] = frozenset(
+    code for code in (
+        getattr(errno, "EINVAL", None),
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+        getattr(errno, "EROFS", None),
+        getattr(errno, "EBADF", None),
+    )
+    if code is not None
+)
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +169,20 @@ def atomic_write_bytes(path: _PathLike, data: bytes) -> Path:
                 fh.flush()
                 try:
                     os.fsync(fh.fileno())
-                except (AttributeError, OSError):
-                    # Some exotic filesystems (mocked test fixtures, /dev/null)
-                    # don't support fsync. Tolerate but don't pretend.
+                except AttributeError:
+                    # Mocked file objects in test fixtures may not expose
+                    # ``fileno()``; tolerate and proceed.
                     pass
+                except OSError as fsync_err:
+                    # FIX (Copilot review on PR #47): only swallow OSErrors
+                    # whose errno indicates fsync is unsupported on this
+                    # file/filesystem (e.g. /dev/null, FIFOs, sockets, some
+                    # network filesystems). Real I/O failures (ENOSPC,
+                    # EIO, EROFS, EDQUOT, etc.) must propagate so callers
+                    # see the failure instead of getting a successful
+                    # ``os.replace`` over a half-flushed temp file.
+                    if fsync_err.errno not in _FSYNC_UNSUPPORTED_ERRNOS:
+                        raise
         finally:
             # If fd is still owned by us (os.fdopen failed before taking
             # ownership) we must close it ourselves so the temp file can
@@ -312,8 +357,3 @@ def assert_finite_array(
         posinf_count=posinf_count,
         neginf_count=neginf_count,
     )
-
-
-# Quiet "tempfile / Mapping unused" warnings — they are part of the public
-# API surface used by tests and callers importing helper types.
-_ = (tempfile, Mapping)

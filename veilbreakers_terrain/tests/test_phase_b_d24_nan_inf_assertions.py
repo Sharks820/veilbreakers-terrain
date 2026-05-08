@@ -350,6 +350,80 @@ class TestPipelineIntegration:
         result = controller.run_pass("pass_failer", checkpoint=False)
         assert result.status == "failed"
 
+    def test_poisoned_pass_rolls_back_mask_stack(self) -> None:
+        """Codex P2 review on PR #47: when ``assert_finite_array`` fires
+        AFTER a successful ``definition.func`` call, the stack must be
+        rolled back to the pre-pass snapshot before the error is re-raised.
+
+        Otherwise any caller that catches ``FiniteArrayError`` and
+        continues with the same controller would see the poisoned channel
+        still resident in mask_stack — the same hazard the in-pass
+        rollback at lines 718-735 already guards against.
+
+        Contract pinned here:
+          1. The poisoned channel value present mid-pass is NOT visible
+             after the exception is raised.
+          2. A subsequent pass that reads the same channel sees the
+             pre-poison state.
+        """
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_semantics import (
+            PassDefinition,
+            PassResult,
+        )
+
+        state = _make_pipeline_state()
+        # Pre-populate ``slope`` with a known clean value so we can verify
+        # the snapshot restored it post-poison.
+        clean_slope = np.full(state.mask_stack.height.shape, 0.25, dtype=np.float32)
+        state.mask_stack.set("slope", clean_slope, "pre_existing_writer")
+        clean_slope_hash = float(np.asarray(state.mask_stack.get("slope")).sum())
+
+        def _poison(state, region):  # type: ignore[no-untyped-def]
+            stack = state.mask_stack
+            poisoned = np.zeros(stack.height.shape, dtype=np.float32)
+            poisoned[0, 0] = np.nan
+            stack.set("slope", poisoned, "pass_poison")
+            return PassResult(
+                pass_name="pass_poison",
+                status="ok",
+                duration_seconds=0.001,
+                metrics={},
+                seed_used=0,
+            )
+
+        TerrainPassController.register_pass(
+            PassDefinition(
+                name="pass_poison",
+                func=_poison,
+                requires_channels=(),
+                produces_channels=(),
+                overrides=("slope",),
+                seed_namespace="",
+            )
+        )
+
+        controller = TerrainPassController(state)
+        with pytest.raises(FiniteArrayError):
+            controller.run_pass("pass_poison", checkpoint=False)
+
+        # Rollback contract: ``slope`` is back to the clean pre-pass state,
+        # not the poisoned ndarray that was on the stack mid-pass.
+        restored = controller.state.mask_stack.get("slope")
+        assert restored is not None
+        restored_arr = np.asarray(restored)
+        assert np.all(np.isfinite(restored_arr)), (
+            "mask_stack['slope'] still contains NaN after rollback — "
+            "the FiniteArrayError handler did not restore the snapshot"
+        )
+        # And the values match what was on the stack before pass_poison ran.
+        assert float(restored_arr.sum()) == pytest.approx(clean_slope_hash)
+        # Provenance was restored too (pass_poison should not appear).
+        assert (
+            controller.state.mask_stack.populated_by_pass.get("slope")
+            == "pre_existing_writer"
+        )
+
     def test_overrides_channel_also_checked(self) -> None:
         """Channels in ``overrides`` (secondary writers) are checked too.
 
@@ -411,12 +485,18 @@ class TestSourcePin:
         from veilbreakers_terrain.handlers import terrain_pipeline
 
         src = inspect.getsource(terrain_pipeline)
-        # Pyright strict-mode forbids unused imports, so the pipeline only
-        # imports the symbol it actually calls. ``FiniteArrayError`` lives
-        # in terrain_io and is consumed by tests / downstream catchers.
-        assert "from .terrain_io import assert_finite_array" in src, (
+        # Pyright strict-mode forbids unused imports. ``assert_finite_array``
+        # is always imported; ``FiniteArrayError`` is also imported so the
+        # rollback-on-poisoned-channel handler (FIX PR #47 review) can
+        # catch the specific exception type.
+        assert "from .terrain_io import" in src and "assert_finite_array" in src, (
             "terrain_pipeline must import assert_finite_array from terrain_io "
             "(FIX-D24-PR13 regression)"
+        )
+        assert "FiniteArrayError" in src, (
+            "terrain_pipeline must import FiniteArrayError so run_pass can "
+            "roll back the mask_stack snapshot when the finiteness assertion "
+            "fires (FIX PR #47 review)"
         )
 
     def test_run_pass_calls_assert_finite_array(self) -> None:
