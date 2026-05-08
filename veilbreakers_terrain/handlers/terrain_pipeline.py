@@ -227,10 +227,22 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # entry is already populated by the macro/banded/erosion passes
             # earlier in the sequence.
             *(("wind_erosion",) if has_scene_read else ()),
+            # Phase C D26-27 (Task #39 follow-up to Phase A D8-9):
+            # ``stratigraphy`` is the third Bundle I orphan called out by
+            # the R1.5 verifier. Phase A D8 deferred it because its
+            # registration was missing produces_channels for
+            # (sediment_height, bedrock_height, strata_height) and
+            # overrides=("height",) for the fold-deformation overwrite.
+            # Phase C D26-27 closes that gap in register_bundle_i_passes
+            # (terrain_geology_validator.py) and schedules the pass HERE
+            # so its strat_erosion_delta is composed into ``height`` by
+            # ``integrate_deltas``.
+            *(("stratigraphy",) if has_scene_read else ()),
             # Phase C D35: emit derived topographic indices (vb_aspect_deg,
             # vb_aspect_north, vb_canopy_openness, vb_TWI) AFTER erosion/
-            # composite so consumers see post-erosion height-derived values,
-            # and BEFORE foliage/scatter consumers read them.
+            # composite + stratigraphy so consumers see post-erosion
+            # height-derived values, and BEFORE foliage/scatter consumers
+            # read them.
             "topographic_indices",
             # C-7: terrain feature carving before scatter
             "pass_terrain_features",
