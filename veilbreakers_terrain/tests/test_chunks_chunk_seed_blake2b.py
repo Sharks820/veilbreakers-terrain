@@ -79,6 +79,36 @@ def test_chunk_seed_extra_salt_separates_outputs():
     assert b != c
 
 
+def test_chunk_seed_extra_length_validated_before_materialization():
+    """CodeRabbit round-2 fix: ``len(extra)`` is checked BEFORE ``bytes(extra)``.
+
+    Before the fix, a multi-GB ``memoryview`` would crash with
+    ``MemoryError`` during ``bytes(extra)`` materialization before the
+    intended ``ValueError`` could fire.  After the fix, ``len(extra)`` is
+    consulted first (no copy, works on any buffer-protocol object), so
+    the overflow guard raises ``ValueError`` cleanly even for inputs we
+    never want to materialise.
+
+    We simulate the pathological case with a fake buffer-protocol object
+    whose ``__len__`` returns ``1 << 32`` but whose ``__bytes__`` would
+    raise — proving the length check fires first.
+    """
+
+    class _FakeHugeBuffer:
+        def __len__(self) -> int:
+            return 1 << 32  # exactly 4 GiB — boundary case
+
+        def __bytes__(self) -> bytes:  # pragma: no cover — must NOT be reached
+            raise AssertionError(
+                "bytes(extra) was called BEFORE the length check — fix regressed"
+            )
+
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="extra salt too long"):
+        chunk_seed(42, "ns", 0, 0, extra=_FakeHugeBuffer())  # type: ignore[arg-type]
+
+
 def test_chunk_seed_length_prefix_defeats_boundary_collision():
     """Length-prefixing must distinguish payloads whose unframed bytes
     would be byte-identical.
