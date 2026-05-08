@@ -2008,7 +2008,7 @@ def export_unity_manifest(
     written under the ``unity_urp`` top-level manifest key.
     """
     if unity_export_config is None:
-        unity_export_config = UnityExportConfig()
+        unity_export_config = UnityExportConfig.DEFAULT
     # --- Required field validation ---
     missing: List[str] = []
     for field_name in _MANIFEST_REQUIRED_FIELDS:
@@ -2103,8 +2103,15 @@ def export_unity_manifest(
         },
         flip_vertical=True,
     )
+    # Phase D1 — honour the bake-side UnityExportConfig.splatmap_max_layers
+    # cap.  DEFAULT (8GB ship) keeps the historical K=4 truncation; the
+    # AAA_16GB profile lifts the cap to K=8 so 5..8-layer stacks survive
+    # export end-to-end instead of silently losing layers in the writer.
     splatmap_files, splatmap_truncated_layers = _write_splatmap_groups(
-        files, output_dir, stack
+        files,
+        output_dir,
+        stack,
+        max_layers_per_pixel=int(unity_export_config.splatmap_max_layers),
     )
 
     # P1-22: Channels to skip in the generic binary export loop — either handled
@@ -2595,9 +2602,24 @@ def export_unity_manifest(
     # dataclasses to lock specific backend tuning.  The schema is versioned
     # and includes per-backend ``upgrade_compat`` arrays so swapping to e.g.
     # Stylized Water 2 needs only a new C# adapter, no bake-side change.
+    #
+    # When the caller did not pass an explicit ``water_manifest`` but we
+    # computed a real ``water_level_m`` from the stack above, seed the
+    # default WaterSurfaceManifest.elevation_m with that value so the
+    # ``unity_urp.water`` block matches the canonical
+    # ``water_surface_elevation_m`` / ``water_level_unity_units`` fields.
+    # Otherwise nonzero-elevation lakes/rivers would render at sea level
+    # under any runtime adapter that switches to the new unity_urp.water
+    # block.
+    effective_water_manifest = water_manifest
+    if effective_water_manifest is None and water_level_m is not None:
+        effective_water_manifest = WaterSurfaceManifest(
+            backend=unity_export_config.water_backend,
+            elevation_m=float(water_level_m),
+        )
     manifest["unity_urp"] = build_unity_urp_manifest_section(
         config=unity_export_config,
-        water=water_manifest,
+        water=effective_water_manifest,
         sky=sky_manifest,
         atmospheric=atmospheric_manifest,
         upscaler=upscaler_manifest,

@@ -366,7 +366,7 @@ def build_unity_urp_manifest_section(
     not supply an override.  ``config`` controls the render-pipeline header
     fields; defaults to :attr:`UnityExportConfig.DEFAULT`.
     """
-    cfg = config if config is not None else UnityExportConfig()
+    cfg = config if config is not None else UnityExportConfig.DEFAULT
     water_m = water if water is not None else WaterSurfaceManifest(backend=cfg.water_backend)
     sky_m = sky if sky is not None else SkyManifest(backend=cfg.sky_backend)
     atmospheric_m = (
