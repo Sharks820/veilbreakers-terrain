@@ -543,8 +543,8 @@ Repo: github.com/adremeaux/Procedural-Plant-and-Foliage-Generator — Unity URP 
 
 ### PHASE B (Days 16-25) — Determinism, RNG migration, manifest atomicity, splat truncation ⚙️ IN PROGRESS
 - **D16:** PR #9 vectorize road SDF via scipy EDT. ✅ DONE via PR #34.
-- **D17-18:** PR #15.5 + #14 chunk_seed module + derive_pass_seed unification across `terrain_rng` ↔ `terrain_pipeline`. ⚙️ PR #41 OPEN — auto-merge enabled, all 4 local pre-push gates clean.
-- **D19-22:** PR #18 RNG migration — 179 sites (100 production + 79 test) replace `random.Random(seed)` with `derive_pass_seed`. XL parallel job. ⚙️ Bug-E (14 sites in terrain_features.py) PR #42 OPEN — auto-merge enabled. Bulk migration (32 sites / 12 files) PR #43 OPEN — auto-merge enabled. All 4 local gates clean on both.
+- **D17-18:** PR #15.5 + #14 chunk_seed module + derive_pass_seed unification across `terrain_rng` ↔ `terrain_pipeline`. ✅ PR #41 MERGED 2026-05-08T07:21:58Z (commit `4e12f50` on main).
+- **D19-22:** PR #18 RNG migration — 179 sites (100 production + 79 test) replace `random.Random(seed)` with `derive_pass_seed`. XL parallel job. ✅ Bug-E (14 sites in terrain_features.py) PR #42 MERGED 2026-05-08T08:11:53Z. ✅ Bulk migration (32 sites / 12 files) PR #43 MERGED 2026-05-08T08:37:53Z (commit `c922d1f` on main).
 - **D23:** PR #15 4 hash hazards. ✅ DONE via PR #44 (6 sites — spec said 4, found 6).
 - **D24:** PR #12 atomic manifest + descriptor write + #13 NaN/Inf assertions. ⚙️ Implementation in flight (D24 worktree, fresh).
 - **D25:** B15-P0-07 splatmap L>4 truncation. **GATE D25** = subprocess-determinism CI matrix passes 18/18 (3 OS × 3 Py × 2 seed-seq). ⚙️ Implementation in flight (D25 worktree, fresh).

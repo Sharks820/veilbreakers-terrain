@@ -39,8 +39,8 @@ progress:
 | Day | Item | PR | Status |
 |-----|------|----|--------|
 | D17-18 | chunk_seed BLAKE2b + Bug-A unification | #41 | ✅ MERGED |
-| D19 (Bug-E) | terrain_features.py 14 RNG sites → derive_pass_seed | #42 | ⚙️ OPEN, auto-merge enabled |
-| D20-22 | Bulk RNG migration 32 sites / 12 files | #43 | ⚙️ OPEN, auto-merge enabled |
+| D19 (Bug-E) | terrain_features.py 14 RNG sites → derive_pass_seed | #42 | ✅ MERGED |
+| D20-22 | Bulk RNG migration 32 sites / 12 files | #43 | ✅ MERGED |
 | D23 | 6 hash hazards → derive_pass_seed | #44 | ✅ MERGED |
 | D24 | Atomic manifest writes + NaN/Inf assertions | TBD | ⚙️ Implementation in flight (subagent) |
 | D25 + GATE D25 | B15-P0-07 splatmap L>4 truncation + subprocess-determinism CI matrix | TBD | ⚙️ Implementation in flight (subagent) |
@@ -48,7 +48,7 @@ progress:
 ### Phase C-E
 
 - Phase C (D26-35): orphan-pass wiring + label-stamping + stream cap. NOT STARTED.
-- Phase D (D36-45): Unity ingestion + Block 5a visual gate. **BLOCKED BY 4 USER DECISIONS** (water/clouds/fog/upscaler) for HDRP→URP rewrite.
+- Phase D (D36-45): Unity ingestion + Block 5a visual gate. **BLOCKED BY 4 USER DECISIONS** for the URP swap PR (separate from this doc PR): water backend (HDRP WaterSurface vs URP Crest/Stylized Water 2/Boat Attack), clouds (HDRP Volumetric Clouds vs URP custom Worley raymarch), fog (HDRP Local Volumetric Fog vs URP custom volumetric or fallback height fog), upscaler (DLSS 4.5 SR vs FSR 3.1 vs XeSS — STP is URP-supported but lower quality). Until those are answered, IMPLEMENTATION_FIX_GUIDE retains HDRP-era language; URP is the committed target per 2026-05-07 fleet audit.
 - Phase E (D46-60): Performance, atmosphere, audio, hero render. NOT STARTED.
 
 ## Mandatory Pre-Push Verifier Workflow
@@ -87,7 +87,7 @@ Before EVERY push, run all 4 local gates:
 
 - **Tests passing:** 3,667 / 0 failed (after FIX_ORDER_CODEX sweep)
 - **Branch:** docs/biome-render-rebuild-spec (current working branch)
-- **Main HEAD:** `5185137` (PR #44 merge) — pending PR #41 squash merge as of 2026-05-08T07:21:58Z
+- **Main HEAD:** `c922d1f` (PR #43 merge, 2026-05-08T08:37:53Z). PRs #41/#42/#43/#44 all merged on main as of 2026-05-08.
 
 ## Phase 14 Legacy Session (2026-04-19, preserved)
 
