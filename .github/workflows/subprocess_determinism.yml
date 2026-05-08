@@ -66,11 +66,15 @@ jobs:
         # The harness exits 0 only when both subprocess bakes produce
         # byte-identical SHA-256 hashes.  Exit 1 on divergence, exit 2
         # on configuration error.
+        # ``shell: bash`` is REQUIRED because windows-latest defaults to
+        # PowerShell which mis-parses backslash line continuations as
+        # unary operators (``Missing expression after unary operator '--'``).
         env:
           # Pin PYTHONHASHSEED to 0 so the bake is reproducible across runs.
           # The harness itself spawns fresh subprocesses inside this env so
           # both child interpreters inherit the same hash seed.
           PYTHONHASHSEED: "0"
+        shell: bash
         run: |
           python -m veilbreakers_terrain.deterministic_bake_harness \
             --seed=${{ matrix.seed-seq }} \
