@@ -1856,8 +1856,10 @@ def register_default_passes(*, strict: bool = False) -> None:
     # vb_aspect_north / vb_canopy_openness / vb_TWI from height (post-erosion,
     # post-composite). Foliage / scatter consumers read them via
     # optional_channels declarations.
-    from .terrain_topographic_indices import register_topographic_indices_pass
-    register_topographic_indices_pass()
+    # Use the broker pattern (PassDefinition factory) so terrain_topographic_indices
+    # never has to import terrain_pipeline — avoids CodeQL static cycle.
+    from .terrain_topographic_indices import topographic_indices_pass_definition
+    TerrainPassController.register_pass(topographic_indices_pass_definition())
     from ._biome_grammar import register_biome_surface_features_pass
     register_biome_surface_features_pass()
     # pass_seasonal_water_state registers AFTER Bundle O/I in terrain_master_registrar

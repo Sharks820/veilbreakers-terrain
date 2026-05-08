@@ -355,34 +355,47 @@ def pass_topographic_indices(
 # ---------------------------------------------------------------------------
 
 
+def topographic_indices_pass_definition() -> PassDefinition:
+    """Return the canonical PassDefinition for topographic_indices.
+
+    Built without importing terrain_pipeline so this module has zero
+    dependency on the pipeline (PassDefinition lives in terrain_semantics).
+    The pipeline is the registration broker — it imports this constructor
+    and calls TerrainPassController.register_pass() itself. Avoids the
+    static CodeQL cycle that lazy-importing terrain_pipeline didn't break.
+    """
+    return PassDefinition(
+        name="topographic_indices",
+        func=pass_topographic_indices,
+        requires_channels=("height",),
+        optional_channels=("flow_accumulation",),
+        produces_channels=(
+            "vb_aspect_deg",
+            "vb_aspect_north",
+            "vb_canopy_openness",
+            "vb_TWI",
+        ),
+        seed_namespace="topographic_indices",
+        requires_scene_read=False,
+        may_modify_geometry=False,
+        supports_region_scope=False,
+        description=(
+            "Phase C D35: emit vb_aspect_deg / vb_aspect_north / "
+            "vb_canopy_openness / vb_TWI from heightmap so foliage / "
+            "scatter consumers can read them per spec §3.5 / §4.2."
+        ),
+    )
+
+
 def register_topographic_indices_pass() -> None:
-    """Register pass_topographic_indices on TerrainPassController (Phase C D35)."""
-    # Local import — see module-top NOTE on cycle avoidance.
+    """Legacy registrar — terrain_pipeline.register_default_passes now uses
+    ``topographic_indices_pass_definition()`` directly to avoid the CodeQL
+    cycle. This function remains for any external callers that imported it.
+    """
+    # Local import — only reached when an external caller invokes this.
     from .terrain_pipeline import TerrainPassController
 
-    TerrainPassController.register_pass(
-        PassDefinition(
-            name="topographic_indices",
-            func=pass_topographic_indices,
-            requires_channels=("height",),
-            optional_channels=("flow_accumulation",),
-            produces_channels=(
-                "vb_aspect_deg",
-                "vb_aspect_north",
-                "vb_canopy_openness",
-                "vb_TWI",
-            ),
-            seed_namespace="topographic_indices",
-            requires_scene_read=False,
-            may_modify_geometry=False,
-            supports_region_scope=False,
-            description=(
-                "Phase C D35: emit vb_aspect_deg / vb_aspect_north / "
-                "vb_canopy_openness / vb_TWI from heightmap so foliage / "
-                "scatter consumers can read them per spec §3.5 / §4.2."
-            ),
-        )
-    )
+    TerrainPassController.register_pass(topographic_indices_pass_definition())
 
 
 __all__ = [
