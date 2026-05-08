@@ -90,7 +90,7 @@ def poisson_disk_sample(
         def _rand_int(lo: int, hi: int) -> int:
             return int(np_rng.integers(lo, hi + 1))
     else:
-        _py_rng = random.Random(derive_pass_seed(seed, "scatter_engine.poisson_disk_sample.py_rng", 0, 0, None))
+        _py_rng = random.Random(derive_pass_seed(seed, "scatter_engine.poisson_disk_sample.py_rng", 0, 0, ""))
         def _rand_uniform(lo: float, hi: float) -> float:
             return _py_rng.uniform(lo, hi)
         def _rand_int(lo: int, hi: int) -> int:
@@ -409,7 +409,7 @@ def biome_filter_points(
     """
     import math as _math
 
-    rng = random.Random(derive_pass_seed(seed, "scatter_engine.biome_filter_points", 0, 0, None))
+    rng = random.Random(derive_pass_seed(seed, "scatter_engine.biome_filter_points", 0, 0, ""))
     placements: list[dict[str, Any]] = []
     rows, cols = heightmap.shape
     width = max(float(terrain_width if terrain_width is not None else terrain_size), 1e-9)
@@ -699,7 +699,7 @@ def context_scatter(
         Placement dicts with: type, position, rotation, scale,
         affinity_source ("building"|"generic"), edt_zone (float exclusion dist).
     """
-    rng = random.Random(derive_pass_seed(seed, "scatter_engine.context_scatter", 0, 0, None))
+    rng = random.Random(derive_pass_seed(seed, "scatter_engine.context_scatter", 0, 0, ""))
 
     # min_distance inversely proportional to density.
     # scalar=0.9 gives ~3m separation at prop_density=0.3 (moderate density).
@@ -995,7 +995,7 @@ def generate_breakable_variants(
             f"Valid types: {sorted(BREAKABLE_PROPS.keys())}"
         )
 
-    rng = random.Random(derive_pass_seed(seed, "scatter_engine.generate_breakable_variants", 0, 0, None))
+    rng = random.Random(derive_pass_seed(seed, "scatter_engine.generate_breakable_variants", 0, 0, ""))
     config = BREAKABLE_PROPS[prop_type]
     geom = config["geometry"]
     mat = config["material"]
@@ -1270,7 +1270,7 @@ def edge_scatter(
     list of (x, y, angle_deg) tuples
         x, y = world position; angle_deg = edge tangent direction in degrees.
     """
-    rng = random.Random(derive_pass_seed(seed, "scatter_engine.edge_scatter", 0, 0, None))
+    rng = random.Random(derive_pass_seed(seed, "scatter_engine.edge_scatter", 0, 0, ""))
     results: list[tuple[float, float, float]] = []
     accumulated = 0.0
 
