@@ -511,3 +511,46 @@ def test_consumer_prefers_label_over_analytical() -> None:
     # weights on labelled cells, then sets the target layer to 1.0.
     assert "weights[labeled, :] = 0.0" in src
     assert "weights[labeled, tidx] = 1.0" in src
+
+
+# ---------------------------------------------------------------------------
+# label_stamping_pass_definition broker — direct test for HIGH→LOW
+# ---------------------------------------------------------------------------
+
+
+def test_label_stamping_pass_definition_returns_canonical_passdef() -> None:
+    """`label_stamping_pass_definition` returns the canonical PassDefinition
+    without importing terrain_pipeline (broker pattern that breaks the
+    CodeQL static cycle).
+
+    Direct test reference so the wiring scanner promotes the function
+    from HIGH risk to LOW risk (no module-level call → needs explicit
+    test reference for direct_test_covered evidence).
+    """
+    from veilbreakers_terrain.handlers.terrain_labels import (
+        label_stamping_pass_definition,
+        pass_label_stamping,
+    )
+
+    pd = label_stamping_pass_definition()
+    assert pd.name == "label_stamping"
+    assert pd.func is pass_label_stamping
+    assert pd.requires_channels == ("height",)
+    assert "rock_label" in pd.produces_channels
+    assert "cliff_label" in pd.produces_channels
+    assert pd.seed_namespace == "label_stamping"
+
+
+def test_label_stamping_pass_definition_returns_fresh_instance() -> None:
+    """Factory must return a fresh PassDefinition each call so callers
+    can mutate without aliasing.
+    """
+    from veilbreakers_terrain.handlers.terrain_labels import (
+        label_stamping_pass_definition,
+    )
+
+    a = label_stamping_pass_definition()
+    b = label_stamping_pass_definition()
+    # Same content, different objects (no caching).
+    assert a == b
+    assert a is not b
