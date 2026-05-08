@@ -24,8 +24,19 @@ name: subprocess-determinism
 on:
   push:
     branches: ["**"]
+    # Hardening PR B Fix #12 (VC finding): docs-only PRs should not pay
+    # the 18-cell matrix cost — skip when only documentation / planning
+    # artifacts changed.
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.planning/**'
   pull_request:
     branches: ["main", "master"]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.planning/**'
 
 # Permissions: read-only — this workflow does not write artefacts back to
 # the repo.  CodeQL and other static analyses ignore this file.
@@ -34,7 +45,7 @@ permissions:
 
 jobs:
   cell:
-    name: cell (${{ matrix.os }} / py${{ matrix.python-version }} / seed=${{ matrix.seed-seq }}${{ matrix.randomized_hashseed && ' / randomized_hashseed' || '' }})
+    name: cell (${{ matrix.os }} / py${{ matrix.python-version }} / seed=${{ matrix.seed-seq }}${{ matrix.randomized_hashseed && ' / randomized_hashseed' || '' }}${{ matrix.strict_provenance && ' / strict_provenance' || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -61,6 +72,17 @@ jobs:
             python-version: "3.12"
             seed-seq: 42
             randomized_hashseed: true
+            strict_provenance: false
+          # Hardening PR B Fix #12 (VC finding): 20th observability cell
+          # with TERRAIN_STRICT_PROVENANCE=1 to surface provenance-channel
+          # corruption that the standard 18 cells silently tolerate.  Like
+          # the 19th randomized-hashseed cell, this is non-blocking — a
+          # divergence here produces a follow-up issue, not a merge block.
+          - os: ubuntu-latest
+            python-version: "3.12"
+            seed-seq: 42
+            randomized_hashseed: false
+            strict_provenance: true
 
     steps:
       - name: Checkout
@@ -74,9 +96,26 @@ jobs:
       - name: Install project (no dev extras — keep CI surface narrow)
         # We only need the runtime package + numpy to invoke the harness.
         # Skipping ``[dev]`` shaves ~30s per cell × 18 cells = ~9 min.
+        # Hardening PR B Fix #12 (VC finding): wrap pip install in a
+        # retry-on-flake loop so transient PyPI 503s / connection resets
+        # (common on 18 simultaneous matrix cells) don't cascade to a
+        # false GATE D25 failure.  2 retries with exponential backoff is
+        # the same shape as nick-fields/retry@v3 default config.
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          for attempt in 1 2 3; do
+            if pip install -e .; then
+              echo "pip install -e . succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "pip install -e . failed on attempt $attempt"
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          echo "::error::pip install -e . failed after 3 attempts"
+          exit 1
 
       - name: Run subprocess-determinism harness (fixed PYTHONHASHSEED=0)
         # The harness exits 0 only when both subprocess bakes produce
@@ -85,13 +124,34 @@ jobs:
         # ``shell: bash`` is REQUIRED because windows-latest defaults to
         # PowerShell which mis-parses backslash line continuations as
         # unary operators (``Missing expression after unary operator '--'``).
-        if: ${{ !matrix.randomized_hashseed }}
+        if: ${{ !matrix.randomized_hashseed && !matrix.strict_provenance }}
         env:
           # Pin PYTHONHASHSEED to 0 so the bake is reproducible across runs.
           # The harness itself spawns fresh subprocesses inside this env so
           # both child interpreters inherit the same hash seed.  This is
           # the 18-cell GATE D25 lane.
           PYTHONHASHSEED: "0"
+        shell: bash
+        run: |
+          python -m veilbreakers_terrain.deterministic_bake_harness \
+            --seed=${{ matrix.seed-seq }} \
+            --tile=0,0 \
+            --runs=2 \
+            --size=32
+
+      - name: Run subprocess-determinism harness (strict-provenance — observability)
+        # Hardening PR B Fix #12 (VC finding): 20th observability cell.
+        # Sets TERRAIN_STRICT_PROVENANCE=1 to surface provenance-channel
+        # corruption that the standard 18 fixed-seed cells silently
+        # tolerate.  Non-blocking via ``continue-on-error`` so a strict-
+        # provenance divergence is logged but does not fail the
+        # ``subprocess-determinism (18/18)`` summary gate.  When this lane
+        # goes red we file a follow-up issue rather than block merges.
+        if: ${{ matrix.strict_provenance }}
+        env:
+          PYTHONHASHSEED: "0"
+          TERRAIN_STRICT_PROVENANCE: "1"
+        continue-on-error: true
         shell: bash
         run: |
           python -m veilbreakers_terrain.deterministic_bake_harness \

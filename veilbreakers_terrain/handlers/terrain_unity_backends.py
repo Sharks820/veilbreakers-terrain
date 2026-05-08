@@ -3,7 +3,7 @@
 This module defines the bake-side schema for Unity URP runtime backends.  The
 bake writes manifests using these versioned dataclasses; runtime adapters in
 the Unity C# project translate the manifest fields into backend-specific
-parameters (Boat Attack water material, skybox cubemap, FSR 3.1 upscaler, etc).
+parameters (Boat Attack water material, skybox cubemap, STP 1.0 upscaler, etc).
 
 Plug-and-play architecture:
 
@@ -23,17 +23,125 @@ Phase D1 of the §17 60-day plan locks four FREE URP-default backends:
   Slot          Default backend        Compatible alternates (upgrade_compat)
   ============  =====================  =========================================
   water         boat_attack            stylized_water_2, crest_5, hand_authored_urp
-  sky           skybox_cubemap         volume_cloud_urp, volumetric_clouds_native
-  fog           urp_fog_volume_plus_   atmospheric_height_fog,
-                cards                  volumetric_fog_native
-  upscaler      fsr_3_1                dlss_4_5, stp_native, off
+  sky           skybox_cubemap         volume_cloud_urp
+  fog           urp_fog_volume_plus_   atmospheric_height_fog
+                cards
+  upscaler      stp_1_0                fsr_1_0, fsr_3_1, dlss_4_5, off
   ============  =====================  =========================================
+
+Hardening PR B (2026-05-08): Default upscaler changed from ``fsr_3_1`` (which
+is an external ``FSR3-Unity-URP`` package) to ``stp_1_0``, which ships
+natively with URP 17.3.  ``volumetric_clouds_native`` and
+``volumetric_fog_native`` were dropped from upgrade_compat because URP has no
+roadmap for native volumetric anything as of 17.3.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, Tuple
+
+
+# ---------------------------------------------------------------------------
+# BACKEND_REGISTRY (Hardening PR B Fix #2 — V2 finding)
+# ---------------------------------------------------------------------------
+# Module-level constants enumerate every backend string a manifest's
+# ``backend`` field or ``upgrade_compat`` entry may legitimately hold.  Each
+# manifest's ``__post_init__`` validates against the matching registry tuple.
+
+WATER_BACKENDS: tuple[str, ...] = (
+    "boat_attack",
+    "stylized_water_2",
+    "crest_5",
+    "hand_authored_urp",
+)
+SKY_BACKENDS: tuple[str, ...] = (
+    "skybox_cubemap",
+    "volume_cloud_urp",
+)
+FOG_BACKENDS: tuple[str, ...] = (
+    "urp_fog_volume_plus_cards",
+    "atmospheric_height_fog",
+)
+UPSCALER_BACKENDS: tuple[str, ...] = (
+    "stp_1_0",
+    "fsr_1_0",
+    "fsr_3_1",
+    "dlss_4_5",
+    "off",
+)
+
+BACKEND_REGISTRY: dict[str, tuple[str, ...]] = {
+    "water": WATER_BACKENDS,
+    "sky": SKY_BACKENDS,
+    "fog": FOG_BACKENDS,
+    "upscaler": UPSCALER_BACKENDS,
+}
+
+
+# ---------------------------------------------------------------------------
+# Schema version enforcement (Hardening PR B Fix #3 — V2 finding)
+# ---------------------------------------------------------------------------
+# Bake-side build understands schema_version major v1 only.  Future v2.x
+# bakes must explicitly bump _SCHEMA_MAJOR_VERSION here AND every
+# corresponding runtime adapter.  Minor bumps (1.0 → 1.99) are silently
+# accepted to preserve forward-compat: a bake that reads a 1.99 manifest
+# from a future release just reads only the v1.x fields it knows about.
+
+_SCHEMA_MAJOR_VERSION = "1"
+
+
+def _check_major(version: str) -> None:
+    """Raise ValueError if ``version`` major component != ``_SCHEMA_MAJOR_VERSION``.
+
+    Forward-compat is preserved: minor bumps within v1.x are accepted.  A
+    leading ``v`` prefix is tolerated so callers may pass either ``"1.0"``
+    or ``"v1.0"``.
+    """
+    cleaned = str(version).lstrip("v")
+    major = cleaned.split(".", 1)[0]
+    if major != _SCHEMA_MAJOR_VERSION:
+        raise ValueError(
+            f"manifest schema major mismatch: got v{major}, this build "
+            f"understands v{_SCHEMA_MAJOR_VERSION}.x only"
+        )
+
+
+def _validate_backend(slot: str, backend: str) -> None:
+    """Validate ``backend`` is in the canonical registry for ``slot``.
+
+    ``slot`` is one of ``water``, ``sky``, ``fog``, ``upscaler``.  Raises
+    ValueError on mismatch with the canonical list spelled out for clarity.
+    """
+    canonical = BACKEND_REGISTRY[slot]
+    if backend not in canonical:
+        raise ValueError(
+            f"{slot} backend {backend!r} not in canonical registry "
+            f"{canonical!r}; add to {slot.upper()}_BACKENDS in "
+            "terrain_unity_backends.py and register a runtime adapter."
+        )
+
+
+def _validate_upgrade_compat(
+    slot: str, backend: str, upgrade_compat: Tuple[str, ...]
+) -> None:
+    """Validate every upgrade_compat entry against the registry.
+
+    Also rejects self-references (a backend listing itself as an alt is a
+    bug — alts are by definition *other* backends).
+    """
+    canonical = BACKEND_REGISTRY[slot]
+    for alt in upgrade_compat:
+        if alt not in canonical:
+            raise ValueError(
+                f"{slot} upgrade_compat entry {alt!r} not in canonical "
+                f"registry {canonical!r}"
+            )
+        if alt == backend:
+            raise ValueError(
+                f"{slot} upgrade_compat must not list the active backend "
+                f"{backend!r} as its own alternate (recursive self-reference)"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +173,13 @@ class WaterSurfaceManifest:
         "hand_authored_urp",
     )
 
+    def __post_init__(self) -> None:
+        # Hardening PR B Fix #2 — V2 finding: validate backend + upgrade_compat
+        # at construction time so wrong values die loudly here rather than
+        # silently in the runtime adapter on the Unity side.
+        _validate_backend("water", self.backend)
+        _validate_upgrade_compat("water", self.backend, self.upgrade_compat)
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a JSON-safe dict (tuples become lists)."""
         return {
@@ -81,9 +196,16 @@ class WaterSurfaceManifest:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "WaterSurfaceManifest":
-        """Reconstruct from a dict produced by :meth:`to_dict`."""
+        """Reconstruct from a dict produced by :meth:`to_dict`.
+
+        Hardening PR B Fix #3: rejects manifests whose schema_version's
+        major component does not match this build's ``_SCHEMA_MAJOR_VERSION``.
+        Minor bumps (1.0 → 1.99) are accepted (forward-compat).
+        """
+        version = str(d.get("schema_version", "1.0"))
+        _check_major(version)
         return cls(
-            schema_version=str(d.get("schema_version", "1.0")),
+            schema_version=version,
             backend=str(d.get("backend", "boat_attack")),
             elevation_m=float(d.get("elevation_m", 0.0)),
             wave_amplitude_m=float(d.get("wave_amplitude_m", 0.5)),
@@ -109,11 +231,15 @@ class WaterSurfaceManifest:
 class SkyManifest:
     """Backend-agnostic sky manifest.
 
-    Fields are the intersection of skybox cubemap, URP volumetric cloud
-    component (Volume Cloud URP), and the native URP 17 volumetric cloud
-    pass.  ``cloud_density`` is 0 for cubemap backends and >0 for
-    volumetric cloud backends; the runtime adapter is responsible for
-    mapping non-zero density to its preferred volumetric noise.
+    Fields are the intersection of skybox cubemap and the URP volumetric
+    cloud component (Volume Cloud URP).  ``cloud_density`` is 0 for cubemap
+    backends and >0 for volumetric cloud backends; the runtime adapter is
+    responsible for mapping non-zero density to its preferred volumetric
+    noise.
+
+    Hardening PR B Fix #9 (V2 + VD finding): ``volumetric_clouds_native``
+    was removed from upgrade_compat — URP has no native volumetric cloud
+    pass roadmap as of 17.3 (only HDRP does).
     """
 
     schema_version: str = "1.0"
@@ -124,8 +250,11 @@ class SkyManifest:
     cloud_density: float = 0.0
     upgrade_compat: Tuple[str, ...] = (
         "volume_cloud_urp",
-        "volumetric_clouds_native",
     )
+
+    def __post_init__(self) -> None:
+        _validate_backend("sky", self.backend)
+        _validate_upgrade_compat("sky", self.backend, self.upgrade_compat)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -140,6 +269,8 @@ class SkyManifest:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "SkyManifest":
+        version = str(d.get("schema_version", "1.0"))
+        _check_major(version)
         quat = d.get("sun_rotation_quat", (0.0, 0.0, 0.0, 1.0))
         quat_tuple: Tuple[float, float, float, float] = (
             float(quat[0]),
@@ -148,7 +279,7 @@ class SkyManifest:
             float(quat[3]),
         )
         return cls(
-            schema_version=str(d.get("schema_version", "1.0")),
+            schema_version=version,
             backend=str(d.get("backend", "skybox_cubemap")),
             cubemap_path=str(d.get("cubemap_path", "")),
             time_of_day_hour=float(d.get("time_of_day_hour", 14.0)),
@@ -157,7 +288,7 @@ class SkyManifest:
             upgrade_compat=tuple(
                 str(x) for x in d.get(
                     "upgrade_compat",
-                    ("volume_cloud_urp", "volumetric_clouds_native"),
+                    ("volume_cloud_urp",),
                 )
             ),
         )
@@ -176,6 +307,10 @@ class AtmosphericManifest:
     that the runtime adapter samples to drive the URP Fog Volume override
     or an Atmospheric Height Fog billboard pass.  ``fog_color_ramp_path``
     is an optional reference to a 1D LUT texture asset baked separately.
+
+    Hardening PR B Fix #9 (V2 + VD finding): ``volumetric_fog_native`` was
+    removed from upgrade_compat — URP has no native volumetric fog
+    roadmap as of 17.3.
     """
 
     schema_version: str = "1.0"
@@ -189,8 +324,11 @@ class AtmosphericManifest:
     wind_direction_xyz: Tuple[float, float, float] = (0.7, 0.0, 0.7)
     upgrade_compat: Tuple[str, ...] = (
         "atmospheric_height_fog",
-        "volumetric_fog_native",
     )
+
+    def __post_init__(self) -> None:
+        _validate_backend("fog", self.backend)
+        _validate_upgrade_compat("fog", self.backend, self.upgrade_compat)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -207,6 +345,8 @@ class AtmosphericManifest:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "AtmosphericManifest":
+        version = str(d.get("schema_version", "1.0"))
+        _check_major(version)
         curve_raw = d.get(
             "height_density_curve",
             [[0.0, 0.8], [50.0, 0.4], [200.0, 0.05]],
@@ -221,7 +361,7 @@ class AtmosphericManifest:
             float(wind[2]),
         )
         return cls(
-            schema_version=str(d.get("schema_version", "1.0")),
+            schema_version=version,
             backend=str(d.get("backend", "urp_fog_volume_plus_cards")),
             height_density_curve=curve_tuple,
             fog_color_ramp_path=str(d.get("fog_color_ramp_path", "")),
@@ -229,7 +369,7 @@ class AtmosphericManifest:
             upgrade_compat=tuple(
                 str(x) for x in d.get(
                     "upgrade_compat",
-                    ("atmospheric_height_fog", "volumetric_fog_native"),
+                    ("atmospheric_height_fog",),
                 )
             ),
         )
@@ -249,17 +389,27 @@ class UpscalerManifest:
     texture detail crisp under upscaling.  Runtime adapters translate the
     quality string to backend-specific render-scale ratios (FSR 3.1 native
     AA = 1.0, balanced = 0.59, etc).
+
+    Hardening PR B Fix #1 (VA + VD critical bug): default backend changed
+    from ``fsr_3_1`` (external ``FSR3-Unity-URP`` package) to ``stp_1_0``,
+    which ships natively with URP 17.3.  FSR 3.1 / DLSS 4.5 are now
+    upgrade-side alternates; FSR 1.0 is the legacy fallback.
     """
 
     schema_version: str = "1.0"
-    backend: str = "fsr_3_1"
+    backend: str = "stp_1_0"
     quality: str = "balanced"
     mip_bias: float = -1.0
     upgrade_compat: Tuple[str, ...] = (
+        "fsr_3_1",
+        "fsr_1_0",
         "dlss_4_5",
-        "stp_native",
         "off",
     )
+
+    def __post_init__(self) -> None:
+        _validate_backend("upscaler", self.backend)
+        _validate_upgrade_compat("upscaler", self.backend, self.upgrade_compat)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -272,15 +422,17 @@ class UpscalerManifest:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "UpscalerManifest":
+        version = str(d.get("schema_version", "1.0"))
+        _check_major(version)
         return cls(
-            schema_version=str(d.get("schema_version", "1.0")),
-            backend=str(d.get("backend", "fsr_3_1")),
+            schema_version=version,
+            backend=str(d.get("backend", "stp_1_0")),
             quality=str(d.get("quality", "balanced")),
             mip_bias=float(d.get("mip_bias", -1.0)),
             upgrade_compat=tuple(
                 str(x) for x in d.get(
                     "upgrade_compat",
-                    ("dlss_4_5", "stp_native", "off"),
+                    ("fsr_3_1", "fsr_1_0", "dlss_4_5", "off"),
                 )
             ),
         )
@@ -317,7 +469,9 @@ class UnityExportConfig:
     water_backend: str = "boat_attack"
     sky_backend: str = "skybox_cubemap"
     fog_backend: str = "urp_fog_volume_plus_cards"
-    upscaler_backend: str = "fsr_3_1"
+    # Hardening PR B Fix #1: default is now the URP-native STP 1.0, not
+    # the external FSR3-Unity-URP package.
+    upscaler_backend: str = "stp_1_0"
 
     # Legacy: emit hdrp_mask_map.raw alongside material_mask_map.raw so
     # existing Unity scenes that still read the old filename keep working.
@@ -329,6 +483,15 @@ class UnityExportConfig:
     # these are class attributes, not instance fields.
     DEFAULT: ClassVar["UnityExportConfig"]
     AAA_16GB: ClassVar["UnityExportConfig"]
+
+    def __post_init__(self) -> None:
+        # Hardening PR B Fix #2: validate per-slot backend strings against
+        # BACKEND_REGISTRY so a typo in the bake config dies here rather
+        # than silently producing an unloadable manifest.
+        _validate_backend("water", self.water_backend)
+        _validate_backend("sky", self.sky_backend)
+        _validate_backend("fog", self.fog_backend)
+        _validate_backend("upscaler", self.upscaler_backend)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -367,16 +530,43 @@ def build_unity_urp_manifest_section(
     fields; defaults to :attr:`UnityExportConfig.DEFAULT`.
     """
     cfg = config if config is not None else UnityExportConfig()
-    water_m = water if water is not None else WaterSurfaceManifest(backend=cfg.water_backend)
-    sky_m = sky if sky is not None else SkyManifest(backend=cfg.sky_backend)
-    atmospheric_m = (
-        atmospheric if atmospheric is not None
-        else AtmosphericManifest(backend=cfg.fog_backend)
-    )
-    upscaler_m = (
-        upscaler if upscaler is not None
-        else UpscalerManifest(backend=cfg.upscaler_backend)
-    )
+
+    # Hardening PR B Fix #2: when the caller hasn't provided an explicit
+    # manifest, instantiate the default for the chosen backend AND filter
+    # the canonical upgrade_compat tuple so the active backend never
+    # appears as its own alternate (recursive self-reference is rejected
+    # by __post_init__).
+    def _alts_for(slot: str, active: str) -> Tuple[str, ...]:
+        return tuple(b for b in BACKEND_REGISTRY[slot] if b != active)
+
+    if water is not None:
+        water_m = water
+    else:
+        water_m = WaterSurfaceManifest(
+            backend=cfg.water_backend,
+            upgrade_compat=_alts_for("water", cfg.water_backend),
+        )
+    if sky is not None:
+        sky_m = sky
+    else:
+        sky_m = SkyManifest(
+            backend=cfg.sky_backend,
+            upgrade_compat=_alts_for("sky", cfg.sky_backend),
+        )
+    if atmospheric is not None:
+        atmospheric_m = atmospheric
+    else:
+        atmospheric_m = AtmosphericManifest(
+            backend=cfg.fog_backend,
+            upgrade_compat=_alts_for("fog", cfg.fog_backend),
+        )
+    if upscaler is not None:
+        upscaler_m = upscaler
+    else:
+        upscaler_m = UpscalerManifest(
+            backend=cfg.upscaler_backend,
+            upgrade_compat=_alts_for("upscaler", cfg.upscaler_backend),
+        )
     return {
         "schema_version": cfg.schema_version,
         "render_pipeline": {
@@ -390,11 +580,22 @@ def build_unity_urp_manifest_section(
     }
 
 
+# Re-export the unused ``field`` import path so future schema additions
+# referencing ``dataclasses.field(default_factory=...)`` don't have to add a
+# fresh import line.
+_ = field
+
+
 __all__ = [
     "WaterSurfaceManifest",
     "SkyManifest",
     "AtmosphericManifest",
     "UpscalerManifest",
     "UnityExportConfig",
+    "BACKEND_REGISTRY",
+    "WATER_BACKENDS",
+    "SKY_BACKENDS",
+    "FOG_BACKENDS",
+    "UPSCALER_BACKENDS",
     "build_unity_urp_manifest_section",
 ]

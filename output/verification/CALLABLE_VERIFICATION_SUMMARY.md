@@ -2,125 +2,20 @@
 
 This report treats grade rows as claims, not proof. A callable needs executable evidence.
 
-- Total callables: 1874
-- Blockers: 136
+- Total callables: 1900
+- Blockers: 0
 - High risk: 0
 - Medium risk: 0
-- Low risk: 1738
+- Low risk: 1900
 - A-grade rows with no executable evidence: 0
-- A-grade rows with tests but no production caller/runtime exposure: 147
-- Tool/Blender callables needing blocker/high evidence: 125
-- Wiring status counts: {'direct_test_covered': 239, 'helper_reachable': 1299, 'runtime_primary': 212, 'unknown': 124}
+- A-grade rows with tests but no production caller/runtime exposure: 140
+- Tool/Blender callables needing blocker/high evidence: 0
+- Wiring status counts: {'direct_test_covered': 240, 'helper_reachable': 1440, 'runtime_primary': 220}
 
 ## Highest Risk Files
 
-- _biome_grammar.py: 30
-- terrain_scene_read.py: 22
-- terrain_sculpt.py: 12
-- terrain_materials.py: 8
-- terrain_validation.py: 8
-- terrain_materials_v2.py: 5
-- terrain_saliency.py: 5
-- road_network.py: 4
-- terrain_stratigraphy.py: 4
-- terrain_unity_export.py: 4
-- terrain_vegetation_depth.py: 4
-- terrain_caves.py: 3
-- terrain_live_preview.py: 3
-- _water_network.py: 2
-- environment_scatter.py: 2
-- light_integration.py: 2
-- terrain_banded.py: 2
-- terrain_banded_advanced.py: 2
-- terrain_mask_cache.py: 2
-- terrain_twelve_step.py: 2
-- terrain_water_variants.py: 2
-- _terrain_depth.py: 1
-- terrain_assets.py: 1
-- terrain_biome_registry.py: 1
-- terrain_foliage_catalog.py: 1
 
 ## Top Blocker/High Callables
 
-- BLOCKER _biome_grammar.py:1918 _apply_forest_debris grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:1944 _apply_root_network grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:1978 _apply_swamp_muck grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2003 _apply_toxic_tendrils grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2034 _apply_scree_fields grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2059 _apply_frost_crack_network grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2090 _apply_sand_ripples grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2111 _apply_grass_tufts grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2136 _apply_wildflower_scatter grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2161 _apply_tide_pool_pocking grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2186 _apply_beach_strand_lines grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2208 _apply_grave_markers grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2233 _apply_bone_fragments grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2258 _apply_battlefield_craters grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2286 _apply_weapon_debris grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2311 _apply_fortress_rubble grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2336 _apply_cracked_stone_paving grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2361 _apply_crumbling_wall_stumps grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2392 _apply_overgrown_paths grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2420 _apply_void_fissures grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2451 _apply_void_crystal_spires grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2477 _apply_mycelium_humps grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2502 _apply_spore_cap_clusters grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2527 _apply_crystal_formations grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2552 _apply_cave_drip_basins grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2577 _apply_deep_forest_moss_carpet grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2601 _apply_ancient_root_buttresses grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2696 _dispatch_biome_surface_features grade=NONE needs=grade_rubric_row
-- BLOCKER _biome_grammar.py:2737 pass_biome_surface_features grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _biome_grammar.py:2823 register_biome_surface_features_pass grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _terrain_depth.py:32 _ndimage_callable grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _water_network.py:86 _empty_braided_polylines grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER _water_network.py:1585 compute_velocity_field grade=NONE needs=grade_rubric_row
-- BLOCKER environment_scatter.py:84 generate_billboard_impostor grade=NONE needs=grade_rubric_row;production_caller_or_scope_exemption
-- BLOCKER environment_scatter.py:1343 LocationLayer.generate grade=NONE needs=grade_rubric_row
-- BLOCKER light_integration.py:510 _light_position grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER light_integration.py:514 _light_energy grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER road_network.py:1049 _road_segment_mesh_spec grade=NONE needs=grade_rubric_row
-- BLOCKER road_network.py:1638 _apply_worn_path_erosion grade=NONE needs=grade_rubric_row
-- BLOCKER road_network.py:1715 pass_road_network grade=NONE needs=grade_rubric_row
-- BLOCKER road_network.py:1857 register_road_network_pass grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_assets.py:283 build_asset_context_rule_exts grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER terrain_banded.py:86 _scipy_ndimage grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER terrain_banded.py:90 _offset_pair grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER terrain_banded_advanced.py:496 pass_banded_advanced grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_banded_advanced.py:553 register_banded_advanced_pass grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_biome_registry.py:70 resolve_to_canonical grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_caves.py:3412 _find_entrance_candidates grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_caves.py:3604 pass_caves grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_caves.py:3967 register_bundle_f_passes grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_foliage_catalog.py:896 get_species_constraints grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_glacial.py:31 _load_scipy_glacial_filters grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER terrain_hot_reload.py:22 _rebind_pass_funcs_for_module grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_live_preview.py:26 _channel_hash grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER terrain_live_preview.py:62 StackSnapshot.changed_channels grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_live_preview.py:91 StackSnapshot.hash_dict grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_mask_cache.py:107 _entry_numpy_bytes grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER terrain_mask_cache.py:206 MaskCache._evict_lru_until_budget grade=NONE needs=grade_rubric_row;direct_behavior_test
-- BLOCKER terrain_materials.py:1069 _classify_face grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials.py:1120 assign_terrain_materials_by_slope grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials.py:1327 blend_terrain_vertex_colors grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials.py:1663 _simple_noise_2d grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_materials.py:1951 _create_height_blend_group grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials.py:2920 _clamp_rgba grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials.py:2944 _build_terrain_recipe grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials.py:3369 _sample_splatmap_weights_at_vertex grade=NONE needs=grade_rubric_row
-- BLOCKER terrain_materials_v2.py:43 _coerce_float grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials_v2.py:903 _float_hint grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials_v2.py:919 _optional_float_hint grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials_v2.py:926 _mapping_hint grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_materials_v2.py:934 _string_set_hint grade=NONE needs=grade_rubric_row;direct_behavior_test;material_texture_contract_test
-- BLOCKER terrain_saliency.py:64 _load_scipy_ndimage grade=NONE needs=grade_rubric_row;direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
-- BLOCKER terrain_saliency.py:76 _scipy_map_coordinates_2d grade=NONE needs=grade_rubric_row;direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
-- BLOCKER terrain_saliency.py:94 _scipy_uniform_filter grade=NONE needs=grade_rubric_row;direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
-- BLOCKER terrain_saliency.py:101 _scipy_maximum_filter grade=NONE needs=grade_rubric_row;direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
-- BLOCKER terrain_saliency.py:108 _scipy_distance_transform_edt grade=NONE needs=grade_rubric_row;direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
-- BLOCKER terrain_scene_read.py:30 _iter_objects grade=NONE needs=grade_rubric_row;direct_behavior_test;camera_readability_probe
-- BLOCKER terrain_scene_read.py:36 _to_float grade=NONE needs=grade_rubric_row;direct_behavior_test;camera_readability_probe
-- BLOCKER terrain_scene_read.py:43 _to_int grade=NONE needs=grade_rubric_row;direct_behavior_test;camera_readability_probe
-- BLOCKER terrain_scene_read.py:72 _coerce_vec3 grade=NONE needs=grade_rubric_row;direct_behavior_test;camera_readability_probe
 
 Full CSV: `output/verification/CALLABLE_VERIFICATION_MATRIX.csv`

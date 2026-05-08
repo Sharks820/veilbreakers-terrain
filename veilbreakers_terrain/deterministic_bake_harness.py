@@ -150,12 +150,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return _EXIT_CONFIG_ERROR
 
-    # PR #46 thread 8: surface configuration errors (invalid --terrain-type,
-    # malformed --size, etc.) as a structured JSON payload + exit code 2 so
-    # the CLI contract is consistently enforced.  Without this wrap a bad
-    # ``--terrain-type`` would propagate ``CalledProcessError`` and exit
-    # with an unstructured Python traceback + code 1 — indistinguishable
-    # from a real non-determinism failure.
+    # Hardening PR B Fix #7 (VC finding): exit-code semantics
+    # ----------------------------------------------------------------
+    # PR #46 thread 8 originally mapped *every* exception to exit 2
+    # ("config error").  That conflated two distinct failure modes:
+    #
+    #   * Genuine config error  — caller passed garbage flags (malformed
+    #     ``--tile``, missing ``--seed``, unknown ``--terrain-type``).
+    #     CI should not retry this; the user must fix the flag.
+    #     ⇒ exit 2, ``kind: "config_error"``.
+    #
+    #   * Bake subprocess failure — ``generate_tile`` itself crashed
+    #     (CalledProcessError).  This is a real bake bug, not a config
+    #     issue, and CI's flake-retry loop should treat it like a
+    #     non-deterministic divergence.
+    #     ⇒ exit 1, ``kind: "bake_subprocess_failed"``.
     try:
         result = run_determinism_check_subprocess(
             seed=int(args.seed),
@@ -167,18 +176,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             tile_y=int(args.tile[1]),
         )
     except subprocess.CalledProcessError as exc:
-        # ``generate_tile`` exited non-zero — bubble up its stderr (truncated)
-        # so CI logs show why without the raw traceback.
+        # Bake subprocess crashed — this is a *real bake bug*, not a config
+        # problem.  Map to exit 1 (non-deterministic / bake failure) so
+        # CI treats it the same as a divergent-hash result and the
+        # branch-protection summary check fails appropriately.
         stderr_text = (exc.stderr or "").strip()
-        # Cap the captured stderr to keep the JSON payload bounded for log
-        # consumers.  The underlying CalledProcessError still references the
-        # full stream if a developer needs it locally.
+        # Cap captured stderr to keep the JSON payload bounded for log
+        # consumers.  Full stderr remains in the underlying exception
+        # for local debugging.
         stderr_excerpt = stderr_text if len(stderr_text) <= 2000 else (
             stderr_text[:2000] + "...[truncated]"
         )
         print(
             json.dumps(
                 {
+                    "kind": "bake_subprocess_failed",
                     "error": "subprocess generate_tile failed",
                     "exit_code": int(exc.returncode),
                     "stderr": stderr_excerpt,
@@ -193,13 +205,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             file=sys.stderr,
         )
-        return _EXIT_CONFIG_ERROR
+        return _EXIT_NONDETERMINISTIC
     except (ValueError, TypeError, OSError) as exc:
-        # Configuration / I/O errors: surface as structured JSON + exit 2
-        # so callers can distinguish "bake bug" from "user passed garbage".
+        # Genuine config / I/O errors: malformed args, unreadable paths,
+        # etc.  Exit 2 so CI fails the cell with "fix your flags" semantics.
         print(
             json.dumps(
                 {
+                    "kind": "config_error",
                     "error": f"{type(exc).__name__}: {exc}",
                     "deterministic": False,
                     "seed": int(args.seed),

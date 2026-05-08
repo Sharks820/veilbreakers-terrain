@@ -133,3 +133,87 @@ def test_harness_rejects_malformed_tile():
     assert proc.returncode == 2, (
         f"malformed --tile must exit 2, got {proc.returncode}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Hardening PR B Fix #5 — VC finding: same-platform baseline + tile-shift hash
+# ---------------------------------------------------------------------------
+#
+# Per-platform baseline hashes — captured 2026-05-08 on the development host
+# and re-validated locally on each contributor's machine.  Different operating
+# systems may serialise files with platform-dependent byte order (Windows CRLF
+# vs POSIX LF in JSON manifests, file-listing iteration order on case-
+# insensitive filesystems).  The hash is therefore platform-tagged.  When a
+# new bake-side change shifts the baseline, regenerate by running:
+#
+#     python -m veilbreakers_terrain.deterministic_bake_harness \
+#         --seed=42 --tile=0,0 --runs=2 --size=16
+#
+# and copy the first hash into the dict below for the matching ``platform``
+# string (``windows`` / ``linux`` / ``darwin``).  CI cells on the unset
+# platform will fall through to the "any-deterministic" assertion (i.e. the
+# pair-equal check still runs, just no baseline pin).
+_BASELINE_HASHES_BY_PLATFORM: dict[str, str] = {
+    "windows": "3f67a95b666f3ce102053915e64250dd7b208be667b89ffec7ac81b1345b9311",
+}
+
+
+def test_harness_baseline_hash_unchanged():
+    """Pin the SHA-256 baseline for (seed=42, tile=0,0, size=16).
+
+    Closes PR #46 thread 6: a regression that breaks deterministic ordering
+    in any pass would otherwise silently flip every CI cell at once.  By
+    pinning the baseline value we get a *named* failure ("baseline hash
+    drifted") that points at the responsible commit.
+    """
+    import platform as _platform
+
+    payload = _run_harness("--seed=42", "--tile=0,0", "--runs=2", "--size=16")
+    assert payload["deterministic"] is True
+    actual_hash = payload["hashes"][0]
+    plat = _platform.system().lower()  # 'windows' / 'linux' / 'darwin'
+    expected = _BASELINE_HASHES_BY_PLATFORM.get(plat)
+    if expected is None:
+        # Platform not yet baselined — capture the hash value as a hint
+        # for follow-up.  The pair-equal subprocess check above is still
+        # exercised, so this branch keeps determinism-CI green while the
+        # baseline catalogue catches up to a new OS.
+        import warnings
+
+        warnings.warn(
+            f"No baseline hash pinned for platform={plat!r}; observed "
+            f"{actual_hash}.  Add to _BASELINE_HASHES_BY_PLATFORM if stable.",
+            stacklevel=2,
+        )
+        return
+    assert actual_hash == expected, (
+        f"baseline hash drifted on {plat}: got {actual_hash!r}, expected "
+        f"{expected!r}.  A bake-side change broke deterministic ordering — "
+        f"identify the offending commit before re-baselining."
+    )
+
+
+def test_harness_tile_coords_actually_shift_bake_hash():
+    """``(0,0)`` and ``(3,5)`` must produce DIFFERENT baseline hashes.
+
+    Closes PR #46 thread 6 regression: when ``--tile`` was first plumbed
+    through ``run_determinism_check_subprocess`` the integration silently
+    used ``tile_x=tile_y=0`` for every cell.  Every CI matrix cell hashed
+    identically, falsely confirming "deterministic across tile coords"
+    when in fact the harness was tile-blind.  This guard prevents the
+    same regression from recurring.
+    """
+    p_origin = _run_harness("--seed=42", "--tile=0,0", "--runs=2", "--size=16")
+    p_shifted = _run_harness("--seed=42", "--tile=3,5", "--runs=2", "--size=16")
+
+    assert p_origin["deterministic"] is True
+    assert p_shifted["deterministic"] is True
+    # Same-tile pair-equal (each subprocess run reproduces).
+    assert p_origin["hashes"][0] == p_origin["hashes"][1]
+    assert p_shifted["hashes"][0] == p_shifted["hashes"][1]
+    # Cross-tile non-equal — the bake samples a tile-specific slice of
+    # world space, so different tile coords MUST produce different bytes.
+    assert p_origin["hashes"][0] != p_shifted["hashes"][0], (
+        "tile=(0,0) and tile=(3,5) hashed identically — harness regressed "
+        "to tile-blind mode (PR #46 thread 6 regression)."
+    )

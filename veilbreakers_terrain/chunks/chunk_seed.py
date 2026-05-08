@@ -61,8 +61,19 @@ _U32_MASK: int = 0xFFFFFFFF
 
 
 def _frame_namespace(namespace: str) -> bytes:
-    """Length-prefix a UTF-8 namespace string to defeat boundary collisions."""
+    """Length-prefix a UTF-8 namespace string to defeat boundary collisions.
+
+    Hardening PR B Fix #8 (VC finding): the ``<I`` (uint32) length-prefix
+    silently truncates if ``len(encoded)`` exceeds 4 GiB.  Real callers
+    pass <100-byte namespaces, but a defensive assertion catches a
+    pathological caller before they produce a colliding hash.
+    """
     encoded = str(namespace).encode("utf-8")
+    assert len(encoded) < (1 << 32), (
+        f"namespace too long: {len(encoded)} bytes exceeds uint32 length-prefix "
+        "(2**32-1 == 4 GiB).  This would silently truncate the framing length "
+        "and break collision-resistance."
+    )
     return struct.pack("<I", len(encoded)) + encoded
 
 
@@ -110,13 +121,22 @@ def chunk_seed_bytes(
     # would raise struct.error on values >= 2**31. Mask negative
     # input via & 0xFFFFFFFF so signed-int callers (e.g. -1 used as
     # sentinel) still pack cleanly.
+    extra_bytes = bytes(extra)
+    # Hardening PR B Fix #8 (VC finding): mirror the namespace check —
+    # silent uint32 truncation of ``len(extra)`` would break collision-
+    # resistance.  Real callers pass <16-byte salt but this catches a
+    # pathological caller before the hash silently aliases.
+    assert len(extra_bytes) < (1 << 32), (
+        f"extra salt too long: {len(extra_bytes)} bytes exceeds uint32 "
+        "length-prefix (2**32-1 == 4 GiB)."
+    )
     payload = (
         struct.pack("<I", int(intent_seed) & 0xFFFFFFFF)
         + _frame_namespace(namespace)
         + struct.pack("<qq", int(tile_x), int(tile_y))
         + _frame_region(region_bounds)
-        + struct.pack("<I", len(extra))
-        + bytes(extra)
+        + struct.pack("<I", len(extra_bytes))
+        + extra_bytes
     )
     return hashlib.blake2b(payload, digest_size=16).digest()
 

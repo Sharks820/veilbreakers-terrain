@@ -87,8 +87,9 @@ def test_water_runtime_contract_accepts_canonical_channels_and_manifest():
         validate_water_runtime_contract,
     )
 
+    # Hardening PR B Fix #10 (VA finding): URP-first fixture (was HDRP/Water).
     manifest = {
-        "materials": {"lake": {"shader": "HDRP/Water"}},
+        "materials": {"lake": {"shader": "Universal Render Pipeline/Water"}},
         "shader_textures": {"_FoamTex": "foam.png"},
         "water_level_m": 1.0,
     }
@@ -101,8 +102,14 @@ def test_water_runtime_contract_accepts_export_manifest_material_list():
         validate_water_runtime_contract,
     )
 
+    # Hardening PR B Fix #10: URP-first fixture (Boat Attack default).
     manifest = {
-        "materials": [{"material_id": "lake", "shader_target": {"unity": "HDRP/Water"}}],
+        "materials": [
+            {
+                "material_id": "lake",
+                "shader_target": {"unity": "Universal Render Pipeline/Water"},
+            }
+        ],
         "shader_textures": {"_FoamTex": "foam.png"},
     }
 

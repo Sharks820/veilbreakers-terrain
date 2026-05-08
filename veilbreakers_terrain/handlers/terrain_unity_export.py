@@ -1016,9 +1016,37 @@ def _supplemental_mesh_specs_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     return payload
 
 
+# Hardening PR B Fix #10 (VA finding): backend → URP shader name table.
+# Drives both _water_shader_manifest_json's per-material shader_target and
+# the integration_notes block below.  Sourced from each backend's official
+# package manifest (Boat Attack 17.x, Stylized Water 2 v2.x, Crest 5).
+_WATER_SHADER_TARGETS_BY_BACKEND: Dict[str, str] = {
+    "boat_attack": "Universal Render Pipeline/Water",
+    "stylized_water_2": "StylizedWater2/Water",
+    "crest_5": "Crest/Water",
+    "hand_authored_urp": "Universal Render Pipeline/Water",
+}
+
+
+def _water_shader_target_for_backend(backend: str) -> str:
+    """Return the URP shader name for ``backend``, defaulting to Boat Attack.
+
+    Unknown backend strings fall through to ``"Universal Render Pipeline/Water"``
+    rather than raising — the bake-side validation in
+    ``terrain_unity_backends.WaterSurfaceManifest`` already rejects unknown
+    backend strings at construction; by the time this helper runs the value
+    has already been validated.  The fallback exists only to keep older
+    bakes (no backend recorded) renderable on URP runtime adapters.
+    """
+    return _WATER_SHADER_TARGETS_BY_BACKEND.get(
+        str(backend), "Universal Render Pipeline/Water"
+    )
+
+
 def _water_shader_manifest_json(
     stack: TerrainMaskStack,
     profile: Optional[str] = None,
+    water_backend: str = "boat_attack",
 ) -> Dict[str, Any]:
     """Build a water_shader_manifest.json payload for Unity/Unreal shader authoring.
 
@@ -1026,8 +1054,10 @@ def _water_shader_manifest_json(
     every water surface produced by the pipeline.  Fields are hand-picked
     to match:
 
-        - Unity HDRP Water System (deep_color, scattering, caustics,
-          normal_map, flow_map_channel, transparency_curve, fresnel).
+        - Unity URP Water (Boat Attack) / Stylized Water 2 / Crest 5 —
+          backend selected via the ``water_backend`` argument so the emitted
+          shader-target string matches the URP runtime adapter the Unity
+          project actually loads (Hardening PR B Fix #10, VA finding).
         - Unreal Water Plugin (base_color, fresnel, flow, depth fog).
         - Horizon Forbidden West GDC 2022 water rendering
           (analytic Gerstner waves + flow-map continuity + caustic bake).
@@ -1126,7 +1156,14 @@ def _water_shader_manifest_json(
             "gerstner_wave_steepness": 0.4,
             "beer_lambert_k": 0.35,
             "shader_target": {
-                "unity": "HDRP/Water",
+                # Hardening PR B Fix #10 (VA finding): URP-first, backend-
+                # aware shader-target string.  The Unity URP runtime adapter
+                # picks the correct material based on this name.  Mapping:
+                #   boat_attack       → "Universal Render Pipeline/Water"
+                #   stylized_water_2  → "StylizedWater2/Water"
+                #   crest_5           → "Crest/Water"
+                #   hand_authored_urp → "Universal Render Pipeline/Water"
+                "unity": _water_shader_target_for_backend(water_backend),
                 "unity_shadergraph": "ShaderGraphs/SG_Water_AAA",
                 "unreal": "MF_WaterSurface",
             },
@@ -1182,6 +1219,15 @@ def _water_shader_manifest_json(
         "materials": materials,
         "shader_textures": _shader_textures,
         "shader_integration_notes": {
+            # Hardening PR B Fix #10 (VA finding): URP integration note added
+            # alongside the legacy ``unity_hdrp`` key (kept for downstream
+            # tooling that still keys off the old name).  Default URP path
+            # is the Boat Attack water sample, which ships natively on URP
+            # 17.3.
+            "unity_urp": (
+                "Plug materials into Boat Attack water sample. Use vertex "
+                "color RGBA for flow + foam mask."
+            ),
             "unity_hdrp": (
                 "Plug materials into HDRP Water Surface. Use Color2 vertex "
                 "attribute for flow map, vertex alpha for foam."
@@ -1813,6 +1859,28 @@ def _truncate_splatmap_to_top_k(
     K = int(max_layers_per_pixel)
     if K < 1:
         raise ValueError("max_layers_per_pixel must be >= 1")
+    # Hardening PR B Fix #5 (VC finding): NaN/Inf in input weights is a
+    # bake-time data corruption.  argpartition's behaviour on NaN is
+    # platform-dependent (CRT-vs-libstdc++ handle NaN ordering differently)
+    # so the truncation result becomes non-deterministic.  Raise a
+    # FiniteArrayError early — the canonical contract — rather than
+    # silently producing garbage RGBA splatmaps.
+    if not np.all(np.isfinite(weights_np)):
+        from .terrain_io import FiniteArrayError
+
+        nan_count = int(np.count_nonzero(np.isnan(weights_np)))
+        posinf_count = int(np.count_nonzero(np.isposinf(weights_np)))
+        neginf_count = int(np.count_nonzero(np.isneginf(weights_np)))
+        raise FiniteArrayError(
+            f"splatmap weights contain {nan_count} NaN, {posinf_count} +Inf, "
+            f"{neginf_count} -Inf cells (shape={weights_np.shape}); refusing "
+            "to top-K cap a non-finite tensor.",
+            channel="splatmap_weights_layer",
+            pass_name="_truncate_splatmap_to_top_k",
+            nan_count=nan_count,
+            posinf_count=posinf_count,
+            neginf_count=neginf_count,
+        )
     if L <= K:
         # Return the input directly when no truncation is needed.  The caller
         # in :func:`_write_splatmap_groups` runs the array through a
@@ -2291,7 +2359,19 @@ def export_unity_manifest(
     decals_json = _decals_json(stack)
     supplemental_mesh_specs_json = _supplemental_mesh_specs_json(stack)
     particle_emitter_specs_json = _particle_emitter_specs_json(stack)
-    water_shader_manifest_json = _water_shader_manifest_json(stack, profile=profile)
+    # Hardening PR B Fix #10: pass the active water backend through so the
+    # emitted shader_target string matches the URP runtime adapter.  Caller-
+    # supplied ``water_manifest`` wins over the config default.
+    _resolved_water_backend = (
+        water_manifest.backend
+        if water_manifest is not None
+        else unity_export_config.water_backend
+    )
+    water_shader_manifest_json = _water_shader_manifest_json(
+        stack,
+        profile=profile,
+        water_backend=_resolved_water_backend,
+    )
     light_placements_json = _light_placements_json(stack)
     probe_placements_json = _probe_placements_json(stack)
     ecosystem_meta_json = {
@@ -2375,7 +2455,8 @@ def export_unity_manifest(
             payload=particle_emitter_specs_json,
         )
     # Phase E — always emit the water shader manifest so the Unity importer
-    # can bind the HDRP water material even on tiles without active chains.
+    # can bind the URP water material (Boat Attack default; backend-aware
+    # via Hardening PR B Fix #10) even on tiles without active chains.
     _write_json(
         files,
         output_dir,
