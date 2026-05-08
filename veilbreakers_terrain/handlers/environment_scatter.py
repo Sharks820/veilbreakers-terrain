@@ -834,7 +834,7 @@ def _filter_multipass_scatter_placements(
     apply_rule_density: bool,
 ) -> list[dict[str, Any]]:
     """Adapt centered/radian _scatter_pass placements to the handler's legacy contract."""
-    rng = random.Random(seed ^ 0x5CA77E2)
+    rng = random.Random(derive_pass_seed(seed, "environment_scatter._filter_multipass_scatter_placements.rng", 0, 0, None))
     filtered: list[dict[str, Any]] = []
 
     rule_index: dict[str, list[dict[str, Any]]] = {}
@@ -1680,6 +1680,7 @@ from .lod_pipeline import (  # noqa: F401,E402  -- intentional re-export
     _TREE_VEG_TYPES,
     _setup_billboard_lod,
 )
+from .terrain_pipeline import derive_pass_seed  # noqa: E402  — placed below the late re-export block above
 
 
 # ---------------------------------------------------------------------------
@@ -1972,7 +1973,7 @@ def create_leaf_card_tree(
         The created ``bpy.types.Object`` linked into the active collection.
     """
     _require_bpy()
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "environment_scatter.create_leaf_card_tree", 0, 0, None))
     name = f"LeafCardTree_{seed}"
 
     mesh = bpy.data.meshes.new(name)
@@ -2106,7 +2107,7 @@ def _create_grass_card(
     Returns the created Blender object.
     """
     _require_bpy()
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "environment_scatter._create_grass_card", 0, 0, None))
     spec = _GRASS_BIOME_SPECS.get(biome, _GRASS_BIOME_SPECS["prairie"])
     height = rng.uniform(spec["height_min"], spec["height_max"])
     color = spec["color"]
@@ -2277,7 +2278,7 @@ def _generate_combat_clearing(
     diameter = max(15.0, min(40.0, diameter))
     radius = diameter / 2.0
     num_entries = max(2, min(4, num_entries))
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "environment_scatter._generate_combat_clearing", 0, 0, None))
     cx, cy, cz = center
 
     # Inner flat combat zone: 60% of total radius, guaranteed scatter-free.
@@ -2661,7 +2662,7 @@ def _scatter_pass(
     list of dicts, each with: position, vegetation_type, rotation, scale,
                               lod, gpu_instance, moisture, altitude.
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "environment_scatter._scatter_pass", 0, 0, None))
     base_density = _BIOME_DENSITY.get(biome, 0.5)
     rows, cols = heightmap.shape
     terrain_width = float(terrain_width if terrain_width is not None else terrain_size)
@@ -3356,7 +3357,7 @@ def handle_scatter_vegetation(params: dict[str, Any]) -> dict[str, Any]:
     _detail_dens_raw = _stack_value(_stack, "detail_density")
     density_map = _collapse_detail_density(_detail_dens_raw)
     if density_map is not None and len(placements) > 0:
-        _rng_density = random.Random(seed ^ 0xD1CE7)
+        _rng_density = random.Random(derive_pass_seed(seed, "environment_scatter.handle_scatter_vegetation.rng_density", 0, 0, None))
         _density_filtered = []
         for _p in placements:
             _px, _py = _p["position"][0], _p["position"][1]

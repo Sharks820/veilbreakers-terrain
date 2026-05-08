@@ -18,6 +18,7 @@ import importlib
 import importlib.util
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
+from .terrain_pipeline import derive_pass_seed
 
 _SCIPY_AVAILABLE = (
     importlib.util.find_spec("numpy") is not None
@@ -520,7 +521,7 @@ def generate_world_map(
     if map_size <= 0.0:
         raise ValueError("map_size must be positive")
     num_regions = max(2, num_regions)
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "world_map.generate_world_map", 0, 0, None))
 
     biome_keys = list(BIOME_TYPES.keys())
     poi_keys = list(POI_TYPES.keys())
@@ -636,7 +637,7 @@ def place_landmarks(
     seed:
         RNG seed for determinism.
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "world_map.place_landmarks", 0, 0, None))
     lm_keys = list(LANDMARK_TYPES.keys())
     result: List[Landmark] = []
 
@@ -701,7 +702,7 @@ def generate_storytelling_scene(
         raise ValueError(f"Unknown storytelling pattern: {pattern!r}")
 
     props_list = STORYTELLING_PATTERNS[pattern]
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "world_map.generate_storytelling_scene", 0, 0, None))
 
     cx, cy = center
     prop_placements: List[Dict[str, Any]] = []

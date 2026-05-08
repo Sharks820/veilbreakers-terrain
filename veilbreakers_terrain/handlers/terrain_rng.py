@@ -42,32 +42,78 @@ def tile_rng(world_origin_x: float, world_origin_y: float,
     """Convenience: make a per-tile RNG from world origin + root seed."""
     return make_rng(int(world_origin_x * 1000), int(world_origin_y * 1000), root_seed)
 
-def derive_pass_seed(seed: int, pass_name: str,
-                     tile_x: float = 0.0, tile_y: float = 0.0,
-                     region: str = "") -> int:
-    """Derive a deterministic integer seed for a named pass on a specific tile.
+# Bug-A canonical fix (Phase B D17-18): the second `derive_pass_seed`
+# definition formerly here used plain string concatenation
+# (collision-prone) and produced DIFFERENT seeds than the canonical
+# JSON-encoded SHA-256 implementation in `terrain_pipeline.py`. The
+# scatter pass imported from this module while 21+ other files imported
+# from terrain_pipeline — scatter was deterministically out-of-sync
+# with everything else. The wrapper below resolves the canonical
+# function on first call and caches the lookup. Direct re-export
+# `from terrain_pipeline import derive_pass_seed` would create a
+# circular import, so the lookup is deferred via a function call.
+from typing import Any as _Any, Optional as _Optional
 
-    Combines the root seed, pass name, tile coordinates, and optional region
-    via SHA-256 to produce a uint32 seed. This ensures that each (tile, pass)
-    pair gets an independent seed while remaining fully reproducible.
 
-    Parameters
-    ----------
-    seed : int
-        Root world seed.
-    pass_name : str
-        Name of the terrain pass (e.g. "scatter", "erosion", "vegetation").
-    tile_x, tile_y : float
-        World-space tile origin coordinates.
-    region : str
-        Optional region/biome identifier for additional seed separation.
+def _resolve_canonical_derive_pass_seed():  # pragma: no cover - trivial dispatch
+    """Lazy lookup of the canonical derive_pass_seed in terrain_pipeline.
 
-    Returns
-    -------
-    int
-        A uint32 integer suitable for use with random.Random() or as the
-        sole argument to np.random.default_rng().
+    Defined as a module-level function so the import is deferred past
+    module-load circular-import risk and so cached on first call.
     """
-    raw = f"{seed}:{pass_name}:{int(tile_x * 1000)}:{int(tile_y * 1000)}:{region}"
-    digest = hashlib.sha256(raw.encode("utf-8")).digest()
-    return int.from_bytes(digest[:4], "big")
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
+        derive_pass_seed as _canonical,
+    )
+    return _canonical
+
+
+_canonical_derive_pass_seed_cache: _Optional[_Any] = None
+
+
+def derive_pass_seed(
+    seed: int,
+    pass_name: str,
+    tile_x: float = 0.0,
+    tile_y: float = 0.0,
+    region: _Any = "",
+) -> int:
+    """Re-export of the canonical ``terrain_pipeline.derive_pass_seed``.
+
+    Bug-A fix: this module previously defined a *second*
+    ``derive_pass_seed`` with INCOMPATIBLE hash payload (plain string
+    concat vs. JSON-encoded). All importers now share a single
+    canonical hash via this thin wrapper.
+
+    Public signature is preserved (positional/keyword args identical to
+    the historical terrain_rng definition) so existing callers do not
+    need to change. ``region`` is forwarded as-is — terrain_pipeline's
+    canonical helper accepts ``Optional[BBox]``; passing a plain string
+    (the historical default) is coerced to ``None`` so empty-string
+    callers do not crash on ``.to_tuple()`` access.
+    """
+    global _canonical_derive_pass_seed_cache
+    if _canonical_derive_pass_seed_cache is None:
+        _canonical_derive_pass_seed_cache = _resolve_canonical_derive_pass_seed()
+    # Historical terrain_rng.derive_pass_seed accepted ``region: str = ""``
+    # and folded the string INTO the SHA-256 payload, providing seed
+    # separation between e.g. ``region="biome_alpine"`` and
+    # ``region="biome_desert"``. The canonical terrain_pipeline helper
+    # expects ``Optional[BBox]`` and would call ``.to_tuple()`` on a
+    # str. To preserve the legacy seed-separation behaviour we fold a
+    # non-empty str region INTO the namespace so the resulting hash
+    # still differentiates by region (Codex / Copilot PR #41 review).
+    effective_namespace = str(pass_name)
+    canonical_region: _Any = region
+    if isinstance(region, str):
+        if region:
+            effective_namespace = f"{effective_namespace}.{region}"
+        canonical_region = None
+    return int(
+        _canonical_derive_pass_seed_cache(
+            int(seed),
+            effective_namespace,
+            int(tile_x),
+            int(tile_y),
+            canonical_region,
+        )
+    )

@@ -53,6 +53,7 @@ from ..procedural_meshes import (  # noqa: E402
     _merge_meshes,
 )
 from . import _bridge_mesh  # noqa: E402
+from .terrain_pipeline import derive_pass_seed
 
 # ---------------------------------------------------------------------------
 # Type alias (matches procedural_meshes.py)
@@ -210,7 +211,7 @@ def generate_cliff_face_mesh(
     # offset (positive = protrudes outward, negative = recedes) ±0.05 m.
     # Band boundaries are placed at non-uniform Z fractions to avoid regularity.
     # -----------------------------------------------------------------------
-    rng_strata = random.Random(seed ^ 0x5A5A)
+    rng_strata = random.Random(derive_pass_seed(seed, "terrain_depth.generate_cliff_face_mesh.rng_strata", 0, 0, None))
     n_bands = rng_strata.randint(3, 5)
     # Generate n_bands-1 split fractions, sort them, then compute per-band offsets
     band_splits = sorted(rng_strata.uniform(0.1, 0.9) for _ in range(n_bands - 1))
@@ -231,7 +232,7 @@ def generate_cliff_face_mesh(
     # Each channel has an X centre position, a width, and a Perlin amplitude
     # in [0.02, 0.10] m applied as an additional Y displacement (recessing).
     # -----------------------------------------------------------------------
-    rng_erosion = random.Random(seed ^ 0xE0E0)
+    rng_erosion = random.Random(derive_pass_seed(seed, "terrain_depth.generate_cliff_face_mesh.rng_erosion", 0, 0, None))
     n_channels = rng_erosion.randint(4, 8)
     channels: list[tuple[float, float, float, float, int]] = []
     for _ in range(n_channels):
@@ -392,7 +393,7 @@ def generate_cave_entrance_mesh(
     slope_deg = float(slope_deg)
     overhang_factor = max(0.0, min(0.4, float(overhang_factor)))
 
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_depth.generate_cave_entrance_mesh", 0, 0, None))
     half_w = width / 2.0
     spring_z = terrain_edge_height  # arch spring-lines at ground level
     # Gothic pointed arch: R = half_w, offset d = R * 0.414 (√2 - 1 ≈ 0.414)
@@ -422,7 +423,20 @@ def generate_cave_entrance_mesh(
         overhang_scale = max(0.0, 1.0 - depth_frac * 2.5)
 
         ring: list[tuple[float, float, float]] = []
-        arch_rng = random.Random(seed ^ (depth_i * 31 + 7))
+        # Per-ring seed: include depth_i in the namespace so each tunnel
+        # ring gets DIFFERENT noise. Without depth_i in the namespace,
+        # arch_rng would be reseeded with an identical derived seed on
+        # every depth_segs iteration, producing identical per-ring
+        # noise (PR #43 Codex/Copilot regression review).
+        arch_rng = random.Random(
+            derive_pass_seed(
+                seed,
+                f"terrain_depth.generate_cave_entrance_mesh.arch_rng.{depth_i}",
+                0,
+                0,
+                None,
+            )
+        )
 
         side_segs = 3
         # Left side: bottom to left spring-line foot (-half_w, spring_z)
@@ -491,7 +505,7 @@ def generate_cave_entrance_mesh(
     # Distributed along the arch crown band (angles π/4 … 3π/4 of the
     # full opening span), 8-sided truncated cone meshes.
     # -----------------------------------------------------------------
-    stala_rng = random.Random(seed ^ 0xDEAD)
+    stala_rng = random.Random(derive_pass_seed(seed, "terrain_depth.generate_cave_entrance_mesh.stala_rng", 0, 0, None))
     stala_segs = 8
     stalactite_hints: list[tuple[float, float, float]] = []
     n_stala = rng.randint(4, 9)
@@ -899,7 +913,7 @@ def generate_waterfall_mesh(
               uv_layers — dict with "flow" (primary UV) and "splash" (foam splash UV)
               cascade_steps, has_pool, volumetric_curtain, spray_points
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "terrain_depth.generate_waterfall_mesh", 0, 0, None))
     parts: list[tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]] = []
 
     step_height = height / steps

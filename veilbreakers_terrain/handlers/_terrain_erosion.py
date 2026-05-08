@@ -282,7 +282,10 @@ def apply_hydraulic_erosion_masks(
     h_in = np.asarray(heightmap, dtype=np.float64)
     result = h_in.copy()
     rows, cols = result.shape
-    rng = _random.Random(seed)
+    # Lazy import to avoid CodeQL py/cyclic-import on the
+    # terrain_pipeline ↔ _terrain_erosion edge.
+    from .terrain_pipeline import derive_pass_seed
+    rng = _random.Random(derive_pass_seed(seed, "terrain_erosion.apply_hydraulic_erosion_masks", 0, 0, None))
     requested_iterations = max(0, int(iterations))
     simulated_iterations = requested_iterations
     small_tile_iteration_cap = requested_iterations

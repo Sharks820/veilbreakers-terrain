@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import random as _random
 from typing import Any, Dict, List, Tuple
+from .terrain_pipeline import derive_pass_seed
 
 try:
     import numpy as _np
@@ -256,7 +257,7 @@ def expand_lsystem(
                 replacements.append(rep)
             _stoch[sym] = (cdfs, replacements)
 
-    rng = _random.Random(seed)
+    rng = _random.Random(derive_pass_seed(seed, "vegetation_lsystem.expand_lsystem", 0, 0, None))
     current = axiom
 
     for _ in range(iterations):
@@ -517,7 +518,7 @@ def interpret_lsystem(
         List of BranchSegment objects.  Pass to ``branches_to_mesh()`` to get
         vertices, edges, faces mesh connectivity.
     """
-    rng = _random.Random(seed)
+    rng = _random.Random(derive_pass_seed(seed, "vegetation_lsystem.interpret_lsystem", 0, 0, None))
     segments: list[BranchSegment] = []
     stack: list[_TurtleState] = []
     parent_stack: list[int] = []
@@ -933,7 +934,7 @@ def generate_roots(
         Each root is ``num_segments`` segments long, chained via parent_index.
     """
     num_segments = max(1, int(num_segments))
-    rng = _random.Random(seed)
+    rng = _random.Random(derive_pass_seed(seed, "vegetation_lsystem.generate_roots", 0, 0, None))
     roots: list[BranchSegment] = []
     base_x, base_y, base_z = trunk_base
     seg_length = root_length / num_segments
@@ -1204,7 +1205,7 @@ def generate_leaf_cards(
     card_w, card_h = preset["card_size"]
     spread = preset["spread"]
 
-    rng = _random.Random(seed)
+    rng = _random.Random(derive_pass_seed(seed, "vegetation_lsystem.generate_leaf_cards", 0, 0, None))
     vertices: list[Vec3] = []
     faces: list[tuple[int, ...]] = []
 
