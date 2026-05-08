@@ -116,12 +116,19 @@ def bake_foam_vertex_alpha(
     Args:
         obstacle_proximity: Distance in metres to the nearest rock/shore obstacle.
             If not available, approximate from rock_mask scipy EDT before calling.
-        flow_speed: Velocity magnitude in m/s at each vertex.
+        flow_speed: Velocity magnitude in m/s at each vertex. NOTE: the
+            ``flow_speed`` channel produced by ``pass_water_flow_speed``
+            is normalised to [0, 1] — callers must scale it to m/s
+            (e.g. multiply by ``MAX_FOAM_SPEED_DEFAULT``) before passing
+            here, otherwise visible foam vanishes.
         foam_radius: Distance (m) at which obstacle-foam transitions from
             full to zero. Default 2.0.
         max_foam_speed: Flow speed (m/s) at which obstacle-foam reaches
-            full intensity. Default 5.0. Above this the whitecap term
-            still scales further via the cubic Beaufort formula.
+            full intensity. Default 5.0. Above this the obstacle term
+            saturates at its product cap (1.0) and the whitecap term
+            saturates at 0.3 (cubic ratio clamped to 1 by the inner
+            ``saturate``); the formula does NOT continue to grow beyond
+            this point.
 
     Returns:
         Per-vertex foam alpha in [0, 1].  Use as vertex alpha channel in water mesh.
@@ -166,9 +173,17 @@ def export_water_mesh_vertices(stack: "TerrainMaskStack") -> "List[dict[str, Any
     flow_speed_field = stack.get("flow_speed") if hasattr(stack, "get") else None
     if flow_speed_field is None:
         flow_speed_field = np.zeros((rows, cols), dtype=np.float32)
+    # PR #39 Codex P2: pass_water_flow_speed produces a normalised
+    # [0, 1] channel; bake_foam_vertex_alpha expects m/s. Scale to m/s
+    # so the Beaufort cubic formula sees physically meaningful values
+    # (without scaling, even max-rapid flow_speed=1 produces only 0.21
+    # foam — visible foam disappears).
+    flow_speed_ms = (
+        np.asarray(flow_speed_field, dtype=np.float32) * MAX_FOAM_SPEED_DEFAULT
+    )
 
     foam_alpha_grid = np.asarray(
-        bake_foam_vertex_alpha(obstacle_prox, flow_speed_field),
+        bake_foam_vertex_alpha(obstacle_prox, flow_speed_ms),
         dtype=np.float32,
     )
 

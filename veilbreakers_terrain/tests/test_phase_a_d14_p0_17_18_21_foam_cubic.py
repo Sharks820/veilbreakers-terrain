@@ -49,6 +49,8 @@ def test_b15_p0_17_bedrock_height_uses_predicted_post_integration():
     stratigraphy and integrate_deltas saw a value that differed from
     the eventually-integrated surface.
     """
+    import re
+
     from veilbreakers_terrain.handlers import terrain_stratigraphy as mod
 
     src = inspect.getsource(mod)
@@ -56,11 +58,15 @@ def test_b15_p0_17_bedrock_height_uses_predicted_post_integration():
         "stratigraphy: predicted_post_height variable missing — "
         "B15-P0-17 fix not applied"
     )
-    # Pin the additive prediction (height + erosion_delta).
-    assert (
-        "+ np.asarray(erosion_delta, dtype=np.float32)" in src
-        or "+ np.asarray(erosion_delta," in src
-    ), (
+    # Pin the additive prediction: predicted_post_height = height + erosion_delta
+    # (allow either inline `+ np.asarray(erosion_delta...)` or assignment to an
+    # intermediate variable like `erosion_delta_arr` that is then added).
+    pattern = re.compile(
+        r"predicted_post_height\s*=\s*\(\s*"
+        r"np\.asarray\(\s*height[^)]*\)\s*\+\s*"
+        r"(?:np\.asarray\(\s*erosion_delta[^)]*\)|erosion_delta_arr)"
+    )
+    assert pattern.search(src) is not None, (
         "stratigraphy: predicted_post_height does not add erosion_delta "
         "to pre-integration height — B15-P0-17 regression"
     )
@@ -101,9 +107,14 @@ def test_b15_p0_18_hardness_above_horizontal_bed_produces_undercut():
         apply_differential_erosion,
     )
 
-    # 8x8 mesa: flat top at z=10, soft shale 0-9m, hard caprock 9-12m.
+    # 8x8 mesa with relief: stepped surface from z=8 (edges) to z=12 (centre)
+    # so `relief_span > 0` and `relief_norm > 0` for interior cells. Without
+    # relief the function short-circuits to zeros regardless of hardness
+    # contrast (apply_differential_erosion only erodes proportional to local
+    # height above min). Soft shale 0-9m, hard caprock 9-12m.
     rows, cols = 8, 8
-    height = np.full((rows, cols), 10.0, dtype=np.float32)
+    height = np.full((rows, cols), 8.0, dtype=np.float32)
+    height[2:6, 2:6] = 12.0  # raised central plateau crests above caprock
     # rock_hardness at the surface — caprock is hard.
     rock_hardness = np.full((rows, cols), 0.9, dtype=np.float32)
     stack = TerrainMaskStack(
@@ -142,14 +153,20 @@ def test_b15_p0_18_hardness_above_horizontal_bed_produces_undercut():
         undercutting_strength=0.4,
     )
     assert delta.shape == (rows, cols)
-    # The fix's contract is structural: when both stack.rock_hardness
-    # and the strat_stack agree that a hard cap sits above soft shale,
-    # the lookup must NOT produce all-zero contrast (the row-shift bug
-    # would). We verify the fix is structurally engaged by checking
-    # that the strat_stack code path executes without error and
-    # produces the expected shape — semantic invariants of the new
-    # lookup are pinned by the source-text test above.
-    assert np.all(np.isfinite(delta))
+    assert np.all(np.isfinite(delta)), "delta must be finite"
+    # PR #39 Copilot review: assert NON-ZERO undercut. The pre-fix
+    # row-shift bug produced exactly delta == 0 everywhere on
+    # horizontal-bedded mesas because hardness_above == hardness for
+    # every row pair. The Z-axis lookup must produce some erosion at
+    # the soft layer when the hard cap sits above it.
+    assert np.any(np.abs(delta) > 0.0), (
+        "B15-P0-18 REGRESSION — horizontal-bedded mesa with hard cap "
+        "above soft shale produced ZERO undercut everywhere; the "
+        "Z-axis hardness lookup is not engaged"
+    )
+    # Erosion delta must be non-positive (erosion only — no deposition
+    # in this pass).
+    assert np.all(delta <= 1e-6), f"delta should be <=0; max={delta.max():.4f}"
 
 
 # ---------------------------------------------------------------------------

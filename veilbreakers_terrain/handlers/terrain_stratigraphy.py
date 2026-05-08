@@ -1096,8 +1096,6 @@ def pass_stratigraphy(
         undercutting_strength=undercut_strength,
     )
     stack.set("strat_erosion_delta", erosion_delta, "stratigraphy")
-    sediment_height = np.maximum(-np.asarray(erosion_delta, dtype=np.float32), 0.0)
-    height = stack.height
     # B15-P0-17: bedrock_height must reflect the surface AFTER the delta
     # integrator has applied strat_erosion_delta. Computing against the
     # pre-integration `stack.height` would give consumers (foliage,
@@ -1106,11 +1104,24 @@ def pass_stratigraphy(
     # height channel. We predict the post-integrated surface here so
     # bedrock_height is consistent regardless of where in the pass
     # sequence consumers read it.
+    #
+    # PR #39 CodeRabbit fix: ``sediment_height`` here represents the
+    # amount eroded at this cell (max(-delta, 0), non-zero only at
+    # erosion cells). It is NOT a sediment cap thickness. Subtracting it
+    # from ``predicted_post_height`` would double-count the erosion.
+    # Instead bedrock_height = post-integration surface MINUS deposit
+    # thickness (max(delta, 0), non-zero only at deposition cells), which
+    # geologically gives:
+    #   - erosion cells:    bedrock = post-integration surface (no cap on top)
+    #   - deposition cells: bedrock = pre-integration surface (rock unchanged)
+    erosion_delta_arr = np.asarray(erosion_delta, dtype=np.float32)
+    height = stack.height
+    sediment_height = np.maximum(-erosion_delta_arr, 0.0)
+    deposit_thickness = np.maximum(erosion_delta_arr, 0.0)
     predicted_post_height = (
-        np.asarray(height, dtype=np.float32)
-        + np.asarray(erosion_delta, dtype=np.float32)
+        np.asarray(height, dtype=np.float32) + erosion_delta_arr
     )
-    bedrock_height = (predicted_post_height - sediment_height).astype(np.float32)
+    bedrock_height = (predicted_post_height - deposit_thickness).astype(np.float32)
     stack.set("sediment_height", sediment_height, "stratigraphy")
     stack.set("bedrock_height", bedrock_height, "stratigraphy")
     stack.set("strata_height", np.asarray(height, dtype=np.float32), "stratigraphy")
