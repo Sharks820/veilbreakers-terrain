@@ -37,8 +37,13 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 
 from .terrain_io import assert_finite_array
-from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import BBox, PassDefinition, PassResult
+
+# NOTE: ``terrain_pipeline`` is NOT imported at module top — that creates a
+# CodeQL-flagged static cycle (terrain_pipeline registers this module's pass,
+# this module registers itself on terrain_pipeline.TerrainPassController).
+# The lazy import inside ``register_topographic_indices_pass`` runs only after
+# both modules are fully loaded, breaking the static cycle.
 
 if TYPE_CHECKING:  # pragma: no cover — type-only
     from .terrain_semantics import TerrainPipelineState
@@ -352,6 +357,9 @@ def pass_topographic_indices(
 
 def register_topographic_indices_pass() -> None:
     """Register pass_topographic_indices on TerrainPassController (Phase C D35)."""
+    # Local import — see module-top NOTE on cycle avoidance.
+    from .terrain_pipeline import TerrainPassController
+
     TerrainPassController.register_pass(
         PassDefinition(
             name="topographic_indices",
