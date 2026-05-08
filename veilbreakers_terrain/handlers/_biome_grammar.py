@@ -18,6 +18,7 @@ import random
 from dataclasses import dataclass
 
 import numpy as np
+from .terrain_pipeline import derive_pass_seed
 
 try:
     import scipy.ndimage as _scipy_ndimage
@@ -44,8 +45,7 @@ BIOME_ALIASES: dict[str, str] = {
 
 
 def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
-    from .terrain_pipeline import derive_pass_seed
-
+    
     return np.random.default_rng(
         derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
     )
@@ -216,7 +216,7 @@ def generate_world_map_spec(
     Raises:
         ValueError: If biome names are invalid or count mismatch.
     """
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "biome_grammar.generate_world_map_spec", 0, 0, None))
 
     # --- Resolve and validate biome names ---
     if biomes is None:
@@ -294,7 +294,7 @@ def generate_world_map_spec(
     # order from the seed since we don't expose the seed points externally).
     # Then remap biome_ids through a permutation that maps Voronoi-cell index
     # → climate-sorted biome index.
-    _climate_rng = random.Random(seed ^ 0xFACEB00C)
+    _climate_rng = random.Random(derive_pass_seed(seed, "biome_grammar.generate_world_map_spec.climate_rng", 0, 0, None))
     grid_side_c = max(1, int(math.ceil(math.sqrt(biome_count))))
     cell_w_c = 1.0 / grid_side_c
     cell_h_c = 1.0 / grid_side_c

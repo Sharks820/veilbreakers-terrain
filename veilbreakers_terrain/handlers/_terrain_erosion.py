@@ -29,6 +29,7 @@ from functools import lru_cache
 from typing import Optional
 
 import numpy as np
+from .terrain_pipeline import derive_pass_seed
 
 
 # Strict-less-than epsilon for clamping a float into ``[1, dim-2)`` so that
@@ -282,7 +283,7 @@ def apply_hydraulic_erosion_masks(
     h_in = np.asarray(heightmap, dtype=np.float64)
     result = h_in.copy()
     rows, cols = result.shape
-    rng = _random.Random(seed)
+    rng = _random.Random(derive_pass_seed(seed, "terrain_erosion.apply_hydraulic_erosion_masks", 0, 0, None))
     requested_iterations = max(0, int(iterations))
     simulated_iterations = requested_iterations
     small_tile_iteration_cap = requested_iterations

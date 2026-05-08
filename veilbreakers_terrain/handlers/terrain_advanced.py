@@ -30,11 +30,11 @@ _log = logging.getLogger(__name__)
 _TERRAIN_LAYER_SCHEMA_VERSION = 3
 
 import numpy as np  # noqa: E402
+from .terrain_pipeline import derive_pass_seed
 
 
 def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
-    from .terrain_pipeline import derive_pass_seed
-
+    
     return np.random.default_rng(
         derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
     )
@@ -1477,7 +1477,7 @@ def compute_erosion_brush(
     min_c = max(1, int(cx - rx) - 1)
     max_c = min(cols - 1, int(cx + rx) + 2)
 
-    rng = _random.Random(seed)
+    rng = _random.Random(derive_pass_seed(seed, "terrain_advanced.compute_erosion_brush", 0, 0, None))
 
     if erosion_type == "hydraulic":
         # -----------------------------------------------------------------------

@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import random
 from typing import Dict, List, Optional, Tuple
+from .terrain_pipeline import derive_pass_seed
 
 # ---------------------------------------------------------------------------
 # Presets
@@ -569,7 +570,7 @@ def apply_structural_settling(
     cell_dy = span_y / (grid_h - 1) if grid_h > 1 else span_y
 
     # ---- Rasterise vertices onto heightmap ----------------------------------
-    rng = random.Random(seed)
+    rng = random.Random(derive_pass_seed(seed, "weathering.apply_structural_settling", 0, 0, None))
 
     try:
         import numpy as np
