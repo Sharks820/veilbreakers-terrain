@@ -575,7 +575,10 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
     # Optional channels for classification
     rock_h = stack.get("rock_hardness")
     rock_arr = np.asarray(rock_h, dtype=np.float32) if rock_h is not None else None
-    ws_arr_raw = stack.get("water_surface")
+    # W-1: prefer canonical water_surface_mask; fall back to legacy water_surface.
+    ws_arr_raw = stack.get("water_surface_mask")
+    if ws_arr_raw is None:
+        ws_arr_raw = stack.get("water_surface")
     ws_arr = np.asarray(ws_arr_raw, dtype=np.float32) if ws_arr_raw is not None else None
 
     # Precompute open-water proximity (within 3 cells)
@@ -744,7 +747,10 @@ def pass_water_variants(
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
 
-    existing_ws = stack.get("water_surface")
+    # W-1: prefer canonical water_surface_mask; fall back to legacy water_surface.
+    existing_ws = stack.get("water_surface_mask")
+    if existing_ws is None:
+        existing_ws = stack.get("water_surface")
     water_surface = (
         np.asarray(existing_ws, dtype=np.float32).copy()
         if existing_ws is not None
@@ -1446,15 +1452,18 @@ def pass_bathymetry(
     h = np.asarray(stack.height, dtype=np.float32)
     rows, cols = h.shape
 
-    ws_raw = stack.get("water_surface")
+    # W-1: prefer canonical water_surface_mask; fall back to legacy water_surface.
+    ws_raw = stack.get("water_surface_mask")
+    if ws_raw is None:
+        ws_raw = stack.get("water_surface")
     if ws_raw is None:
         # No water surface yet — produce zero-depth maps and warn
         issues.append(ValidationIssue(
             code="BATHYMETRY_WATER_SURFACE_MISSING",
             severity="soft",
-            message="pass_bathymetry: water_surface channel absent; "
+            message="pass_bathymetry: water_surface_mask channel absent; "
                     "bathymetry will be all zeros. Run pass_water_variants first.",
-            affected_feature="water_surface",
+            affected_feature="water_surface_mask",
         ))
         bathymetry = np.zeros(h.shape, dtype=np.float32)
         water_depth_zone = np.zeros(h.shape, dtype=np.uint8)
