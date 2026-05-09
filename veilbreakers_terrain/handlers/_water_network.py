@@ -3277,30 +3277,34 @@ def detect_river_mouth_zones(
             if bath is not None:
                 water_anchor = np.asarray(bath, dtype=np.float32) > 0.0
     if water_anchor is not None:
-        # Dilate the water region by buffer_cells to capture mouths that
-        # land on the riverbed cell adjacent to the water body.
-        if buffer_cells > 0:
-            try:
-                from scipy.ndimage import binary_dilation  # type: ignore
-                struct = np.ones(
-                    (2 * buffer_cells + 1, 2 * buffer_cells + 1),
-                    dtype=bool,
-                )
-                water_anchor_dilated = np.asarray(
-                    binary_dilation(water_anchor, structure=struct),
-                    dtype=bool,
-                )
-            except ImportError:
-                water_anchor_dilated = np.zeros_like(water_anchor, dtype=bool)
-                rs, cs = np.where(water_anchor)
-                for r, c in zip(rs.tolist(), cs.tolist()):
-                    r0 = max(0, r - buffer_cells)
-                    r1 = min(H, r + buffer_cells + 1)
-                    c0 = max(0, c - buffer_cells)
-                    c1 = min(W, c + buffer_cells + 1)
-                    water_anchor_dilated[r0:r1, c0:c1] = True
-        else:
-            water_anchor_dilated = water_anchor
+        # Dilate the water region by max(buffer_cells, 1) to capture
+        # mouths that land on the riverbed cell adjacent to the water
+        # body. The mouth_raw heuristic emits at the upstream cell that
+        # FLOWS INTO water — so the mouth itself is on the dry-river
+        # side, ONE cell away from the wet body. A 0-cell anchor would
+        # strip every legitimate mouth (Codex P2 + Copilot review).
+        # We always dilate by at least 1; callers that want raw
+        # un-buffered detection should consult `mouth_raw` directly.
+        anchor_buffer = max(buffer_cells, 1)
+        try:
+            from scipy.ndimage import binary_dilation  # type: ignore
+            struct = np.ones(
+                (2 * anchor_buffer + 1, 2 * anchor_buffer + 1),
+                dtype=bool,
+            )
+            water_anchor_dilated = np.asarray(
+                binary_dilation(water_anchor, structure=struct),
+                dtype=bool,
+            )
+        except ImportError:
+            water_anchor_dilated = np.zeros_like(water_anchor, dtype=bool)
+            rs, cs = np.where(water_anchor)
+            for r, c in zip(rs.tolist(), cs.tolist()):
+                r0 = max(0, r - anchor_buffer)
+                r1 = min(H, r + anchor_buffer + 1)
+                c0 = max(0, c - anchor_buffer)
+                c1 = min(W, c + anchor_buffer + 1)
+                water_anchor_dilated[r0:r1, c0:c1] = True
         # Intersect detected mouths with the dilated water anchor.
         mouth_dilated = mouth_dilated & water_anchor_dilated
 

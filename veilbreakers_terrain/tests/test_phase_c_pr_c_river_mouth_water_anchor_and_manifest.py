@@ -55,14 +55,20 @@ def test_river_mouth_excludes_dry_accumulation_when_water_surface_mask_present()
 
     mouths = detect_river_mouth_zones(stack, buffer_cells=0)
 
-    # Must NOT have mouth detections in the leftmost dry columns.
-    # Without the water anchor, the flow-accumulation jump at col 7→8
-    # would propagate as a buffer-dilated mouth zone into dry territory
-    # if buffer_cells>0; with buffer_cells=0 the raw mouth cell is at
-    # column 7 (the river side, dry). After anchoring, that column drops.
+    # Mouth_raw fires at col 7 (the upstream cell flowing INTO the wet
+    # body in col 8). PR-C anchor logic forces a 1-cell minimum
+    # dilation on the water anchor so that dry-side mouths adjacent to
+    # water survive (Copilot/Codex review on PR #65). So col 7 SHOULD
+    # be flagged (legitimate river-mouth on the river side), but cols
+    # 0-6 must be clean (deeper river territory, no false positives).
     assert mouths[:, :7].sum() == 0.0, (
-        f"river_mouth must not flag dry accumulation valleys; got "
-        f"left-half hits: {mouths[:, :7].sum()}"
+        f"river_mouth must not flag dry accumulation valleys upstream "
+        f"of the actual confluence; got left-half hits in cols 0-6: "
+        f"{mouths[:, :7].sum()}"
+    )
+    assert mouths[:, 7].sum() > 0.0, (
+        "the legitimate mouth cell at col 7 (adjacent to wet col 8) "
+        "must survive the anchor (1-cell min dilation captures it)"
     )
 
 
