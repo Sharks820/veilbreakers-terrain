@@ -5,48 +5,22 @@
     "blender_tool": 1604,
     "camera_readability": 401,
     "core": 8,
-<<<<<<< HEAD
-    "geometry_mesh": 1460,
-    "materials_texturing": 807,
-    "pipeline_wiring": 1255,
-    "scatter_ecology": 770,
-    "visual_qa": 397,
-    "water": 857
+    "geometry_mesh": 1461,
+    "materials_texturing": 808,
+    "pipeline_wiring": 1256,
+    "scatter_ecology": 771,
+    "visual_qa": 403,
+    "water": 858
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "LOW": 1906
+    "LOW": 1907
   },
   "tool_blocker_count": 0,
-  "total_callables": 1906,
+  "total_callables": 1907,
   "wiring_status_counts": {
     "direct_test_covered": 240,
-    "helper_reachable": 1444,
-    "runtime_primary": 222
-=======
-    "geometry_mesh": 1455,
-    "materials_texturing": 807,
-<<<<<<< HEAD
-    "pipeline_wiring": 1247,
-    "scatter_ecology": 770,
-    "visual_qa": 402,
-=======
-    "pipeline_wiring": 1250,
-    "scatter_ecology": 770,
-    "visual_qa": 397,
->>>>>>> origin/main
-    "water": 852
-  },
-  "false_grade_count": 0,
-  "risk_counts": {
-    "LOW": 1901
-  },
-  "tool_blocker_count": 0,
-  "total_callables": 1901,
-  "wiring_status_counts": {
-    "direct_test_covered": 240,
-    "helper_reachable": 1441,
+    "helper_reachable": 1447,
     "runtime_primary": 220
->>>>>>> origin/main
   }
 }

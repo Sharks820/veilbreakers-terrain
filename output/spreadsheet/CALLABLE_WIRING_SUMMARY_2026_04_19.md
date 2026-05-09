@@ -8,25 +8,14 @@ Artifact filename note: `2026_04_19` is the stable first-pass artifact ID retain
 
 ## Totals
 
-<<<<<<< HEAD
-- Live handler callables scanned: `1906`
+- Live handler callables scanned: `1907`
 - Callables missing from the grade sheet: `0`
-- Callables without any R9 grade attached via matching CSV row: `680`
+- Callables without any R9 grade attached via matching CSV row: `681`
 
 Status distribution:
 - `direct_test_covered`: `240`
-- `helper_reachable`: `1444`
-- `runtime_primary`: `222`
-=======
-- Live handler callables scanned: `1901`
-- Callables missing from the grade sheet: `0`
-- Callables without any R9 grade attached via matching CSV row: `675`
-
-Status distribution:
-- `direct_test_covered`: `240`
-- `helper_reachable`: `1441`
+- `helper_reachable`: `1447`
 - `runtime_primary`: `220`
->>>>>>> origin/main
 
 ## Highest-Risk Files
 

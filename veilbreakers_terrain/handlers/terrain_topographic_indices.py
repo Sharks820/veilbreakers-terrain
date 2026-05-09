@@ -18,9 +18,14 @@ Reference:
     channel names prior to D35. Foliage stack §4.2 consumes them.
 
 Implementation notes:
-    * Pure-numpy implementation with optional scipy.ndimage fast path for
-      ``distance_transform_edt`` / ``gaussian_filter`` when available — the
-      pass is fully functional without scipy.
+    * Pure-numpy implementation — ``np.gradient`` for slope/aspect,
+      explicit horizon-walk for sky-view factor, and ``np.log`` /
+      ``np.tan`` for TWI.  No scipy dependency is required or used by
+      this pass.  (Copilot round-3 fix, PR #58 thread 2: a stale comment
+      claimed an optional scipy.ndimage fast path for
+      ``distance_transform_edt`` / ``gaussian_filter`` — neither is
+      called here today.  Re-add the comment if a scipy fast path is
+      ever wired in.)
     * Sky-view factor uses a 24-direction azimuthal sample (every 15 deg)
       with a finite ray length to keep cost bounded; the exact angle set is
       pinned for byte-identical determinism.
@@ -157,14 +162,27 @@ def _compute_canopy_openness(
         # Per-ray maximum elevation angle (radians).
         max_elev = np.full(h.shape, -math.pi / 2.0, dtype=np.float32)
 
+        # Copilot round-3 fix (PR #58 thread 3): at shallow azimuths
+        # ``round(uy * step)`` / ``round(ux * step)`` collapses many
+        # consecutive step indices to the same integer ``(dr, dc)``
+        # offset (e.g. for an azimuth ~5 deg, steps 1-9 all yield the
+        # same offset).  The previous comment incorrectly claimed each
+        # step has a unique offset; in practice ``np.maximum`` over the
+        # repeated offset is a no-op but still pays the slice + memory
+        # cost.  De-duplicate offsets per ray so we visit each unique
+        # (dr, dc) exactly once.  Iteration order is preserved by using
+        # ``dict.fromkeys`` (insertion-ordered since Python 3.7) so
+        # determinism is unchanged.
+        seen_offsets: "dict[tuple[int, int], None]" = {}
         for step in range(1, _SKYVIEW_RAY_CELLS + 1):
-            # Integer cell offsets at this step. We use round-to-nearest for
-            # a deterministic discrete walk; non-integer step displacements
-            # are not summed twice because each step has a unique (dr, dc).
             dr = int(round(uy * step))
             dc = int(round(ux * step))
             if dr == 0 and dc == 0:
                 continue
+            offset = (dr, dc)
+            if offset in seen_offsets:
+                continue
+            seen_offsets[offset] = None
 
             # Source slice (the cell we're sampling from): full grid except
             # the edges that would walk off the boundary.

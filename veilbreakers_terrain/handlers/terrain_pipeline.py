@@ -238,12 +238,19 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # so its strat_erosion_delta is composed into ``height`` by
             # ``integrate_deltas``.
             *(("stratigraphy",) if has_scene_read else ()),
-            # Phase C D35: emit derived topographic indices (vb_aspect_deg,
-            # vb_aspect_north, vb_canopy_openness, vb_TWI) AFTER erosion/
-            # composite + stratigraphy so consumers see post-erosion
-            # height-derived values, and BEFORE foliage/scatter consumers
-            # read them.
-            "topographic_indices",
+            # Codex round-3 fix (PR #58 thread 1): ``topographic_indices``
+            # was previously inserted HERE (before water/coastline/
+            # waterfall/integrate_deltas/talus), so its outputs were
+            # computed from the pre-delta surface.  When any of those
+            # passes write a height-mutating delta and ``integrate_deltas``
+            # composes it (or ``talus`` rewrites height post-integration),
+            # vb_aspect_deg / vb_aspect_north / vb_canopy_openness / vb_TWI
+            # would lag the actual surface and downstream foliage / scatter
+            # consumers would see stale topographic masks.  The pass is now
+            # scheduled BELOW after ``structural_masks_post_talus`` so it
+            # always reads the final composited height — see the inserted
+            # ``"topographic_indices"`` entry after talus + before
+            # ``pass_road_network`` / ``materials_v2``.
             # C-7: terrain feature carving before scatter
             "pass_terrain_features",
             # C-8: sightline framing before scatter
@@ -261,6 +268,13 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             *(("integrate_deltas",) if has_scene_read else ()),
             *(("talus", "structural_masks_post_talus") if include_talus else ()),
             *(("pass_lava_simulation",) if include_lava else ()),
+            # Codex round-3 fix (PR #58 thread 1): ``topographic_indices``
+            # is scheduled AFTER all height-mutating passes (delta
+            # integration, talus, lava) and BEFORE the materials/scatter
+            # consumers, so vb_aspect_deg / vb_aspect_north /
+            # vb_canopy_openness / vb_TWI reflect the final composited
+            # height the consumers actually texture / scatter on.
+            "topographic_indices",
             # FIX-B14-6: road network pass runs before materials and scatter so
             # road_sdf_dist is available to materials_v2 / scatter_intelligent.
             "pass_road_network",
