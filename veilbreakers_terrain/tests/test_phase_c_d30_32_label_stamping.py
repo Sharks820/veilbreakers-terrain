@@ -40,7 +40,6 @@ from veilbreakers_terrain.handlers.terrain_labels import (
     _stamp_label_in_channel,
     _try_scipy_label,
     pass_label_stamping,
-    register_pass_label_stamping,
 )
 from veilbreakers_terrain.handlers.terrain_pipeline import (
     TerrainPassController,
@@ -261,8 +260,15 @@ def _build_synthetic_pipeline_state(
 
 
 def test_pass_label_stamping_registers() -> None:
-    """``register_pass_label_stamping`` adds the pass with the right contract."""
-    register_pass_label_stamping()
+    """The label_stamping pass is registered via the broker pattern (per
+    docs/IMPLEMENTATION_FIX_GUIDE_2026_05_07_FINAL §17 Phase C D30-32) —
+    terrain_pipeline.register_default_passes() pulls
+    label_stamping_pass_definition() from terrain_labels and registers
+    it directly on TerrainPassController, avoiding the static
+    CodeQL-flagged import cycle.
+    """
+    from veilbreakers_terrain.handlers.terrain_pipeline import register_default_passes
+    register_default_passes()
     pdef = TerrainPassController.PASS_REGISTRY["label_stamping"]
     assert pdef.func is pass_label_stamping
     assert "height" in pdef.requires_channels

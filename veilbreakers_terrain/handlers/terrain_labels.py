@@ -602,22 +602,13 @@ def label_stamping_pass_definition() -> PassDefinition:
     )
 
 
-def register_pass_label_stamping() -> None:
-    """Register ``pass_label_stamping`` on the TerrainPassController.
-
-    Idempotent — safe to call multiple times (the controller upserts on
-    duplicate name).
-
-    NOTE: This function imports terrain_pipeline lazily, which is why the
-    static cycle was historically unavoidable. Callers who want to fully
-    avoid the cycle (e.g. terrain_pipeline.register_default_passes) should
-    instead call ``label_stamping_pass_definition()`` and register it on
-    their own controller — see that function's docstring.
-    """
-    # Local import to avoid module-load-time circular dependency.
-    from .terrain_pipeline import TerrainPassController
-
-    TerrainPassController.register_pass(label_stamping_pass_definition())
+# NOTE: register_pass_label_stamping was removed in Phase C D30-32 hardening
+# because lazy `from .terrain_pipeline import TerrainPassController` still
+# triggered CodeQL's py/cyclic-import rule (CodeQL static-graph doesn't
+# distinguish module-top vs function-local imports). The canonical broker
+# pattern is: terrain_pipeline pulls label_stamping_pass_definition() and
+# registers the def directly. terrain_labels has zero terrain_pipeline
+# dependency — strict acyclic.
 
 
 __all__ = [
@@ -626,5 +617,5 @@ __all__ = [
     "LabelStamp",
     "LabelStack",
     "pass_label_stamping",
-    "register_pass_label_stamping",
+    "label_stamping_pass_definition",
 ]

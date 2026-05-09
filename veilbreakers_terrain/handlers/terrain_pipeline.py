@@ -1928,7 +1928,7 @@ def __getattr__(name: str) -> object:
         "LabelStamp",
         "STRUCTURAL_LABELS",
         "pass_label_stamping",
-        "register_pass_label_stamping",
+        "label_stamping_pass_definition",
     }
     if name in _label_exports:
         from . import terrain_labels  # local import, after both modules loaded
