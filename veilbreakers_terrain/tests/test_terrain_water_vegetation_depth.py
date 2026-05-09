@@ -151,7 +151,14 @@ def test_register_water_and_bathymetry_passes_publish_expected_contracts():
     assert "water_surface_elevation_m" in water_def.produces_channels
     assert "wetness" in water_def.overrides
     assert "water_depth_zone" in bathy_def.produces_channels
-    assert "water_surface" in bathy_def.requires_channels
+    # PR-A round-3 (Copilot review): pass_bathymetry now prefers
+    # water_surface_mask (canonical), then water_surface_elevation_m,
+    # falling back to legacy water_surface. All three are in
+    # optional_channels; only height is strictly required. The contract
+    # is "any wet-state source is sufficient".
+    assert "water_surface" in (
+        bathy_def.requires_channels + bathy_def.optional_channels
+    )
 
 
 def test_geyser_and_swamp_specs_return_empty_when_no_sites_detected():
@@ -802,7 +809,13 @@ def test_bundle_o_supplemental_pass_contracts_are_declared():
     bathymetry = TerrainPassController.PASS_REGISTRY["bathymetry"]
     assert bathymetry.func.__name__ == "pass_bathymetry"
     assert "height" in bathymetry.requires_channels
-    assert "water_surface" in bathymetry.requires_channels
+    # PR-A round-3 (Copilot review): water_surface is now optional
+    # alongside the new canonical water_surface_mask + water_surface_
+    # elevation_m channels. Bathymetry runs whenever ANY wet-state
+    # source is present, with mask preferred over legacy.
+    assert "water_surface" in (
+        bathymetry.requires_channels + bathymetry.optional_channels
+    )
     assert "bathymetry" in bathymetry.produces_channels
     assert "water_depth_zone" in bathymetry.produces_channels
 
