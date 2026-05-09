@@ -989,6 +989,16 @@ def pass_water_variants(
     if region is not None:
         existing_mask = stack.get("water_surface_mask")
         existing_elev = stack.get("water_surface_elevation_m")
+        existing_legacy = stack.get("water_surface")
+        # CodeRabbit thread fix (PR-A round-2): also derive the existing
+        # mask from the legacy ``water_surface`` channel when canonical
+        # ``water_surface_mask`` is absent. Without this, region-merge
+        # callers that only have legacy state fall through to the
+        # corrupted-state branch and end up with slice-only wsfm.
+        if existing_mask is None and existing_legacy is not None:
+            existing_mask = (
+                np.asarray(existing_legacy, dtype=np.float32) > 0.0
+            ).astype(np.float32)
         if existing_mask is not None:
             merged_mask = np.asarray(existing_mask, dtype=np.float32).copy()
             merged_mask[r_slice, c_slice] = water_surface_mask_full[r_slice, c_slice]
@@ -1005,10 +1015,8 @@ def pass_water_variants(
                 water_surface_mask_full > 0.0,
             )
         elif existing_elev is not None:
-            # No prior mask but prior elevation: still need to merge the
-            # slice in. Recompute would require a mask source — we don't
-            # have one, so fall back to slice-only merge with a warning
-            # (this path is only reachable from corrupted state).
+            # No prior mask AND no legacy water_surface either; corrupted
+            # state path. Slice-only merge with no spill-rim recompute.
             merged_elev = np.asarray(existing_elev, dtype=np.float32).copy()
             merged_elev[r_slice, c_slice] = water_surface_elevation_m_full[r_slice, c_slice]
             water_surface_elevation_m_full = merged_elev
@@ -1653,9 +1661,17 @@ def pass_bathymetry(
         canonical_mask = stack.get("water_surface_mask")
         if canonical_mask is not None:
             wet_mask = np.asarray(canonical_mask, dtype=np.float32) > 0.5
+            # Copilot review fix (PR-A round-2): when the canonical mask
+            # says a cell is dry, zero out water_surface_elev there
+            # regardless of the raw ``ws`` value. Otherwise downstream
+            # consumers that read wsfm directly (not via wet-mask gated
+            # bathymetry) see stale ws values on dry cells — the same
+            # ``wsfm > 0`` "has water" sentinel pattern that PR-F1's
+            # bathymetry early-out fix already addressed.
+            water_surface_elev = np.where(wet_mask, ws, 0.0).astype(np.float32)
         else:
             wet_mask = (ws >= h - 0.05)  # small tolerance for floating-point seam cells
-        water_surface_elev = ws  # already in metres
+            water_surface_elev = ws  # already in metres
     else:
         wet_mask = (ws > 0.5)
         # PR-F1 fix: factored the per-body spill-rim flood-fill out into the
@@ -1730,6 +1746,17 @@ def register_bathymetry_pass() -> None:
             name="bathymetry",
             func=pass_bathymetry,
             requires_channels=("height", "water_surface"),
+            # CodeRabbit review fix (PR-A round-2): pass_bathymetry now
+            # canonically reads ``water_surface_mask`` (preferred) and
+            # ``water_surface_elevation_m`` (fallback) before falling
+            # back to legacy ``water_surface``. Declare the canonical
+            # channels in optional_channels so the PassDAG knows
+            # bathymetry consumes them and can schedule producers
+            # upstream when present.
+            optional_channels=(
+                "water_surface_mask",
+                "water_surface_elevation_m",
+            ),
             produces_channels=("bathymetry", "water_depth_zone", "water_surface_elevation_m"),
             overrides=("water_surface_elevation_m",),
             seed_namespace="bathymetry",
@@ -1737,7 +1764,8 @@ def register_bathymetry_pass() -> None:
             description=(
                 "Pass 5 supplement — compute bathymetry (depth-below-surface) "
                 "and water_depth_zone (0=dry/1=wade/2=swim/3=deep) from "
-                "height + water_surface channels."
+                "height + water_surface_mask (canonical) or water_surface "
+                "(legacy fallback)."
             ),
         )
     )
