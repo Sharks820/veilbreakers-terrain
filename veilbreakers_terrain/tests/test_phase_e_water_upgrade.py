@@ -266,25 +266,35 @@ class TestWaterShaderManifestShape:
         """CodeRabbit round-2 fix: ``shader_integration_notes['unity_urp']``
         must vary by ``water_backend`` so manifests emitted for non–Boat-Attack
         backends carry the right Unity package guidance.
+
+        CodeRabbit round-3 fix (PR #53 thread 6): replace four separate
+        ``# pyright: ignore[reportArgumentType]`` annotations with a
+        single ``cast(TerrainMaskStack, self._stack())``.  The mock
+        ``_DictStack`` is structurally compatible (manifest builder only
+        reads ``.get()`` on it), but the cast keeps the type-narrow
+        contract visible and reusable across the four call sites.
         """
+        from typing import cast
+
+        from veilbreakers_terrain.handlers.terrain_semantics import (
+            TerrainMaskStack,
+        )
         from veilbreakers_terrain.handlers.terrain_unity_export import (
             _water_shader_manifest_json,
         )
 
-        # pyright: ignore[reportArgumentType] — _DictStack is a structural
-        # mock for TerrainMaskStack; the manifest builder only reads .get()
-        # on it and never depends on TerrainMaskStack's full surface.
+        stack = cast(TerrainMaskStack, self._stack())
         boat_payload = _water_shader_manifest_json(
-            self._stack(), water_backend="boat_attack"  # pyright: ignore[reportArgumentType]
+            stack, water_backend="boat_attack"
         )
         sw2_payload = _water_shader_manifest_json(
-            self._stack(), water_backend="stylized_water_2"  # pyright: ignore[reportArgumentType]
+            stack, water_backend="stylized_water_2"
         )
         crest_payload = _water_shader_manifest_json(
-            self._stack(), water_backend="crest_5"  # pyright: ignore[reportArgumentType]
+            stack, water_backend="crest_5"
         )
         hand_payload = _water_shader_manifest_json(
-            self._stack(), water_backend="hand_authored_urp"  # pyright: ignore[reportArgumentType]
+            stack, water_backend="hand_authored_urp"
         )
 
         boat_note = boat_payload["shader_integration_notes"]["unity_urp"]

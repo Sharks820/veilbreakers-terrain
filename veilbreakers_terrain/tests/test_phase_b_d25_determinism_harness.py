@@ -180,18 +180,38 @@ def test_harness_baseline_hash_unchanged():
     platform, skip explicitly rather than warn-and-pass.  A skip is a
     visible CI signal; a warning is not, and would let the gate degrade
     to a no-op on Linux / darwin.
+
+    Codex round-3 fix (PR #53 thread 1): in CI specifically, an
+    unbaselined platform must FAIL rather than skip.  Otherwise the
+    Ubuntu ``ci (3.11)`` / ``ci (3.12)`` jobs silently bypass the only
+    baseline-drift assertion on the Linux path while still passing the
+    suite green.  Local / non-CI runs still skip so contributors can
+    work on Linux/darwin without baselining first.  Once a Linux
+    baseline is captured (via the harness command in the skip message)
+    and added to ``_BASELINE_HASHES_BY_PLATFORM``, this gate goes live
+    on the Ubuntu CI matrix automatically.
     """
+    import os
     import platform as _platform
 
     plat = _platform.system().lower()  # 'windows' / 'linux' / 'darwin'
     expected = _BASELINE_HASHES_BY_PLATFORM.get(plat)
     if expected is None:
-        pytest.skip(
+        in_ci = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+        msg = (
             f"No baseline hash pinned for platform={plat!r}.  Add to "
             "_BASELINE_HASHES_BY_PLATFORM after capturing a stable value "
             "via `python -m veilbreakers_terrain.deterministic_bake_harness "
             "--seed=42 --tile=0,0 --runs=2 --size=16` on this OS."
         )
+        if in_ci:
+            pytest.fail(
+                f"Baseline-drift gate cannot run on unbaselined CI platform "
+                f"{plat!r}: {msg}  CI must not silently degrade this "
+                "assertion to a skip — capture and pin a baseline for "
+                f"{plat!r} before re-running the matrix."
+            )
+        pytest.skip(msg)
     payload = _run_harness("--seed=42", "--tile=0,0", "--runs=2", "--size=16")
     assert payload["deterministic"] is True
     actual_hash = payload["hashes"][0]

@@ -139,9 +139,25 @@ def chunk_seed_bytes(
     # CodeRabbit round-2 fix: validate length BEFORE materializing
     # ``bytes(extra)`` so a pathological multi-GB ``memoryview``/
     # ``bytearray`` raises ``ValueError`` cleanly instead of trying to
-    # allocate the copy first and crashing with ``MemoryError``.  ``len()``
-    # works on any buffer-protocol object without copying.
-    extra_len = len(extra)
+    # allocate the copy first and crashing with ``MemoryError``.
+    #
+    # CodeRabbit round-3 fix (PR #53 threads 2 + 5): use
+    # ``memoryview(extra).nbytes`` rather than ``len(extra)``.  For a
+    # ``memoryview`` over a multi-byte format buffer (e.g. ``array.array
+    # ('i', ...)`` or a ``numpy.int32`` array), ``len()`` returns the
+    # *element* count, not the byte count.  That would (a) under-count
+    # for the uint32 overflow guard and (b) write a length-prefix that
+    # disagrees with ``len(extra_bytes)``, breaking collision-resistance
+    # of the framed payload.  ``memoryview().nbytes`` always returns the
+    # true byte count without materializing a copy.  The ``TypeError``
+    # fallback covers test/legacy callers that pass a custom
+    # ``__len__``/``__bytes__`` object that does not implement the
+    # buffer protocol (see ``_FakeHugeBuffer`` in
+    # ``test_chunks_chunk_seed_blake2b.py``).
+    try:
+        extra_len = memoryview(extra).nbytes
+    except TypeError:
+        extra_len = len(extra)
     if extra_len >= (1 << 32):
         raise ValueError(
             f"extra salt too long: {extra_len} bytes exceeds uint32 "

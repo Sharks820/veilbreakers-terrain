@@ -48,4 +48,4 @@ Every callable used for terrain generation must satisfy its matrix row: best-pra
 
 ## Matrix
 
-Full callable-by-callable rules live in `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_08.csv`.
+Full callable-by-callable rules live in `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv`.
