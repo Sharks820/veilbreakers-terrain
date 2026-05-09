@@ -80,6 +80,57 @@ _LAVA_SOURCE_HINT_KEYS = frozenset(
     {"lava_source_mask", "lava_sources", "authored_lava_source", "has_lava_source_mask"}
 )
 
+# PR #57 round-4 fix (CodeRabbit thread on terrain_pipeline.py:192-210):
+# Authoritative set of pass names that can still mutate height,
+# water_surface_mask, or structural masks (cliff_mask, slope, curvature,
+# convexity, divergence, etc.).  ``label_stamping`` is inserted AFTER the
+# LAST scheduled pass in this set, so the labels stamped on the legacy
+# material-label channels reflect the FINAL terrain/water/structural
+# state read by ``materials_v2``.  Names not present in a given build's
+# pass_sequence are silently ignored by the scan.
+#
+# NOTE: ``pass_road_network`` must be in this set even though it runs before
+# ``materials_v2`` in the static sequence, because ``_normalize_delta_
+# integration_sequence`` (called in ``run_pipeline``) moves
+# ``integrate_deltas`` to AFTER the last delta producer.
+# ``pass_road_network`` produces ``road_worn_path_delta``, so normalization
+# places ``integrate_deltas`` after it, meaning any ``label_stamping``
+# anchor placed before ``pass_road_network`` would end up BEFORE both the
+# road mutation and its composed height delta — contrary to the "after the
+# LAST mutator" guarantee.
+_LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
+    "pass_composite_hmap",
+    "structural_masks",
+    "banded_macro",
+    "pass_banded_advanced",
+    "structural_masks_post_erosion",
+    "pass_hydrology_post_erosion",
+    "pass_morphology",
+    "pass_glacial",
+    "biome_surface_features",
+    "wind_erosion",
+    "stratigraphy",
+    "coastline",
+    "pass_terrain_features",
+    "framing",
+    "talus",
+    "structural_masks_post_talus",
+    "lava_emit",
+    "lava_carve",
+    "integrate_deltas",
+    "bathymetry",
+    "pass_seasonal_water_state",
+    "water_variants",
+    "pass_water_variants",
+    "pass_water_depth",
+    "erosion",
+    "pass_hydrology",
+    # Road network produces road_worn_path_delta; _normalize_delta_integration_
+    # sequence will place integrate_deltas after this pass.  Without this entry
+    # label_stamping would be anchored before the road/delta composition.
+    "pass_road_network",
+})
+
 
 def _copy_checkpoint_value(value: Any) -> Any:
     """Copy one checkpoint channel without walking the whole stack object."""
@@ -189,25 +240,12 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         "pass_banded_advanced",
         validation_pass,
     ]
-    # Phase C D30-32 (Issue #27) — opt-in label-stamping. Inserted AFTER
-    # ``structural_masks`` (so slope+curvature exist) and BEFORE the
-    # ``materials_v2`` consumer (so stamped labels override analytical slope).
-    # Stays out of pass_sequence when the hint is False so default tests are
-    # unaffected.
-    #
-    # Codex round-3 fix (PR #57 thread 2): the simple post-structural_masks
-    # placement is correct for headless / no-scene-read runs (where
-    # ``water_surface_mask`` is never populated), but in the canonical
-    # scene-read pipeline the water mask is written by ``pass_water_variants``
-    # which is only inserted later (validation_full block).  Defer the
-    # actual insertion until after the scene-read inserts run; we'll
-    # reposition the pass to land after ``pass_water_depth`` (the final
-    # water-mask producer in the sequence) so the river_channel /
-    # lake_shore stamps actually fire.  When scene_read is False, we keep
-    # the post-structural_masks placement.
-    if include_label_stamping and not has_scene_read:
-        insert_at = pass_sequence.index("structural_masks") + 1
-        pass_sequence.insert(insert_at, "label_stamping")
+    # Phase C D30-32 (Issue #27) — opt-in label-stamping deferred until AFTER
+    # every pass that can still mutate height, water, or structural masks.
+    # See _LABEL_STAMPING_DEFERRABLE_PASSES (module-level set) for the
+    # authoritative list.  The actual insert happens in a single block at
+    # the bottom of this builder (post all scene-read / validation-full
+    # extensions) so the deferrable-set scan sees the FINAL pass_sequence.
     if has_scene_read:
         # Hydrology + erosion operate on the low-freq height before compositing.
         # Insert them at index 3 (before pass_generate_high_freq_detail).
@@ -343,28 +381,35 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             if prereq not in pass_sequence:
                 pass_sequence.insert(insert_at, prereq)
                 insert_at += 1
-    # Codex round-3 fix (PR #57 thread 2): in the canonical scene-read
-    # pipeline ``water_surface_mask`` is written by ``pass_water_variants``
-    # (and the optional ``pass_water_depth`` follow-up), both of which are
-    # inserted by the validation_full water block above.  We deferred the
-    # ``label_stamping`` insert when scene_read is True so that it lands
-    # AFTER the water producer here — otherwise the river_channel /
-    # lake_shore branch sees ``water_surface_mask is None`` and never
-    # emits its stamps.  Place it directly after ``pass_water_depth``
-    # (or ``pass_water_variants`` if depth isn't scheduled), still
-    # before ``materials_v2``.
-    if include_label_stamping and has_scene_read and "label_stamping" not in pass_sequence:
-        anchor: Optional[str] = None
-        for candidate in ("pass_water_depth", "bathymetry", "pass_seasonal_water_state", "water_variants"):
-            if candidate in pass_sequence:
-                anchor = candidate
-                break
-        if anchor is None:
-            # No water producer scheduled — fall back to the headless
-            # post-structural_masks placement so the pass still runs.
-            anchor = "structural_masks"
-        insert_at = pass_sequence.index(anchor) + 1
-        pass_sequence.insert(insert_at, "label_stamping")
+    # PR #57 round-4 fix (CodeRabbit thread on terrain_pipeline.py:192-210):
+    # ``label_stamping`` derives labels from slope/curvature/water masks, so
+    # it must run AFTER every later pass that can still change height,
+    # water_surface_mask, or structural masks (e.g. banded_macro,
+    # pass_banded_advanced, integrate_deltas, talus, structural_masks_post_*,
+    # pass_water_depth, pass_water_variants, ...).  Otherwise materials_v2
+    # reads stamps that were derived from intermediate state.
+    #
+    # Single insertion point handles both headless and scene-read modes —
+    # the scan over the FINAL pass_sequence picks up whichever deferrable
+    # passes are actually scheduled in this build.  Skipped silently when
+    # include_label_stamping is False so default tests are unaffected.
+    if include_label_stamping and "label_stamping" not in pass_sequence:
+        last_mutator_idx = -1
+        for i, name in enumerate(pass_sequence):
+            if name in _LABEL_STAMPING_DEFERRABLE_PASSES:
+                last_mutator_idx = i
+        if last_mutator_idx >= 0:
+            pass_sequence.insert(last_mutator_idx + 1, "label_stamping")
+        elif "structural_masks" in pass_sequence:
+            # Fallback: post-structural_masks (covers truncated test sequences
+            # where none of the deferrable mutators are scheduled).
+            pass_sequence.insert(pass_sequence.index("structural_masks") + 1, "label_stamping")
+        else:
+            # No anchor at all — append before validation_pass, or at end.
+            if validation_pass in pass_sequence:
+                pass_sequence.insert(pass_sequence.index(validation_pass), "label_stamping")
+            else:
+                pass_sequence.append("label_stamping")
     return pass_sequence
 
 
@@ -1216,10 +1261,20 @@ class TerrainPassController:
                         f"{restored_shape} does not match current grid shape "
                         f"{current_shape}. Rollback aborted."
                     )
-                # Validate all populated channels
+                # Validate all populated channels (skip opaque channels —
+                # e.g. ``label_stack`` rebuilt as a live LabelStack — which
+                # have no array-shape contract).  PR #57 round-4 fix
+                # (CodeRabbit thread on PR #57): without this guard, a
+                # rollback to any checkpoint taken after ``label_stamping``
+                # crashes on the LabelStack object instead of restoring state.
+                opaque = getattr(restored, "_OPAQUE_CHANNELS", ())
                 for ch_name in list(restored.populated_by_pass.keys()):
+                    if ch_name in opaque:
+                        continue
                     ch_arr = restored.get(ch_name)
                     if ch_arr is None:
+                        continue
+                    if not hasattr(ch_arr, "shape"):
                         continue
                     if ch_arr.shape[:2] != current_shape[:2]:
                         raise ValueError(
