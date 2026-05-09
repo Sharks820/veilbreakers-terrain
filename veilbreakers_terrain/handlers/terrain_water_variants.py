@@ -116,11 +116,23 @@ def _compute_spill_rim_elevation(
     """Per-cell water_surface_elevation derived from connected-component spill-rim.
 
     AAA hydrology bake invariant: ``wsfm[wet] >= h[wet]`` so
-    ``water_depth_m = max(wsfm - h, 0)`` is non-zero everywhere the water
-    mask says water exists. Each connected wet body's surface elevation is
-    set to ``max(dry_rim_neighbors, body_underlying_heights)``: the body
-    fills up to the lowest dry rim that contains it (or to its own deepest
-    cell if all neighbors are also wet, e.g. an interior tile cell).
+    ``water_depth_m = max(wsfm - h, 0)`` is non-zero (or zero only at the
+    body's surface boundary) everywhere the water mask says water exists.
+
+    Each connected wet body's surface elevation is set to
+    ``max(highest_dry_rim_neighbor, highest_underlying_terrain_in_body)``.
+    The dry-rim term is the surface that any dry neighbor would have to be
+    at to ACTUALLY contain the wet body (water fills up to the highest
+    point on the rim before spilling over).  The underlying-terrain term
+    guarantees the invariant ``wsfm >= h`` even when the wet body contains
+    a cell whose terrain rises above all its dry neighbors (an authored
+    "perched" wet cell, or numerical noise on near-flat ridges) — without
+    it, that cell could end up with ``wsfm < h`` which collapses
+    ``water_depth_m`` back to zero, the very bug this helper exists to fix.
+
+    When a body has no dry rim neighbors at all (entirely surrounded by
+    other wet cells, e.g. an interior-tile body whose seam continues into
+    a neighbouring tile), the underlying-terrain max is used unconditionally.
 
     Mirrors Houdini ``hf_water_solver`` and UE5 Water Body's flood-fill bake.
 
@@ -179,10 +191,21 @@ def _compute_spill_rim_elevation(
             if 0 <= nr < rows and 0 <= nc < cols and not wet_mask[nr, nc]:
                 rim_values.append(float(h[nr, nc]))
 
-    body_surface: dict[int, float] = {
-        root: float(max(body_rims.get(root) or heights))
-        for root, heights in body_heights.items()
-    }
+    # Per-body spill rim: the maximum of (highest dry rim height, highest
+    # underlying terrain in the wet body). Including the body's own height
+    # max guarantees the AAA invariant ``wsfm[wet] >= h[wet]`` even when a
+    # connected wet body contains a cell that rises above all its dry
+    # neighbors (Codex P2 / Copilot reviewer fix: the prior
+    # ``rims or heights`` form silently dropped heights whenever ANY rim
+    # cell existed, allowing wsfm < h on perched wet cells).
+    body_surface: dict[int, float] = {}
+    for root, heights in body_heights.items():
+        rim_values = body_rims.get(root) or []
+        # Always take the body's own max height; only add rim_max if rims exist.
+        candidates = list(heights)
+        if rim_values:
+            candidates.append(max(rim_values))
+        body_surface[root] = float(max(candidates))
 
     for idx in range(rows * cols):
         if not wet_flat[idx]:

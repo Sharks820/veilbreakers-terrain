@@ -2,15 +2,15 @@
 
 This report treats grade rows as claims, not proof. A callable needs executable evidence.
 
-- Total callables: 1907
+- Total callables: 1922
 - Blockers: 0
 - High risk: 0
 - Medium risk: 0
-- Low risk: 1907
+- Low risk: 1922
 - A-grade rows with no executable evidence: 0
-- A-grade rows with tests but no production caller/runtime exposure: 140
+- A-grade rows with tests but no production caller/runtime exposure: 142
 - Tool/Blender callables needing blocker/high evidence: 0
-- Wiring status counts: {'direct_test_covered': 240, 'helper_reachable': 1447, 'runtime_primary': 220}
+- Wiring status counts: {'direct_test_covered': 242, 'helper_reachable': 1460, 'runtime_primary': 220}
 
 ## Highest Risk Files
 
