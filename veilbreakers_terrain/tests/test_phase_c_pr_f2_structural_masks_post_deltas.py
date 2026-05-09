@@ -203,11 +203,14 @@ def test_structural_masks_post_deltas_stays_paired_with_integrate_deltas_after_n
 
     register_default_passes()
 
-    # Find a registered pass that produces a delta channel and exists AFTER
-    # the static integrate_deltas slot. We pick from the actual registry
-    # rather than synthetic names so the normalizer's producer-detection
-    # actually fires (synthetic names hit the unregistered-pass warning
-    # and fall through to a no-op).
+    # Pick any registered delta-producing pass (the test will then PLACE
+    # that pass AFTER the static integrate_deltas slot in the raw
+    # sequence below, so the test does not depend on where the pass
+    # actually lives in build_default_pass_sequence — it depends only
+    # on the producer being registered so the normalizer's
+    # producer-detection fires). Synthetic / unregistered names would
+    # hit the "unregistered passes" warning and the normalizer would
+    # fall through to a no-op, so registry-backed names are required.
     from veilbreakers_terrain.handlers.terrain_delta_integrator import (
         _DELTA_CHANNELS,
     )

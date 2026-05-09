@@ -487,7 +487,18 @@ def _normalize_delta_integration_sequence(pass_sequence: List[str]) -> List[str]
     delta_channels = set(_DELTA_CHANNELS)
     # Strip BOTH the integrator and its paired recompute so they are always
     # re-inserted together at the post-producer slot.
-    pinned_passes = {"integrate_deltas", _POST_DELTAS_RECOMPUTE_PASS}
+    #
+    # Codex P2 / Copilot review fix on PR #62: only strip
+    # ``structural_masks_post_deltas`` if it is REGISTERED. Otherwise the
+    # unconditional strip silently drops the pass on partial-registry or
+    # hot-reload scenarios — and the existing unregistered-passes warning
+    # never fires because the strip happens before the diagnostic loop.
+    # Leaving an unregistered recompute in place is the safer fallback:
+    # the warning loop will surface it, and downstream consumers can
+    # decide whether to skip or fail.
+    pinned_passes = {"integrate_deltas"}
+    if _POST_DELTAS_RECOMPUTE_PASS in TerrainPassController.PASS_REGISTRY:
+        pinned_passes.add(_POST_DELTAS_RECOMPUTE_PASS)
     seq_without_integrator = [name for name in seq if name not in pinned_passes]
 
     # P2-5: surface unregistered pass names instead of silently skipping them.
