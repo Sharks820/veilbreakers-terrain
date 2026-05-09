@@ -246,6 +246,47 @@ class LabelStack:
     def __len__(self) -> int:
         return len(self.stamps)
 
+    # -- JSON-serialisation contract for TerrainMaskStack opaque channel --
+    #
+    # CodeRabbit round-3 fix (PR #57 thread 8) + Copilot round-3 fix
+    # (thread 3): ``label_stack`` is registered in
+    # ``TerrainMaskStack._OPAQUE_CHANNELS`` so that ``compute_hash``,
+    # ``to_npz``, ``from_npz``, and rollback snapshots all observe
+    # changes to it.  Opaque channels are persisted via JSON, so we
+    # provide a round-trip ``to_dict`` / ``from_dict`` pair below.
+    # The ``_by_label`` index is rebuilt on load from the canonical
+    # ``stamps`` list (don't store both — keep the persisted form
+    # narrow + canonical).
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON-native dict representation of this LabelStack."""
+        return {
+            "stamps": [
+                {
+                    "label_id": s.label_id,
+                    "region_bbox": list(s.region_bbox),
+                    "confidence": float(s.confidence),
+                    "source_pass": s.source_pass,
+                }
+                for s in self.stamps
+            ]
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LabelStack":
+        """Reconstruct a LabelStack from its ``to_dict()`` form."""
+        stack = cls()
+        for entry in data.get("stamps", []):
+            r0, c0, r1, c1 = entry["region_bbox"]
+            stack.add(
+                LabelStamp(
+                    label_id=str(entry["label_id"]),
+                    region_bbox=(int(r0), int(c0), int(r1), int(c1)),
+                    confidence=float(entry["confidence"]),
+                    source_pass=str(entry["source_pass"]),
+                )
+            )
+        return stack
+
 
 # ---------------------------------------------------------------------------
 # Watershed-style segmentation (cliff / scree / valley / water masks)
@@ -362,9 +403,14 @@ def pass_label_stamping(
     Phase C D30-32 / spec PR #29 / Issue #27.
 
     Reads:
-        ``slope`` (radians), ``curvature``, ``biome_id`` (int32), and either
+        ``slope`` (radians), ``curvature``, and either
         ``water_surface_mask`` or ``water_label`` (float32). Each input is
         optional — if missing, that branch of the watershed is skipped.
+
+        Note: ``biome_id`` was previously declared as an optional input
+        but the implementation never read it; it was removed from
+        ``optional_channels`` / ``consumed_channels`` per PR #57 thread 4
+        (Copilot review).  Re-add when biome-aware branching is wired in.
 
     Writes:
         ``label_stack`` channel (a :class:`LabelStack` instance on
@@ -524,15 +570,40 @@ def pass_label_stamping(
             )
 
     # --- Write everything back to the stack ---
-    for chan_name, mask_arr in legacy_stamps.items():
-        # Clamp once to [0, 1] to honour the existing label-channel contract.
-        clamped = np.clip(mask_arr, 0.0, 1.0).astype(np.float32)
-        stack.set(chan_name, clamped, "label_stamping")
+    #
+    # Codex round-3 fix (PR #57 thread 1) + Copilot round-3 fix (thread 5):
+    # ALWAYS write all four legacy label channels — even when the run produced
+    # no stamps for a given channel.  ``produces_channels`` declares all four,
+    # and ``TerrainPassController.run_pass`` raises ``PassContractError`` if
+    # any declared output is missing.  Initialise un-stamped channels to
+    # zeros (preserving any prior content that already passed through the
+    # stack) so a height-only or slope-only run is contract-correct in
+    # isolation.
+    for chan_name in _LEGACY_LABEL_CHANNELS:
+        stamped = legacy_stamps.get(chan_name)
+        if stamped is None:
+            existing = stack.get(chan_name)
+            if existing is not None:
+                # Pass-through: keep the prior content (e.g. authored stamps
+                # from a feature generator that ran upstream) so we don't
+                # erase work other passes did.
+                base = np.asarray(existing, dtype=np.float32)
+            else:
+                base = np.zeros((H, W), dtype=np.float32)
+            stack.set(chan_name, base, "label_stamping")
+        else:
+            # Clamp once to [0, 1] to honour the existing label-channel contract.
+            clamped = np.clip(stamped, 0.0, 1.0).astype(np.float32)
+            stack.set(chan_name, clamped, "label_stamping")
 
-    # Publish the LabelStack as a non-array attribute. TerrainMaskStack accepts
-    # arbitrary attributes for object-typed channels (``label_stack`` is added
-    # to the dataclass below so static analysis sees it).
-    stack.label_stack = label_stack
+    # Publish the LabelStack via the canonical opaque-channel path so the
+    # value participates in compute_hash / to_npz / from_npz / rollback.
+    # Copilot round-3 fix (thread 3) + CodeRabbit fix (thread 8): direct
+    # attribute assignment bypassed provenance tracking and rollback
+    # snapshots; ``stack.set("label_stack", ...)`` now declares the write
+    # to the populated_by_pass map and routes the value through the
+    # _OPAQUE_CHANNELS hash/persistence path.
+    stack.set("label_stack", label_stack, "label_stamping")
 
     coverage = {
         chan: float(np.asarray(stack.get(chan), dtype=np.float32).mean())
@@ -544,7 +615,10 @@ def pass_label_stamping(
         pass_name="label_stamping",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
-        consumed_channels=("slope", "curvature", "biome_id", "water_surface_mask"),
+        # Copilot round-3 fix (PR #57 thread 4): ``biome_id`` is not
+        # actually read by this pass — drop it from the recorded
+        # consumed_channels so telemetry/debugging is accurate.
+        consumed_channels=("slope", "curvature", "water_surface_mask"),
         produced_channels=(
             "label_stack",
             "rock_label",
@@ -574,8 +648,19 @@ def label_stamping_pass_definition() -> PassDefinition:
         name="label_stamping",
         func=pass_label_stamping,
         requires_channels=("height",),
-        optional_channels=("slope", "curvature", "biome_id", "water_surface_mask"),
+        # Copilot round-3 fix (PR #57 thread 4): ``biome_id`` was listed
+        # as a consumed channel but ``pass_label_stamping`` does not
+        # actually call ``stack.get("biome_id")`` today.  Drop it from
+        # the optional-channels declaration so DAG/telemetry don't
+        # mislead readers about the data dependency; re-add when the
+        # biome-aware branching is actually implemented.
+        optional_channels=("slope", "curvature", "water_surface_mask"),
         produces_channels=(
+            # CodeRabbit round-3 fix (PR #57 thread 7): declare
+            # ``label_stack`` so DAG consumers can depend on it,
+            # ``run_pass`` verifies it was written, and rollback
+            # snapshots include it.
+            "label_stack",
             "rock_label",
             "gravel_label",
             "water_label",
@@ -590,11 +675,17 @@ def label_stamping_pass_definition() -> PassDefinition:
             "water_label",
             "cliff_label",
         ),
+        # CodeRabbit round-3 fix (PR #57 thread 6): the implementation
+        # ignores ``region`` and mutates the whole tile.  Mark the pass
+        # as non-region-scopable until clipping is implemented; otherwise
+        # a region-scoped re-run would restamp labels outside the edit
+        # bbox.
+        supports_region_scope=False,
         seed_namespace="label_stamping",
         requires_scene_read=False,
         may_modify_geometry=False,
         description=(
-            "Phase C D30-32: watersheds slope+curvature+biome+water "
+            "Phase C D30-32: watersheds slope+curvature+water "
             "into structural regions and stamps the four legacy "
             "material labels per region. Publishes a LabelStack on "
             "stack.label_stack for downstream texturing/scatter."

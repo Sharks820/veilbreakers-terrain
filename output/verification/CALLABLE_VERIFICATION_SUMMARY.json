@@ -1,32 +1,26 @@
 {
   "csv": "output/verification/CALLABLE_VERIFICATION_MATRIX.csv",
-  "direct_test_only_a_grade_count": 140,
+  "direct_test_only_a_grade_count": 142,
   "domain_counts": {
     "blender_tool": 1604,
     "camera_readability": 401,
     "core": 8,
-    "geometry_mesh": 1455,
-    "materials_texturing": 807,
-<<<<<<< HEAD
-    "pipeline_wiring": 1247,
-    "scatter_ecology": 770,
-    "visual_qa": 402,
-=======
-    "pipeline_wiring": 1250,
-    "scatter_ecology": 770,
-    "visual_qa": 397,
->>>>>>> origin/main
-    "water": 852
+    "geometry_mesh": 1469,
+    "materials_texturing": 821,
+    "pipeline_wiring": 1264,
+    "scatter_ecology": 784,
+    "visual_qa": 403,
+    "water": 866
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "LOW": 1901
+    "LOW": 1915
   },
   "tool_blocker_count": 0,
-  "total_callables": 1901,
+  "total_callables": 1915,
   "wiring_status_counts": {
-    "direct_test_covered": 240,
-    "helper_reachable": 1441,
+    "direct_test_covered": 242,
+    "helper_reachable": 1453,
     "runtime_primary": 220
   }
 }

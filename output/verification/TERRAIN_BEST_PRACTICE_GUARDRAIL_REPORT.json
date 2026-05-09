@@ -1,7 +1,7 @@
 {
-  "matrix_path": "output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_08.csv",
-  "live_count": 1903,
-  "matrix_count": 1903,
+  "matrix_path": "output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv",
+  "live_count": 1917,
+  "matrix_count": 1917,
   "is_blocking": false,
   "missing_rows": [],
   "field_gaps": {},
@@ -37,6 +37,7 @@
       "terrain_foliage_catalog.py::SpeciesSpec.to_dict",
       "terrain_god_ray_hints.py::GodRayHint.to_dict",
       "terrain_golden_snapshots.py::GoldenSnapshot.to_dict",
+      "terrain_labels.py::LabelStack.to_dict",
       "terrain_path_contracts.py::PathNetworkContract.to_dict",
       "terrain_path_contracts.py::PathSegmentContract.to_dict",
       "terrain_quixel_ingest.py::QuixelAsset.to_dict",
@@ -59,6 +60,7 @@
       "_water_network.py::WaterNetwork.from_dict",
       "terrain_advanced.py::TerrainLayer.from_dict",
       "terrain_golden_snapshots.py::GoldenSnapshot.from_dict",
+      "terrain_labels.py::LabelStack.from_dict",
       "terrain_telemetry_dashboard.py::TelemetryRecord.from_dict",
       "terrain_unity_backends.py::AtmosphericManifest.from_dict",
       "terrain_unity_backends.py::SkyManifest.from_dict",
@@ -68,6 +70,11 @@
     "_vec3": [
       "blender_capability_bridge.py::_vec3",
       "light_integration.py::_vec3"
+    ],
+    "add": [
+      "terrain_hot_reload.py::HotReloadWatcher.add",
+      "terrain_labels.py::LabelStack.add",
+      "terrain_validation.py::ValidationReport.add"
     ],
     "derive_pass_seed": [
       "terrain_pipeline.py::derive_pass_seed",
@@ -293,10 +300,6 @@
     "_sample_height_bilinear": [
       "terrain_horizon_lod.py::_sample_height_bilinear",
       "terrain_saliency.py::_sample_height_bilinear"
-    ],
-    "add": [
-      "terrain_hot_reload.py::HotReloadWatcher.add",
-      "terrain_validation.py::ValidationReport.add"
     ],
     "force_reload_all": [
       "terrain_hot_reload.py::HotReloadWatcher.force_reload_all",

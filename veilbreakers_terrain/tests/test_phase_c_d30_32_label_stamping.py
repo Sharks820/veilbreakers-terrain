@@ -273,11 +273,23 @@ def test_pass_label_stamping_registers() -> None:
     assert pdef.func is pass_label_stamping
     assert "height" in pdef.requires_channels
     # Optional inputs declared so the DAG can resolve them when present.
+    # PR #57 thread 4 (Copilot): biome_id was removed from optional_channels
+    # because pass_label_stamping never reads it; re-add when biome-aware
+    # branching is wired in.
     optional = set(pdef.optional_channels or ())
-    assert {"slope", "curvature", "biome_id"}.issubset(optional)
-    # All four legacy label channels are declared as outputs.
+    assert {"slope", "curvature", "water_surface_mask"}.issubset(optional)
+    assert "biome_id" not in optional, (
+        "biome_id was removed from optional_channels (PR #57 thread 4); "
+        "re-add only if pass_label_stamping starts reading biome_id."
+    )
+    # All four legacy label channels + the LabelStack are declared as outputs.
+    # PR #57 thread 7 (CodeRabbit): label_stack must be declared so DAG
+    # consumers can depend on it and rollback snapshots include it.
     produced = set(pdef.produces_channels)
-    assert {"rock_label", "gravel_label", "water_label", "cliff_label"}.issubset(produced)
+    assert {"rock_label", "gravel_label", "water_label", "cliff_label", "label_stack"}.issubset(produced)
+    # PR #57 thread 6 (CodeRabbit): pass mutates the whole tile and
+    # ignores ``region``, so it must not be advertised as region-scopable.
+    assert pdef.supports_region_scope is False
     # Overrides declared so the DAG accepts the dual-writer relationship
     # with ``pass_compute_terrain_labels``.
     overrides = set(pdef.overrides or ())

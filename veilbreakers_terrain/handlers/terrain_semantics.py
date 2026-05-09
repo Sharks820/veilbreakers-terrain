@@ -934,6 +934,15 @@ class TerrainMaskStack:
         # would leak Python object addresses and break replay determinism;
         # _OPAQUE_CHANNELS routes it through json.dumps(sort_keys=True).
         "strata_cross_section",
+        # Phase C D30-32 (PR #57 round-3 review fix — threads 3 + 8):
+        # ``label_stack`` is a ``terrain_labels.LabelStack`` instance.
+        # Registering it here means compute_hash / to_npz / from_npz /
+        # rollback snapshots all observe writes to it; previously the
+        # field was set via direct attribute assignment which bypassed
+        # provenance + hashing entirely.  ``LabelStack.to_dict()`` gives
+        # a JSON-native representation; ``LabelStack.from_dict()`` is
+        # used by ``from_npz`` to reconstruct the live instance.
+        "label_stack",
     )
 
     def set(self, channel: str, value: Any, pass_name: str) -> None:
@@ -1165,8 +1174,18 @@ class TerrainMaskStack:
             if val is None:
                 continue
             hasher.update(name.encode("utf-8"))
+            # PR #57 round-3 fix (threads 3 + 8): if the opaque value
+            # exposes a ``to_dict`` method (e.g. ``LabelStack``), use the
+            # canonical JSON-native form for hashing rather than the
+            # generic ``default=str`` fallback (which would emit a Python
+            # repr that includes object identity / list addresses and
+            # break replay determinism).
+            if hasattr(val, "to_dict") and callable(val.to_dict):
+                payload = val.to_dict()
+            else:
+                payload = val
             hasher.update(
-                json.dumps(val, sort_keys=True, default=str).encode("utf-8")
+                json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
             )
 
         digest = hasher.hexdigest()
@@ -1217,8 +1236,18 @@ class TerrainMaskStack:
             "height_min_m": float(self.height_min_m) if self.height_min_m is not None else None,
             "height_max_m": float(self.height_max_m) if self.height_max_m is not None else None,
             "strict_tile_contract": bool(self.strict_tile_contract),
+            # PR #57 round-3 fix (threads 3 + 8): persist opaque channels
+            # via ``to_dict()`` when the value defines one (e.g.
+            # ``LabelStack``) so the on-disk form is JSON-native and a
+            # round-tripped stack carries the structured data, not the
+            # ``default=str`` repr fallback.
             "opaque_channels": {
-                name: getattr(self, name)
+                name: (
+                    getattr(self, name).to_dict()
+                    if hasattr(getattr(self, name, None), "to_dict")
+                    and callable(getattr(getattr(self, name), "to_dict", None))
+                    else getattr(self, name)
+                )
                 for name in self._OPAQUE_CHANNELS
                 if getattr(self, name, None) is not None
             },
@@ -1283,6 +1312,14 @@ class TerrainMaskStack:
                     stack.set(dict_field, container, "__npz__")
             for name, value in meta.get("opaque_channels", {}).items():
                 if name in cls._OPAQUE_CHANNELS:
+                    # PR #57 round-3 fix (threads 3 + 8): reconstruct
+                    # ``label_stack`` from its persisted ``to_dict()``
+                    # form so callers see a live ``LabelStack`` instance.
+                    if name == "label_stack" and isinstance(value, dict):
+                        from veilbreakers_terrain.handlers.terrain_labels import (  # noqa: PLC0415  (lazy import to avoid module cycle)
+                            LabelStack,
+                        )
+                        value = LabelStack.from_dict(value)
                     stack.set(name, value, "__npz__")
             loaded_height_pass = stack.populated_by_pass.get("height", "__init__")
             stack.populated_by_pass.clear()
