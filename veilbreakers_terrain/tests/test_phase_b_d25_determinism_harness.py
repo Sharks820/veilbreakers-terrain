@@ -21,6 +21,8 @@ import subprocess
 import sys
 from typing import Any
 
+import pytest
+
 
 def _run_harness(
     *args: str, expect_exit: int = 0
@@ -150,9 +152,17 @@ def test_harness_rejects_malformed_tile():
 #         --seed=42 --tile=0,0 --runs=2 --size=16
 #
 # and copy the first hash into the dict below for the matching ``platform``
-# string (``windows`` / ``linux`` / ``darwin``).  CI cells on the unset
-# platform will fall through to the "any-deterministic" assertion (i.e. the
-# pair-equal check still runs, just no baseline pin).
+# string (``windows`` / ``linux`` / ``darwin``).
+#
+# CodeRabbit round-2 fix: only ``windows`` is currently baselined (the dev
+# host).  Linux / darwin baselines have not been validated, and silently
+# warning would leave 2/3 of the D25 matrix without baseline-drift
+# protection.  The safer option is to ``pytest.skip`` on unbaselined
+# platforms — the skip surfaces in CI output as an explicit "not yet
+# validated" signal rather than degrading silently to a no-op pass.  The
+# pair-equal pair-deterministic check still runs in
+# ``test_harness_reports_deterministic_for_fixed_seed`` regardless of
+# platform, so the harness contract is still exercised.
 _BASELINE_HASHES_BY_PLATFORM: dict[str, str] = {
     "windows": "3f67a95b666f3ce102053915e64250dd7b208be667b89ffec7ac81b1345b9311",
 }
@@ -165,27 +175,26 @@ def test_harness_baseline_hash_unchanged():
     in any pass would otherwise silently flip every CI cell at once.  By
     pinning the baseline value we get a *named* failure ("baseline hash
     drifted") that points at the responsible commit.
+
+    CodeRabbit round-2 fix: when no baseline is pinned for the running
+    platform, skip explicitly rather than warn-and-pass.  A skip is a
+    visible CI signal; a warning is not, and would let the gate degrade
+    to a no-op on Linux / darwin.
     """
     import platform as _platform
 
-    payload = _run_harness("--seed=42", "--tile=0,0", "--runs=2", "--size=16")
-    assert payload["deterministic"] is True
-    actual_hash = payload["hashes"][0]
     plat = _platform.system().lower()  # 'windows' / 'linux' / 'darwin'
     expected = _BASELINE_HASHES_BY_PLATFORM.get(plat)
     if expected is None:
-        # Platform not yet baselined — capture the hash value as a hint
-        # for follow-up.  The pair-equal subprocess check above is still
-        # exercised, so this branch keeps determinism-CI green while the
-        # baseline catalogue catches up to a new OS.
-        import warnings
-
-        warnings.warn(
-            f"No baseline hash pinned for platform={plat!r}; observed "
-            f"{actual_hash}.  Add to _BASELINE_HASHES_BY_PLATFORM if stable.",
-            stacklevel=2,
+        pytest.skip(
+            f"No baseline hash pinned for platform={plat!r}.  Add to "
+            "_BASELINE_HASHES_BY_PLATFORM after capturing a stable value "
+            "via `python -m veilbreakers_terrain.deterministic_bake_harness "
+            "--seed=42 --tile=0,0 --runs=2 --size=16` on this OS."
         )
-        return
+    payload = _run_harness("--seed=42", "--tile=0,0", "--runs=2", "--size=16")
+    assert payload["deterministic"] is True
+    actual_hash = payload["hashes"][0]
     assert actual_hash == expected, (
         f"baseline hash drifted on {plat}: got {actual_hash!r}, expected "
         f"{expected!r}.  A bake-side change broke deterministic ordering — "

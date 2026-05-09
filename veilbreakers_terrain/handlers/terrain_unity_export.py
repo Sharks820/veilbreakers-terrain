@@ -1028,6 +1028,38 @@ _WATER_SHADER_TARGETS_BY_BACKEND: Dict[str, str] = {
 }
 
 
+# CodeRabbit round-2 fix: ``shader_integration_notes["unity_urp"]`` was
+# previously hard-coded to the Boat Attack water sample, so manifests
+# emitted for ``stylized_water_2`` or ``crest_5`` carried wrong integration
+# guidance.  Mirror the backend-aware pattern of
+# ``_water_shader_target_for_backend`` so the note matches the active
+# backend.  Each entry is a one-paragraph "how do I plug this in" string;
+# longer adapter docs live in the per-backend Unity package.
+_WATER_INTEGRATION_NOTES_BY_BACKEND: Dict[str, str] = {
+    "boat_attack": (
+        "Plug materials into Boat Attack water sample. Use vertex "
+        "color RGBA for flow + foam mask."
+    ),
+    "stylized_water_2": (
+        "Plug materials into Stylized Water 2 (StylizedWater2/Water). "
+        "Map flow_map_texture onto the package's Flow Map slot and "
+        "foam_texture onto Foam Texture; vertex_alpha foam channel is "
+        "ignored — the package drives foam from depth + intersection."
+    ),
+    "crest_5": (
+        "Plug materials into Crest 5 (Crest/Water). Caustic and foam "
+        "atlases bind via Crest's LOD data textures; flow_map_texture "
+        "feeds the Flow input on the LodDataFlow component, not the "
+        "material directly."
+    ),
+    "hand_authored_urp": (
+        "Plug materials into a hand-authored URP Lit/ShaderGraph water "
+        "shader. Use vertex Color2 for flow direction and vertex alpha "
+        "for foam mask, matching the SG_Water_AAA reference graph."
+    ),
+}
+
+
 def _water_shader_target_for_backend(backend: str) -> str:
     """Return the URP shader name for ``backend``, defaulting to Boat Attack.
 
@@ -1040,6 +1072,22 @@ def _water_shader_target_for_backend(backend: str) -> str:
     """
     return _WATER_SHADER_TARGETS_BY_BACKEND.get(
         str(backend), "Universal Render Pipeline/Water"
+    )
+
+
+def _water_integration_note_for_backend(backend: str) -> str:
+    """Return the ``unity_urp`` integration note for ``backend``.
+
+    Mirrors :func:`_water_shader_target_for_backend` — falls back to the
+    Boat Attack note for unknown values rather than raising, since the
+    bake-side ``WaterSurfaceManifest`` already validates the backend
+    string.  Keeping the integration note backend-aware ensures
+    manifests emitted for ``stylized_water_2`` / ``crest_5`` /
+    ``hand_authored_urp`` carry guidance that matches the URP runtime
+    adapter the Unity project actually loads.
+    """
+    return _WATER_INTEGRATION_NOTES_BY_BACKEND.get(
+        str(backend), _WATER_INTEGRATION_NOTES_BY_BACKEND["boat_attack"]
     )
 
 
@@ -1224,10 +1272,12 @@ def _water_shader_manifest_json(
             # tooling that still keys off the old name).  Default URP path
             # is the Boat Attack water sample, which ships natively on URP
             # 17.3.
-            "unity_urp": (
-                "Plug materials into Boat Attack water sample. Use vertex "
-                "color RGBA for flow + foam mask."
-            ),
+            #
+            # CodeRabbit round-2 fix: select the integration note based on
+            # the active ``water_backend`` so manifests emitted for
+            # ``stylized_water_2`` / ``crest_5`` / ``hand_authored_urp``
+            # describe the right Unity package, not the Boat Attack default.
+            "unity_urp": _water_integration_note_for_backend(water_backend),
             "unity_hdrp": (
                 "Plug materials into HDRP Water Surface. Use Color2 vertex "
                 "attribute for flow map, vertex alpha for foam."
