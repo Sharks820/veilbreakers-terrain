@@ -259,15 +259,21 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # Phase C D26-27 closes that gap in register_bundle_i_passes
             # (terrain_geology_validator.py) and schedules the pass HERE
             # so its strat_erosion_delta is composed into ``height`` by
-            # ``integrate_deltas`` (placement is normalised by
-            # ``_normalize_delta_integration_sequence`` after the last
-            # delta producer). The companion PR #17 morphology delta
-            # integrator wiring continues to flow through the existing
-            # ``pass_morphology`` insert in the early validation_full
-            # block (line 197) since pass_morphology already produces
-            # ``morphology_delta`` and is followed by ``integrate_deltas``
-            # via the same normalisation.
+            # ``integrate_deltas``.
             *(("stratigraphy",) if has_scene_read else ()),
+            # Codex round-3 fix (PR #58 thread 1): ``topographic_indices``
+            # was previously inserted HERE (before water/coastline/
+            # waterfall/integrate_deltas/talus), so its outputs were
+            # computed from the pre-delta surface.  When any of those
+            # passes write a height-mutating delta and ``integrate_deltas``
+            # composes it (or ``talus`` rewrites height post-integration),
+            # vb_aspect_deg / vb_aspect_north / vb_canopy_openness / vb_TWI
+            # would lag the actual surface and downstream foliage / scatter
+            # consumers would see stale topographic masks.  The pass is now
+            # scheduled BELOW after ``structural_masks_post_talus`` so it
+            # always reads the final composited height — see the inserted
+            # ``"topographic_indices"`` entry after talus + before
+            # ``pass_road_network`` / ``materials_v2``.
             # C-7: terrain feature carving before scatter
             "pass_terrain_features",
             # C-8: sightline framing before scatter
@@ -285,6 +291,13 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             *(("integrate_deltas",) if has_scene_read else ()),
             *(("talus", "structural_masks_post_talus") if include_talus else ()),
             *(("pass_lava_simulation",) if include_lava else ()),
+            # Codex round-3 fix (PR #58 thread 1): ``topographic_indices``
+            # is scheduled AFTER all height-mutating passes (delta
+            # integration, talus, lava) and BEFORE the materials/scatter
+            # consumers, so vb_aspect_deg / vb_aspect_north /
+            # vb_canopy_openness / vb_TWI reflect the final composited
+            # height the consumers actually texture / scatter on.
+            "topographic_indices",
             # FIX-B14-6: road network pass runs before materials and scatter so
             # road_sdf_dist is available to materials_v2 / scatter_intelligent.
             "pass_road_network",
@@ -1925,6 +1938,14 @@ def register_default_passes(*, strict: bool = False) -> None:
     from .terrain_labels import label_stamping_pass_definition
     TerrainPassController.register_pass(label_stamping_pass_definition())
     register_snow_line_pass()
+    # Phase C D35: pass_topographic_indices emits vb_aspect_deg /
+    # vb_aspect_north / vb_canopy_openness / vb_TWI from height (post-erosion,
+    # post-composite). Foliage / scatter consumers read them via
+    # optional_channels declarations.
+    # Use the broker pattern (PassDefinition factory) so terrain_topographic_indices
+    # never has to import terrain_pipeline — avoids CodeQL static cycle.
+    from .terrain_topographic_indices import topographic_indices_pass_definition
+    TerrainPassController.register_pass(topographic_indices_pass_definition())
     from ._biome_grammar import register_biome_surface_features_pass
     register_biome_surface_features_pass()
     # pass_seasonal_water_state registers AFTER Bundle O/I in terrain_master_registrar

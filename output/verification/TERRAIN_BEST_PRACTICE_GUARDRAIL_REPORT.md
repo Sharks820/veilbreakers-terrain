@@ -1,23 +1,41 @@
 # Terrain Best-Practice Guardrail Report
 
-- Generated: 2026-05-09T01:52:32.541646+00:00
+- Generated: 2026-05-09T02:37:39.328236+00:00
 - Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv`
-- Live callables: 1917
-- Matrix rows: 1917
-- Blocking: false
-- Missing rows: 0
+- Live callables: 1923
+- Matrix rows: 1909
+- Blocking: true
+- Missing rows: 14
 - Rows with required-field gaps: 0
 - Rows with unknown domains: 0
-- Duplicate callable-name groups: 13
+- Duplicate callable-name groups: 14
 - Reviewed duplicate callable-name groups: 56
 - P0 upgrade rows: 0
 - Non-A grade rows: 0
 - Blocking grade-status rows: 0
 - Verification blockers: 0
 
+## Missing Matrix Rows
+
+- `terrain_labels.py::LabelStamp.area_cells`
+- `terrain_labels.py::LabelStack.add`
+- `terrain_labels.py::LabelStack.stamps_for_label`
+- `terrain_labels.py::LabelStack.stamps_at`
+- `terrain_labels.py::LabelStack.label_ids_present`
+- `terrain_labels.py::LabelStack.to_dict`
+- `terrain_labels.py::LabelStack.from_dict`
+- `terrain_labels.py::_try_scipy_label`
+- `terrain_labels.py::_label_components`
+- `terrain_labels.py::_bbox_of_component`
+- `terrain_labels.py::_stamp_label_in_channel`
+- `terrain_labels.py::pass_label_stamping`
+- `terrain_labels.py::label_stamping_pass_definition`
+- `terrain_unity_export.py::_water_integration_note_for_backend`
+
 ## Duplicate Callable Names
 
 - `_apply_unity_scale`: terrain_unity_export.py::_apply_unity_scale, terrain_unity_export.py::_apply_unity_scale, terrain_unity_export.py::_apply_unity_scale
+- `_compute_slope_aspect`: terrain_topographic_indices.py::_compute_slope_aspect, weathering.py::_compute_slope_aspect
 - `_ndimage_callable`: _terrain_depth.py::_ndimage_callable, terrain_twelve_step.py::_ndimage_callable
 - `_scipy_distance_transform_edt`: terrain_saliency.py::_scipy_distance_transform_edt, terrain_vegetation_depth.py::_scipy_distance_transform_edt
 - `_scipy_uniform_filter`: terrain_saliency.py::_scipy_uniform_filter, terrain_vegetation_depth.py::_scipy_uniform_filter

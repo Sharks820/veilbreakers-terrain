@@ -886,6 +886,15 @@ def register_procedural_grass_pass() -> None:
             name="pass_procedural_grass",
             func=pass_procedural_grass,
             requires_channels=("height", "slope", "drainage", "biome_id"),
+            # Phase C D35: optional consumption of derived topographic indices
+            # for grass placement rules (spec §4.2 foliage stack). Read via
+            # stack.get(...) so the pass works without them.
+            optional_channels=(
+                "vb_aspect_deg",
+                "vb_aspect_north",
+                "vb_canopy_openness",
+                "vb_TWI",
+            ),
             produces_channels=("grass_density_map", "detail_density", "grass_placement_records"),
             overrides=("detail_density",),
             seed_namespace="procedural_grass",

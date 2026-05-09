@@ -1781,6 +1781,15 @@ def register_vegetation_depth_pass() -> None:
             name="vegetation_depth",
             func=pass_vegetation_depth,
             requires_channels=("height",),
+            # Phase C D35: optional consumption of derived topographic indices
+            # for 4-layer vegetation stratification placement (spec §4.2 foliage
+            # stack). Read via stack.get(...) so the pass works without them.
+            optional_channels=(
+                "vb_aspect_deg",
+                "vb_aspect_north",
+                "vb_canopy_openness",
+                "vb_TWI",
+            ),
             produces_channels=("detail_density",),
             # OVERRIDE: Bundle E's ``scatter_intelligent`` writes a base
             # ``detail_density`` dict from context-aware asset placement.
