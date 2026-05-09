@@ -993,7 +993,22 @@ def pass_water_variants(
             merged_mask = np.asarray(existing_mask, dtype=np.float32).copy()
             merged_mask[r_slice, c_slice] = water_surface_mask_full[r_slice, c_slice]
             water_surface_mask_full = merged_mask
-        if existing_elev is not None:
+            # PR-A Codex P1-A fix (cross-audit 2026-05-09): after merging
+            # the region's mask updates into the existing tile-wide mask,
+            # recompute the FULL spill-rim on the merged mask. Without
+            # this, a wet body that extends across a region boundary
+            # ends up with stale wsfm outside the slice (the prior call
+            # computed wsfm against a different wet-cell topology) and
+            # the connected-component spill rim is wrong on the union.
+            water_surface_elevation_m_full = _compute_spill_rim_elevation(
+                np.asarray(stack.height, dtype=np.float32),
+                water_surface_mask_full > 0.0,
+            )
+        elif existing_elev is not None:
+            # No prior mask but prior elevation: still need to merge the
+            # slice in. Recompute would require a mask source — we don't
+            # have one, so fall back to slice-only merge with a warning
+            # (this path is only reachable from corrupted state).
             merged_elev = np.asarray(existing_elev, dtype=np.float32).copy()
             merged_elev[r_slice, c_slice] = water_surface_elevation_m_full[r_slice, c_slice]
             water_surface_elevation_m_full = merged_elev
@@ -1626,7 +1641,20 @@ def pass_bathymetry(
 
     # Water mask: cells that are "wet" (water_surface > 0.5 for mask, or ws >= h for elevation)
     if is_absolute_elevation:
-        wet_mask = (ws >= h - 0.05)  # small tolerance for floating-point seam cells
+        # PR-A Codex P1-B fix (cross-audit 2026-05-09): when an absolute
+        # WSE channel is present AND a canonical ``water_surface_mask``
+        # exists, prefer the mask for wet detection. The prior
+        # ``ws >= h - 0.05`` heuristic falsely flagged dry below-zero
+        # terrain as wet whenever a stale WSE happened to exceed h
+        # (e.g. WSE carried over from a prior pipeline state, or set by
+        # the bathymetry early-out before this PR removed the
+        # ``wsfm = h`` path). The mask is the authoritative wet-state
+        # source when available.
+        canonical_mask = stack.get("water_surface_mask")
+        if canonical_mask is not None:
+            wet_mask = np.asarray(canonical_mask, dtype=np.float32) > 0.5
+        else:
+            wet_mask = (ws >= h - 0.05)  # small tolerance for floating-point seam cells
         water_surface_elev = ws  # already in metres
     else:
         wet_mask = (ws > 0.5)

@@ -1,22 +1,26 @@
 # Terrain Best-Practice Guardrail Report
 
-- Generated: 2026-05-09T06:33:09.410428+00:00
-- Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv`
+- Generated: 2026-05-09T06:40:30.299295+00:00
+- Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_04.csv`
 - Live callables: 1924
-- Matrix rows: 1909
+- Matrix rows: 1876
 - Blocking: true
-- Missing rows: 15
+- Missing rows: 50
 - Rows with required-field gaps: 0
 - Rows with unknown domains: 0
 - Duplicate callable-name groups: 14
 - Reviewed duplicate callable-name groups: 56
-- P0 upgrade rows: 0
-- Non-A grade rows: 0
-- Blocking grade-status rows: 0
+- P0 upgrade rows: 136
+- Non-A grade rows: 136
+- Blocking grade-status rows: 136
 - Verification blockers: 0
 
 ## Missing Matrix Rows
 
+- `terrain_io.py::atomic_write_bytes`
+- `terrain_io.py::atomic_write_text`
+- `terrain_io.py::atomic_write_json`
+- `terrain_io.py::assert_finite_array`
 - `terrain_labels.py::LabelStamp.area_cells`
 - `terrain_labels.py::LabelStack.add`
 - `terrain_labels.py::LabelStack.stamps_for_label`
@@ -30,8 +34,456 @@
 - `terrain_labels.py::_stamp_label_in_channel`
 - `terrain_labels.py::pass_label_stamping`
 - `terrain_labels.py::label_stamping_pass_definition`
+- `terrain_macro_color.py::_build_voronoi_to_bucket_lut`
+- `terrain_rng.py::_resolve_canonical_derive_pass_seed`
+- `terrain_topographic_indices.py::_compute_slope_aspect`
+- `terrain_topographic_indices.py::_compute_canopy_openness`
+- `terrain_topographic_indices.py::_compute_twi`
+- `terrain_topographic_indices.py::pass_topographic_indices`
+- `terrain_topographic_indices.py::topographic_indices_pass_definition`
+- `terrain_unity_backends.py::_validate_canonical_alt_order`
+- `terrain_unity_backends.py::_check_major`
+- `terrain_unity_backends.py::_validate_backend`
+- `terrain_unity_backends.py::_validate_upgrade_compat`
+- `terrain_unity_backends.py::WaterSurfaceManifest.to_dict`
+- `terrain_unity_backends.py::WaterSurfaceManifest.from_dict`
+- `terrain_unity_backends.py::SkyManifest.to_dict`
+- `terrain_unity_backends.py::SkyManifest.from_dict`
+- `terrain_unity_backends.py::AtmosphericManifest.to_dict`
+- `terrain_unity_backends.py::AtmosphericManifest.from_dict`
+- `terrain_unity_backends.py::UpscalerManifest.to_dict`
+- `terrain_unity_backends.py::UpscalerManifest.from_dict`
+- `terrain_unity_backends.py::UnityExportConfig.to_dict`
+- `terrain_unity_backends.py::build_unity_urp_manifest_section`
+- `terrain_unity_export.py::_pack_material_mask_map`
+- `terrain_unity_export.py::_water_shader_target_for_backend`
 - `terrain_unity_export.py::_water_integration_note_for_backend`
+- `terrain_unity_export.py::_truncate_splatmap_to_top_k`
 - `terrain_water_variants.py::_compute_spill_rim_elevation`
+- `visual_render_camera_proof.py::RenderProofManifest.to_dict`
+- `visual_render_camera_proof.py::compute_nonblack_ratio`
+- `visual_render_camera_proof.py::assert_render_proof`
+- `visual_render_camera_proof.py::build_manifest_path`
+- `visual_render_camera_proof.py::render_camera_proof`
+- `visual_render_camera_proof.py::_slug`
+- `visual_render_camera_proof.py::handle_visual_render_camera_proof`
+
+## P0 Upgrade Rows
+
+- `_biome_grammar.py::_apply_ancient_root_buttresses`: `P0`
+- `_biome_grammar.py::_apply_battlefield_craters`: `P0`
+- `_biome_grammar.py::_apply_beach_strand_lines`: `P0`
+- `_biome_grammar.py::_apply_bone_fragments`: `P0`
+- `_biome_grammar.py::_apply_cave_drip_basins`: `P0`
+- `_biome_grammar.py::_apply_cracked_stone_paving`: `P0`
+- `_biome_grammar.py::_apply_crumbling_wall_stumps`: `P0`
+- `_biome_grammar.py::_apply_crystal_formations`: `P0`
+- `_biome_grammar.py::_apply_deep_forest_moss_carpet`: `P0`
+- `_biome_grammar.py::_apply_forest_debris`: `P0`
+- `_biome_grammar.py::_apply_fortress_rubble`: `P0`
+- `_biome_grammar.py::_apply_frost_crack_network`: `P0`
+- `_biome_grammar.py::_apply_grass_tufts`: `P0`
+- `_biome_grammar.py::_apply_grave_markers`: `P0`
+- `_biome_grammar.py::_apply_mycelium_humps`: `P0`
+- `_biome_grammar.py::_apply_overgrown_paths`: `P0`
+- `_biome_grammar.py::_apply_root_network`: `P0`
+- `_biome_grammar.py::_apply_sand_ripples`: `P0`
+- `_biome_grammar.py::_apply_scree_fields`: `P0`
+- `_biome_grammar.py::_apply_spore_cap_clusters`: `P0`
+- `_biome_grammar.py::_apply_swamp_muck`: `P0`
+- `_biome_grammar.py::_apply_tide_pool_pocking`: `P0`
+- `_biome_grammar.py::_apply_toxic_tendrils`: `P0`
+- `_biome_grammar.py::_apply_void_crystal_spires`: `P0`
+- `_biome_grammar.py::_apply_void_fissures`: `P0`
+- `_biome_grammar.py::_apply_weapon_debris`: `P0`
+- `_biome_grammar.py::_apply_wildflower_scatter`: `P0`
+- `_biome_grammar.py::_dispatch_biome_surface_features`: `P0`
+- `_biome_grammar.py::pass_biome_surface_features`: `P0`
+- `_biome_grammar.py::register_biome_surface_features_pass`: `P0`
+- `_terrain_depth.py::_ndimage_callable`: `P0`
+- `_water_network.py::_empty_braided_polylines`: `P0`
+- `_water_network.py::compute_velocity_field`: `P0`
+- `environment_scatter.py::LocationLayer.generate`: `P0`
+- `environment_scatter.py::generate_billboard_impostor`: `P0`
+- `light_integration.py::_light_energy`: `P0`
+- `light_integration.py::_light_position`: `P0`
+- `road_network.py::_apply_worn_path_erosion`: `P0`
+- `road_network.py::_road_segment_mesh_spec`: `P0`
+- `road_network.py::pass_road_network`: `P0`
+- `road_network.py::register_road_network_pass`: `P0`
+- `terrain_assets.py::build_asset_context_rule_exts`: `P0`
+- `terrain_banded.py::_offset_pair`: `P0`
+- `terrain_banded.py::_scipy_ndimage`: `P0`
+- `terrain_banded_advanced.py::pass_banded_advanced`: `P0`
+- `terrain_banded_advanced.py::register_banded_advanced_pass`: `P0`
+- `terrain_biome_registry.py::resolve_to_canonical`: `P0`
+- `terrain_caves.py::_find_entrance_candidates`: `P0`
+- `terrain_caves.py::pass_caves`: `P0`
+- `terrain_caves.py::register_bundle_f_passes`: `P0`
+- `terrain_foliage_catalog.py::get_species_constraints`: `P0`
+- `terrain_glacial.py::_load_scipy_glacial_filters`: `P0`
+- `terrain_hot_reload.py::_rebind_pass_funcs_for_module`: `P0`
+- `terrain_live_preview.py::StackSnapshot.changed_channels`: `P0`
+- `terrain_live_preview.py::StackSnapshot.hash_dict`: `P0`
+- `terrain_live_preview.py::_channel_hash`: `P0`
+- `terrain_mask_cache.py::MaskCache._evict_lru_until_budget`: `P0`
+- `terrain_mask_cache.py::_entry_numpy_bytes`: `P0`
+- `terrain_materials.py::_build_terrain_recipe`: `P0`
+- `terrain_materials.py::_clamp_rgba`: `P0`
+- `terrain_materials.py::_classify_face`: `P0`
+- `terrain_materials.py::_create_height_blend_group`: `P0`
+- `terrain_materials.py::_sample_splatmap_weights_at_vertex`: `P0`
+- `terrain_materials.py::_simple_noise_2d`: `P0`
+- `terrain_materials.py::assign_terrain_materials_by_slope`: `P0`
+- `terrain_materials.py::blend_terrain_vertex_colors`: `P0`
+- `terrain_materials_v2.py::_coerce_float`: `P0`
+- `terrain_materials_v2.py::_float_hint`: `P0`
+- `terrain_materials_v2.py::_mapping_hint`: `P0`
+- `terrain_materials_v2.py::_optional_float_hint`: `P0`
+- `terrain_materials_v2.py::_string_set_hint`: `P0`
+- `terrain_saliency.py::_load_scipy_ndimage`: `P0`
+- `terrain_saliency.py::_scipy_distance_transform_edt`: `P0`
+- `terrain_saliency.py::_scipy_map_coordinates_2d`: `P0`
+- `terrain_saliency.py::_scipy_maximum_filter`: `P0`
+- `terrain_saliency.py::_scipy_uniform_filter`: `P0`
+- `terrain_scene_read.py::_addon_version_param`: `P0`
+- `terrain_scene_read.py::_coerce_addon_version`: `P0`
+- `terrain_scene_read.py::_coerce_hero_feature_refs`: `P0`
+- `terrain_scene_read.py::_coerce_result_list`: `P0`
+- `terrain_scene_read.py::_coerce_str_tuple`: `P0`
+- `terrain_scene_read.py::_coerce_success_criteria`: `P0`
+- `terrain_scene_read.py::_coerce_vec3`: `P0`
+- `terrain_scene_read.py::_coerce_vec3_sequence`: `P0`
+- `terrain_scene_read.py::_coerce_waterfall_chain_refs`: `P0`
+- `terrain_scene_read.py::_empty_result_metadata`: `P0`
+- `terrain_scene_read.py::_focal_point_param`: `P0`
+- `terrain_scene_read.py::_iter_objects`: `P0`
+- `terrain_scene_read.py::_metadata_has_value`: `P0`
+- `terrain_scene_read.py::_metadata_sequence_as_list`: `P0`
+- `terrain_scene_read.py::_metadata_tuple_as_list`: `P0`
+- `terrain_scene_read.py::_reviewer_param`: `P0`
+- `terrain_scene_read.py::_scene_response`: `P0`
+- `terrain_scene_read.py::_sequence_param`: `P0`
+- `terrain_scene_read.py::_terrain_content_hash_param`: `P0`
+- `terrain_scene_read.py::_to_float`: `P0`
+- `terrain_scene_read.py::_to_int`: `P0`
+- `terrain_scene_read.py::_viewport_vantage_param`: `P0`
+- `terrain_sculpt.py::_brush_operation`: `P0`
+- `terrain_sculpt.py::_falloff_constant`: `P0`
+- `terrain_sculpt.py::_falloff_gaussian`: `P0`
+- `terrain_sculpt.py::_falloff_linear`: `P0`
+- `terrain_sculpt.py::_falloff_root`: `P0`
+- `terrain_sculpt.py::_falloff_sharp`: `P0`
+- `terrain_sculpt.py::_falloff_smooth`: `P0`
+- `terrain_sculpt.py::_falloff_sphere`: `P0`
+- `terrain_sculpt.py::_heightmap_from_param`: `P0`
+- `terrain_sculpt.py::_param_float`: `P0`
+- `terrain_sculpt.py::_param_str`: `P0`
+- `terrain_sculpt.py::_position_xyz`: `P0`
+- `terrain_semantics.py::TerrainMaskStack._bulk_set`: `P0`
+- `terrain_stratigraphy.py::_layer_from_mapping`: `P0`
+- `terrain_stratigraphy.py::_rgb_triplet`: `P0`
+- `terrain_stratigraphy.py::_to_float`: `P0`
+- `terrain_stratigraphy.py::_to_int`: `P0`
+- `terrain_twelve_step.py::_distance_transform`: `P0`
+- `terrain_twelve_step.py::_ndimage_callable`: `P0`
+- `terrain_unity_export.py::_compute_face_area_weighted_normals`: `P0`
+- `terrain_unity_export.py::_float2`: `P0`
+- `terrain_unity_export.py::_float3`: `P0`
+- `terrain_unity_export.py::export_unity_manifest`: `P0`
+- `terrain_validation.py::_default_validation_categories`: `P0`
+- `terrain_validation.py::_empty_issue_list`: `P0`
+- `terrain_validation.py::_empty_metrics`: `P0`
+- `terrain_validation.py::_neighbor_bottom_edge`: `P0`
+- `terrain_validation.py::_neighbor_height_array`: `P0`
+- `terrain_validation.py::_neighbor_left_edge`: `P0`
+- `terrain_validation.py::_neighbor_right_edge`: `P0`
+- `terrain_validation.py::_neighbor_top_edge`: `P0`
+- `terrain_vegetation_depth.py::_scipy_distance_transform_edt`: `P0`
+- `terrain_vegetation_depth.py::_scipy_label`: `P0`
+- `terrain_vegetation_depth.py::_scipy_morphological_gradient`: `P0`
+- `terrain_vegetation_depth.py::_scipy_uniform_filter`: `P0`
+- `terrain_visual_qa.py::run_data_contract_checks`: `P0`
+- `terrain_water_variants.py::pass_seasonal_water_state`: `P0`
+- `terrain_water_variants.py::register_pass_seasonal_water_state`: `P0`
+
+## Blocking Grade Status Rows
+
+- `_biome_grammar.py::_apply_ancient_root_buttresses`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_battlefield_craters`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_beach_strand_lines`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_bone_fragments`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_cave_drip_basins`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_cracked_stone_paving`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_crumbling_wall_stumps`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_crystal_formations`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_deep_forest_moss_carpet`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_forest_debris`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_fortress_rubble`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_frost_crack_network`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_grass_tufts`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_grave_markers`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_mycelium_humps`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_overgrown_paths`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_root_network`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_sand_ripples`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_scree_fields`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_spore_cap_clusters`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_swamp_muck`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_tide_pool_pocking`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_toxic_tendrils`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_void_crystal_spires`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_void_fissures`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_weapon_debris`: `MISSING_GRADE`
+- `_biome_grammar.py::_apply_wildflower_scatter`: `MISSING_GRADE`
+- `_biome_grammar.py::_dispatch_biome_surface_features`: `MISSING_GRADE`
+- `_biome_grammar.py::pass_biome_surface_features`: `MISSING_GRADE`
+- `_biome_grammar.py::register_biome_surface_features_pass`: `MISSING_GRADE`
+- `_terrain_depth.py::_ndimage_callable`: `MISSING_GRADE`
+- `_water_network.py::_empty_braided_polylines`: `MISSING_GRADE`
+- `_water_network.py::compute_velocity_field`: `MISSING_GRADE`
+- `environment_scatter.py::LocationLayer.generate`: `MISSING_GRADE`
+- `environment_scatter.py::generate_billboard_impostor`: `MISSING_GRADE`
+- `light_integration.py::_light_energy`: `MISSING_GRADE`
+- `light_integration.py::_light_position`: `MISSING_GRADE`
+- `road_network.py::_apply_worn_path_erosion`: `MISSING_GRADE`
+- `road_network.py::_road_segment_mesh_spec`: `MISSING_GRADE`
+- `road_network.py::pass_road_network`: `MISSING_GRADE`
+- `road_network.py::register_road_network_pass`: `MISSING_GRADE`
+- `terrain_assets.py::build_asset_context_rule_exts`: `MISSING_GRADE`
+- `terrain_banded.py::_offset_pair`: `MISSING_GRADE`
+- `terrain_banded.py::_scipy_ndimage`: `MISSING_GRADE`
+- `terrain_banded_advanced.py::pass_banded_advanced`: `MISSING_GRADE`
+- `terrain_banded_advanced.py::register_banded_advanced_pass`: `MISSING_GRADE`
+- `terrain_biome_registry.py::resolve_to_canonical`: `MISSING_GRADE`
+- `terrain_caves.py::_find_entrance_candidates`: `MISSING_GRADE`
+- `terrain_caves.py::pass_caves`: `MISSING_GRADE`
+- `terrain_caves.py::register_bundle_f_passes`: `MISSING_GRADE`
+- `terrain_foliage_catalog.py::get_species_constraints`: `MISSING_GRADE`
+- `terrain_glacial.py::_load_scipy_glacial_filters`: `MISSING_GRADE`
+- `terrain_hot_reload.py::_rebind_pass_funcs_for_module`: `MISSING_GRADE`
+- `terrain_live_preview.py::StackSnapshot.changed_channels`: `MISSING_GRADE`
+- `terrain_live_preview.py::StackSnapshot.hash_dict`: `MISSING_GRADE`
+- `terrain_live_preview.py::_channel_hash`: `MISSING_GRADE`
+- `terrain_mask_cache.py::MaskCache._evict_lru_until_budget`: `MISSING_GRADE`
+- `terrain_mask_cache.py::_entry_numpy_bytes`: `MISSING_GRADE`
+- `terrain_materials.py::_build_terrain_recipe`: `MISSING_GRADE`
+- `terrain_materials.py::_clamp_rgba`: `MISSING_GRADE`
+- `terrain_materials.py::_classify_face`: `MISSING_GRADE`
+- `terrain_materials.py::_create_height_blend_group`: `MISSING_GRADE`
+- `terrain_materials.py::_sample_splatmap_weights_at_vertex`: `MISSING_GRADE`
+- `terrain_materials.py::_simple_noise_2d`: `MISSING_GRADE`
+- `terrain_materials.py::assign_terrain_materials_by_slope`: `MISSING_GRADE`
+- `terrain_materials.py::blend_terrain_vertex_colors`: `MISSING_GRADE`
+- `terrain_materials_v2.py::_coerce_float`: `MISSING_GRADE`
+- `terrain_materials_v2.py::_float_hint`: `MISSING_GRADE`
+- `terrain_materials_v2.py::_mapping_hint`: `MISSING_GRADE`
+- `terrain_materials_v2.py::_optional_float_hint`: `MISSING_GRADE`
+- `terrain_materials_v2.py::_string_set_hint`: `MISSING_GRADE`
+- `terrain_saliency.py::_load_scipy_ndimage`: `MISSING_GRADE`
+- `terrain_saliency.py::_scipy_distance_transform_edt`: `MISSING_GRADE`
+- `terrain_saliency.py::_scipy_map_coordinates_2d`: `MISSING_GRADE`
+- `terrain_saliency.py::_scipy_maximum_filter`: `MISSING_GRADE`
+- `terrain_saliency.py::_scipy_uniform_filter`: `MISSING_GRADE`
+- `terrain_scene_read.py::_addon_version_param`: `MISSING_GRADE`
+- `terrain_scene_read.py::_coerce_addon_version`: `MISSING_GRADE`
+- `terrain_scene_read.py::_coerce_hero_feature_refs`: `MISSING_GRADE`
+- `terrain_scene_read.py::_coerce_result_list`: `MISSING_GRADE`
+- `terrain_scene_read.py::_coerce_str_tuple`: `MISSING_GRADE`
+- `terrain_scene_read.py::_coerce_success_criteria`: `MISSING_GRADE`
+- `terrain_scene_read.py::_coerce_vec3`: `MISSING_GRADE`
+- `terrain_scene_read.py::_coerce_vec3_sequence`: `MISSING_GRADE`
+- `terrain_scene_read.py::_coerce_waterfall_chain_refs`: `MISSING_GRADE`
+- `terrain_scene_read.py::_empty_result_metadata`: `MISSING_GRADE`
+- `terrain_scene_read.py::_focal_point_param`: `MISSING_GRADE`
+- `terrain_scene_read.py::_iter_objects`: `MISSING_GRADE`
+- `terrain_scene_read.py::_metadata_has_value`: `MISSING_GRADE`
+- `terrain_scene_read.py::_metadata_sequence_as_list`: `MISSING_GRADE`
+- `terrain_scene_read.py::_metadata_tuple_as_list`: `MISSING_GRADE`
+- `terrain_scene_read.py::_reviewer_param`: `MISSING_GRADE`
+- `terrain_scene_read.py::_scene_response`: `MISSING_GRADE`
+- `terrain_scene_read.py::_sequence_param`: `MISSING_GRADE`
+- `terrain_scene_read.py::_terrain_content_hash_param`: `MISSING_GRADE`
+- `terrain_scene_read.py::_to_float`: `MISSING_GRADE`
+- `terrain_scene_read.py::_to_int`: `MISSING_GRADE`
+- `terrain_scene_read.py::_viewport_vantage_param`: `MISSING_GRADE`
+- `terrain_sculpt.py::_brush_operation`: `MISSING_GRADE`
+- `terrain_sculpt.py::_falloff_constant`: `MISSING_GRADE`
+- `terrain_sculpt.py::_falloff_gaussian`: `MISSING_GRADE`
+- `terrain_sculpt.py::_falloff_linear`: `MISSING_GRADE`
+- `terrain_sculpt.py::_falloff_root`: `MISSING_GRADE`
+- `terrain_sculpt.py::_falloff_sharp`: `MISSING_GRADE`
+- `terrain_sculpt.py::_falloff_smooth`: `MISSING_GRADE`
+- `terrain_sculpt.py::_falloff_sphere`: `MISSING_GRADE`
+- `terrain_sculpt.py::_heightmap_from_param`: `MISSING_GRADE`
+- `terrain_sculpt.py::_param_float`: `MISSING_GRADE`
+- `terrain_sculpt.py::_param_str`: `MISSING_GRADE`
+- `terrain_sculpt.py::_position_xyz`: `MISSING_GRADE`
+- `terrain_semantics.py::TerrainMaskStack._bulk_set`: `MISSING_GRADE`
+- `terrain_stratigraphy.py::_layer_from_mapping`: `MISSING_GRADE`
+- `terrain_stratigraphy.py::_rgb_triplet`: `MISSING_GRADE`
+- `terrain_stratigraphy.py::_to_float`: `MISSING_GRADE`
+- `terrain_stratigraphy.py::_to_int`: `MISSING_GRADE`
+- `terrain_twelve_step.py::_distance_transform`: `MISSING_GRADE`
+- `terrain_twelve_step.py::_ndimage_callable`: `MISSING_GRADE`
+- `terrain_unity_export.py::_compute_face_area_weighted_normals`: `MISSING_GRADE`
+- `terrain_unity_export.py::_float2`: `MISSING_GRADE`
+- `terrain_unity_export.py::_float3`: `MISSING_GRADE`
+- `terrain_unity_export.py::export_unity_manifest`: `MISSING_GRADE`
+- `terrain_validation.py::_default_validation_categories`: `MISSING_GRADE`
+- `terrain_validation.py::_empty_issue_list`: `MISSING_GRADE`
+- `terrain_validation.py::_empty_metrics`: `MISSING_GRADE`
+- `terrain_validation.py::_neighbor_bottom_edge`: `MISSING_GRADE`
+- `terrain_validation.py::_neighbor_height_array`: `MISSING_GRADE`
+- `terrain_validation.py::_neighbor_left_edge`: `MISSING_GRADE`
+- `terrain_validation.py::_neighbor_right_edge`: `MISSING_GRADE`
+- `terrain_validation.py::_neighbor_top_edge`: `MISSING_GRADE`
+- `terrain_vegetation_depth.py::_scipy_distance_transform_edt`: `MISSING_GRADE`
+- `terrain_vegetation_depth.py::_scipy_label`: `MISSING_GRADE`
+- `terrain_vegetation_depth.py::_scipy_morphological_gradient`: `MISSING_GRADE`
+- `terrain_vegetation_depth.py::_scipy_uniform_filter`: `MISSING_GRADE`
+- `terrain_visual_qa.py::run_data_contract_checks`: `MISSING_GRADE`
+- `terrain_water_variants.py::pass_seasonal_water_state`: `MISSING_GRADE`
+- `terrain_water_variants.py::register_pass_seasonal_water_state`: `MISSING_GRADE`
+
+## Non-A Grade Rows
+
+- `_biome_grammar.py::_apply_ancient_root_buttresses`: `(blank)`
+- `_biome_grammar.py::_apply_battlefield_craters`: `(blank)`
+- `_biome_grammar.py::_apply_beach_strand_lines`: `(blank)`
+- `_biome_grammar.py::_apply_bone_fragments`: `(blank)`
+- `_biome_grammar.py::_apply_cave_drip_basins`: `(blank)`
+- `_biome_grammar.py::_apply_cracked_stone_paving`: `(blank)`
+- `_biome_grammar.py::_apply_crumbling_wall_stumps`: `(blank)`
+- `_biome_grammar.py::_apply_crystal_formations`: `(blank)`
+- `_biome_grammar.py::_apply_deep_forest_moss_carpet`: `(blank)`
+- `_biome_grammar.py::_apply_forest_debris`: `(blank)`
+- `_biome_grammar.py::_apply_fortress_rubble`: `(blank)`
+- `_biome_grammar.py::_apply_frost_crack_network`: `(blank)`
+- `_biome_grammar.py::_apply_grass_tufts`: `(blank)`
+- `_biome_grammar.py::_apply_grave_markers`: `(blank)`
+- `_biome_grammar.py::_apply_mycelium_humps`: `(blank)`
+- `_biome_grammar.py::_apply_overgrown_paths`: `(blank)`
+- `_biome_grammar.py::_apply_root_network`: `(blank)`
+- `_biome_grammar.py::_apply_sand_ripples`: `(blank)`
+- `_biome_grammar.py::_apply_scree_fields`: `(blank)`
+- `_biome_grammar.py::_apply_spore_cap_clusters`: `(blank)`
+- `_biome_grammar.py::_apply_swamp_muck`: `(blank)`
+- `_biome_grammar.py::_apply_tide_pool_pocking`: `(blank)`
+- `_biome_grammar.py::_apply_toxic_tendrils`: `(blank)`
+- `_biome_grammar.py::_apply_void_crystal_spires`: `(blank)`
+- `_biome_grammar.py::_apply_void_fissures`: `(blank)`
+- `_biome_grammar.py::_apply_weapon_debris`: `(blank)`
+- `_biome_grammar.py::_apply_wildflower_scatter`: `(blank)`
+- `_biome_grammar.py::_dispatch_biome_surface_features`: `(blank)`
+- `_biome_grammar.py::pass_biome_surface_features`: `(blank)`
+- `_biome_grammar.py::register_biome_surface_features_pass`: `(blank)`
+- `_terrain_depth.py::_ndimage_callable`: `(blank)`
+- `_water_network.py::_empty_braided_polylines`: `(blank)`
+- `_water_network.py::compute_velocity_field`: `(blank)`
+- `environment_scatter.py::LocationLayer.generate`: `(blank)`
+- `environment_scatter.py::generate_billboard_impostor`: `(blank)`
+- `light_integration.py::_light_energy`: `(blank)`
+- `light_integration.py::_light_position`: `(blank)`
+- `road_network.py::_apply_worn_path_erosion`: `(blank)`
+- `road_network.py::_road_segment_mesh_spec`: `(blank)`
+- `road_network.py::pass_road_network`: `(blank)`
+- `road_network.py::register_road_network_pass`: `(blank)`
+- `terrain_assets.py::build_asset_context_rule_exts`: `(blank)`
+- `terrain_banded.py::_offset_pair`: `(blank)`
+- `terrain_banded.py::_scipy_ndimage`: `(blank)`
+- `terrain_banded_advanced.py::pass_banded_advanced`: `(blank)`
+- `terrain_banded_advanced.py::register_banded_advanced_pass`: `(blank)`
+- `terrain_biome_registry.py::resolve_to_canonical`: `(blank)`
+- `terrain_caves.py::_find_entrance_candidates`: `(blank)`
+- `terrain_caves.py::pass_caves`: `(blank)`
+- `terrain_caves.py::register_bundle_f_passes`: `(blank)`
+- `terrain_foliage_catalog.py::get_species_constraints`: `(blank)`
+- `terrain_glacial.py::_load_scipy_glacial_filters`: `(blank)`
+- `terrain_hot_reload.py::_rebind_pass_funcs_for_module`: `(blank)`
+- `terrain_live_preview.py::StackSnapshot.changed_channels`: `(blank)`
+- `terrain_live_preview.py::StackSnapshot.hash_dict`: `(blank)`
+- `terrain_live_preview.py::_channel_hash`: `(blank)`
+- `terrain_mask_cache.py::MaskCache._evict_lru_until_budget`: `(blank)`
+- `terrain_mask_cache.py::_entry_numpy_bytes`: `(blank)`
+- `terrain_materials.py::_build_terrain_recipe`: `(blank)`
+- `terrain_materials.py::_clamp_rgba`: `(blank)`
+- `terrain_materials.py::_classify_face`: `(blank)`
+- `terrain_materials.py::_create_height_blend_group`: `(blank)`
+- `terrain_materials.py::_sample_splatmap_weights_at_vertex`: `(blank)`
+- `terrain_materials.py::_simple_noise_2d`: `(blank)`
+- `terrain_materials.py::assign_terrain_materials_by_slope`: `(blank)`
+- `terrain_materials.py::blend_terrain_vertex_colors`: `(blank)`
+- `terrain_materials_v2.py::_coerce_float`: `(blank)`
+- `terrain_materials_v2.py::_float_hint`: `(blank)`
+- `terrain_materials_v2.py::_mapping_hint`: `(blank)`
+- `terrain_materials_v2.py::_optional_float_hint`: `(blank)`
+- `terrain_materials_v2.py::_string_set_hint`: `(blank)`
+- `terrain_saliency.py::_load_scipy_ndimage`: `(blank)`
+- `terrain_saliency.py::_scipy_distance_transform_edt`: `(blank)`
+- `terrain_saliency.py::_scipy_map_coordinates_2d`: `(blank)`
+- `terrain_saliency.py::_scipy_maximum_filter`: `(blank)`
+- `terrain_saliency.py::_scipy_uniform_filter`: `(blank)`
+- `terrain_scene_read.py::_addon_version_param`: `(blank)`
+- `terrain_scene_read.py::_coerce_addon_version`: `(blank)`
+- `terrain_scene_read.py::_coerce_hero_feature_refs`: `(blank)`
+- `terrain_scene_read.py::_coerce_result_list`: `(blank)`
+- `terrain_scene_read.py::_coerce_str_tuple`: `(blank)`
+- `terrain_scene_read.py::_coerce_success_criteria`: `(blank)`
+- `terrain_scene_read.py::_coerce_vec3`: `(blank)`
+- `terrain_scene_read.py::_coerce_vec3_sequence`: `(blank)`
+- `terrain_scene_read.py::_coerce_waterfall_chain_refs`: `(blank)`
+- `terrain_scene_read.py::_empty_result_metadata`: `(blank)`
+- `terrain_scene_read.py::_focal_point_param`: `(blank)`
+- `terrain_scene_read.py::_iter_objects`: `(blank)`
+- `terrain_scene_read.py::_metadata_has_value`: `(blank)`
+- `terrain_scene_read.py::_metadata_sequence_as_list`: `(blank)`
+- `terrain_scene_read.py::_metadata_tuple_as_list`: `(blank)`
+- `terrain_scene_read.py::_reviewer_param`: `(blank)`
+- `terrain_scene_read.py::_scene_response`: `(blank)`
+- `terrain_scene_read.py::_sequence_param`: `(blank)`
+- `terrain_scene_read.py::_terrain_content_hash_param`: `(blank)`
+- `terrain_scene_read.py::_to_float`: `(blank)`
+- `terrain_scene_read.py::_to_int`: `(blank)`
+- `terrain_scene_read.py::_viewport_vantage_param`: `(blank)`
+- `terrain_sculpt.py::_brush_operation`: `(blank)`
+- `terrain_sculpt.py::_falloff_constant`: `(blank)`
+- `terrain_sculpt.py::_falloff_gaussian`: `(blank)`
+- `terrain_sculpt.py::_falloff_linear`: `(blank)`
+- `terrain_sculpt.py::_falloff_root`: `(blank)`
+- `terrain_sculpt.py::_falloff_sharp`: `(blank)`
+- `terrain_sculpt.py::_falloff_smooth`: `(blank)`
+- `terrain_sculpt.py::_falloff_sphere`: `(blank)`
+- `terrain_sculpt.py::_heightmap_from_param`: `(blank)`
+- `terrain_sculpt.py::_param_float`: `(blank)`
+- `terrain_sculpt.py::_param_str`: `(blank)`
+- `terrain_sculpt.py::_position_xyz`: `(blank)`
+- `terrain_semantics.py::TerrainMaskStack._bulk_set`: `(blank)`
+- `terrain_stratigraphy.py::_layer_from_mapping`: `(blank)`
+- `terrain_stratigraphy.py::_rgb_triplet`: `(blank)`
+- `terrain_stratigraphy.py::_to_float`: `(blank)`
+- `terrain_stratigraphy.py::_to_int`: `(blank)`
+- `terrain_twelve_step.py::_distance_transform`: `(blank)`
+- `terrain_twelve_step.py::_ndimage_callable`: `(blank)`
+- `terrain_unity_export.py::_compute_face_area_weighted_normals`: `(blank)`
+- `terrain_unity_export.py::_float2`: `(blank)`
+- `terrain_unity_export.py::_float3`: `(blank)`
+- `terrain_unity_export.py::export_unity_manifest`: `(blank)`
+- `terrain_validation.py::_default_validation_categories`: `(blank)`
+- `terrain_validation.py::_empty_issue_list`: `(blank)`
+- `terrain_validation.py::_empty_metrics`: `(blank)`
+- `terrain_validation.py::_neighbor_bottom_edge`: `(blank)`
+- `terrain_validation.py::_neighbor_height_array`: `(blank)`
+- `terrain_validation.py::_neighbor_left_edge`: `(blank)`
+- `terrain_validation.py::_neighbor_right_edge`: `(blank)`
+- `terrain_validation.py::_neighbor_top_edge`: `(blank)`
+- `terrain_vegetation_depth.py::_scipy_distance_transform_edt`: `(blank)`
+- `terrain_vegetation_depth.py::_scipy_label`: `(blank)`
+- `terrain_vegetation_depth.py::_scipy_morphological_gradient`: `(blank)`
+- `terrain_vegetation_depth.py::_scipy_uniform_filter`: `(blank)`
+- `terrain_visual_qa.py::run_data_contract_checks`: `(blank)`
+- `terrain_water_variants.py::pass_seasonal_water_state`: `(blank)`
+- `terrain_water_variants.py::register_pass_seasonal_water_state`: `(blank)`
 
 ## Duplicate Callable Names
 
