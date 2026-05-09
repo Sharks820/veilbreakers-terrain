@@ -3262,20 +3262,31 @@ def detect_river_mouth_zones(
     # Falls back to bathymetry. Falls back to legacy heuristic when no
     # water channel is available (preserves backward compat with
     # headless / pre-water-bake fixtures).
+    # CodeRabbit review fix (PR-C round-2): guard water-anchor channel
+    # shapes before applying the mask. Stale / mismatched shapes from
+    # corrupted state would raise at the np.where intersection below.
+    # When a channel has the wrong shape, treat it as missing and fall
+    # through to the next anchor source (or legacy heuristic).
+    expected_shape = (H, W)
     water_anchor: Optional[np.ndarray] = None
     wsm = stack.get("water_surface_mask")
     if wsm is not None:
-        water_anchor = np.asarray(wsm, dtype=np.float32) > 0.5
-    else:
+        wsm_arr = np.asarray(wsm, dtype=np.float32)
+        if wsm_arr.shape == expected_shape:
+            water_anchor = wsm_arr > 0.5
+    if water_anchor is None:
         wsfm = stack.get("water_surface_elevation_m")
         if wsfm is not None:
             wsfm_arr = np.asarray(wsfm, dtype=np.float32)
             h_arr = np.asarray(stack.height, dtype=np.float32)
-            water_anchor = wsfm_arr > h_arr
-        else:
-            bath = stack.get("bathymetry")
-            if bath is not None:
-                water_anchor = np.asarray(bath, dtype=np.float32) > 0.0
+            if wsfm_arr.shape == expected_shape and h_arr.shape == expected_shape:
+                water_anchor = wsfm_arr > h_arr
+    if water_anchor is None:
+        bath = stack.get("bathymetry")
+        if bath is not None:
+            bath_arr = np.asarray(bath, dtype=np.float32)
+            if bath_arr.shape == expected_shape:
+                water_anchor = bath_arr > 0.0
     if water_anchor is not None:
         # Dilate the water region by max(buffer_cells, 1) to capture
         # mouths that land on the riverbed cell adjacent to the water
