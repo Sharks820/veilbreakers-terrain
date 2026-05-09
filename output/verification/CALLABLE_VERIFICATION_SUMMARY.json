@@ -26,9 +26,15 @@
 =======
     "geometry_mesh": 1455,
     "materials_texturing": 807,
+<<<<<<< HEAD
+    "pipeline_wiring": 1247,
+    "scatter_ecology": 770,
+    "visual_qa": 402,
+=======
     "pipeline_wiring": 1250,
     "scatter_ecology": 770,
     "visual_qa": 397,
+>>>>>>> origin/main
     "water": 852
   },
   "false_grade_count": 0,

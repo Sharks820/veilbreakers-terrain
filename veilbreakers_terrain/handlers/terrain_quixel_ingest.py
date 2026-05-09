@@ -988,16 +988,44 @@ def register_bundle_k_quixel_ingest_pass() -> None:
             name="quixel_ingest",
             func=pass_quixel_ingest_bundle_k,
             requires_channels=("height",),
+            # Spec PR #21 (Phase C D28-29): Quixel ingest writes 6 distinct
+            # channels (line ~601, 622-630, 638-647, 662-674, 693-700,
+            # 722-729) but only ``splatmap_weights_layer`` is GUARANTEED by
+            # the output contract — that one always writes a fallback
+            # single-layer placeholder when zero assets ingested (line
+            # 931-945). The other 5 (macro_color, roughness_variation,
+            # terrain_normals, terrain_ao, terrain_displacement) are
+            # CONDITIONAL on the asset shipping the corresponding texture.
+            #
+            # Per the PassDefinition contract:
+            #   * ``produces_channels`` = guaranteed-populated outputs
+            #     (the contract checker raises if any are missing on exit).
+            #   * ``overrides`` = "I am a secondary writer" declaration —
+            #     does not require population, but tells the DAG checker
+            #     "the channel-ownership conflict with the upstream
+            #     producer is intentional".
+            #
+            # Spec row PR #21 ("Quixel ingest declares only
+            # `splatmap_weights_layer`; overrides incomplete") is closed by
+            # the override list — that is what was previously missing.
             produces_channels=("splatmap_weights_layer",),
-            # OVERRIDE: materials_v2 (Bundle B) writes the slope/altitude-derived
-            # splatmap first; quixel_ingest (Bundle K) runs after and rewrites
-            # the splatmap with photoscanned Megascans material weights for
-            # biomes that ship Quixel assets. The DAG orders this correctly
-            # because Bundle K registers after Bundle B.
-            overrides=("splatmap_weights_layer",),
+            overrides=(
+                "splatmap_weights_layer",
+                # Conditional secondary writes (only when the corresponding
+                # Megascans texture is present on the ingested asset):
+                "macro_color",
+                "roughness_variation",
+                "terrain_normals",
+                "terrain_ao",
+                "terrain_displacement",
+            ),
             seed_namespace="quixel_ingest",
             requires_scene_read=False,
-            description="Bundle K: ingest Quixel Megascans assets into splatmap layers",
+            description=(
+                "Bundle K: ingest Quixel Megascans assets into splatmap "
+                "layers + (conditionally) macro_color/normals/AO/"
+                "displacement/roughness."
+            ),
         )
     )
 

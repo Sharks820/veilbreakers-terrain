@@ -2822,7 +2822,14 @@ def register_bundle_b_passes() -> None:
         PassDefinition(
             name="emit_overhang_meshes",
             func=pass_emit_overhang_meshes,
+            # Spec PR #21 (Phase C D28-29): bridge-pass contracts. This pass
+            # consumes opaque mesh-spec channels from the upstream cliffs
+            # (Bundle B) and caves (Bundle F) passes and forwards them to a
+            # runtime-visible mesh-layer cache on TerrainPipelineState.
+            # Both inputs are optional — when neither bundle has run, the
+            # pass produces an empty layer rather than failing.
             requires_channels=(),
+            optional_channels=("cliff_mesh_specs", "cave_mesh_specs"),
             produces_channels=(),
             seed_namespace="emit_overhang_meshes",
             requires_scene_read=False,

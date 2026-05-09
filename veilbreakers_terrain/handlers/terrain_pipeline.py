@@ -1322,6 +1322,14 @@ def pass_compute_biome_channels(
     )
     stack.set("biome_id", spec.biome_ids.astype(np.int32), "biome_channels")
     stack.set("corruption_map", spec.corruption_map.astype(np.float32), "biome_channels")
+    # PR #55 review fix (threads #1 / #4): ``spec.biome_ids`` are Voronoi
+    # indices into ``spec.biome_names`` (0..biome_count-1), NOT canonical
+    # palette bucket indices. Downstream consumers (``compute_macro_color``,
+    # ``terrain_caves``, ``terrain_unity_export``) need the per-cell
+    # canonical biome name to translate via ``BIOME_BUCKET_MAP_18_TO_14``
+    # to the 14-bucket render palette. Stamp the ordered name list onto
+    # the stack so consumers can do ``biome_names[biome_id_value]``.
+    setattr(stack, "biome_names", list(spec.biome_names))
 
     return PassResult(
         pass_name="biome_channels",
