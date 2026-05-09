@@ -14,7 +14,7 @@ import math
 import os
 from collections import deque
 from dataclasses import asdict, dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, overload
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypedDict, overload
 
 import numpy as np
 
@@ -3252,6 +3252,72 @@ def detect_river_mouth_zones(
                 mouth_dilated[r0:r1, c0:c1] = True
     else:
         mouth_dilated = mouth_raw
+
+    # PR-C (cross-audit P0 2026-05-09): anchor river mouths to ACTUAL
+    # water. The flow-accumulation heuristic alone fires on dry
+    # accumulation valleys that have no water in them — false-positive
+    # mouths where rivers have no body to enter. Gate on
+    # water_surface_mask (canonical wet-cell binary) when present.
+    # Falls back to water_surface_elevation_m + height comparison.
+    # Falls back to bathymetry. Falls back to legacy heuristic when no
+    # water channel is available (preserves backward compat with
+    # headless / pre-water-bake fixtures).
+    # CodeRabbit review fix (PR-C round-2): guard water-anchor channel
+    # shapes before applying the mask. Stale / mismatched shapes from
+    # corrupted state would raise at the np.where intersection below.
+    # When a channel has the wrong shape, treat it as missing and fall
+    # through to the next anchor source (or legacy heuristic).
+    expected_shape = (H, W)
+    water_anchor: Optional[np.ndarray] = None
+    wsm = stack.get("water_surface_mask")
+    if wsm is not None:
+        wsm_arr = np.asarray(wsm, dtype=np.float32)
+        if wsm_arr.shape == expected_shape:
+            water_anchor = wsm_arr > 0.5
+    if water_anchor is None:
+        wsfm = stack.get("water_surface_elevation_m")
+        if wsfm is not None:
+            wsfm_arr = np.asarray(wsfm, dtype=np.float32)
+            h_arr = np.asarray(stack.height, dtype=np.float32)
+            if wsfm_arr.shape == expected_shape and h_arr.shape == expected_shape:
+                water_anchor = wsfm_arr > h_arr
+    if water_anchor is None:
+        bath = stack.get("bathymetry")
+        if bath is not None:
+            bath_arr = np.asarray(bath, dtype=np.float32)
+            if bath_arr.shape == expected_shape:
+                water_anchor = bath_arr > 0.0
+    if water_anchor is not None:
+        # Dilate the water region by max(buffer_cells, 1) to capture
+        # mouths that land on the riverbed cell adjacent to the water
+        # body. The mouth_raw heuristic emits at the upstream cell that
+        # FLOWS INTO water — so the mouth itself is on the dry-river
+        # side, ONE cell away from the wet body. A 0-cell anchor would
+        # strip every legitimate mouth (Codex P2 + Copilot review).
+        # We always dilate by at least 1; callers that want raw
+        # un-buffered detection should consult `mouth_raw` directly.
+        anchor_buffer = max(buffer_cells, 1)
+        try:
+            from scipy.ndimage import binary_dilation  # type: ignore
+            struct = np.ones(
+                (2 * anchor_buffer + 1, 2 * anchor_buffer + 1),
+                dtype=bool,
+            )
+            water_anchor_dilated = np.asarray(
+                binary_dilation(water_anchor, structure=struct),
+                dtype=bool,
+            )
+        except ImportError:
+            water_anchor_dilated = np.zeros_like(water_anchor, dtype=bool)
+            rs, cs = np.where(water_anchor)
+            for r, c in zip(rs.tolist(), cs.tolist()):
+                r0 = max(0, r - anchor_buffer)
+                r1 = min(H, r + anchor_buffer + 1)
+                c0 = max(0, c - anchor_buffer)
+                c1 = min(W, c + anchor_buffer + 1)
+                water_anchor_dilated[r0:r1, c0:c1] = True
+        # Intersect detected mouths with the dilated water anchor.
+        mouth_dilated = mouth_dilated & water_anchor_dilated
 
     return mouth_dilated.astype(np.float32)
 
