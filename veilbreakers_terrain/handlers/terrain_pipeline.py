@@ -115,6 +115,7 @@ _LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
     "framing",
     "talus",
     "structural_masks_post_talus",
+    "structural_masks_post_deltas",
     "lava_emit",
     "lava_carve",
     "integrate_deltas",
@@ -327,6 +328,19 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             *(("coastline",) if has_scene_read else ()),
             *(("waterfalls", "emit_particle_systems") if has_scene_read and include_waterfalls else ()),
             *(("integrate_deltas",) if has_scene_read else ()),
+            # PR-F2 (cross-audit P0 2026-05-09): recompute structural masks
+            # immediately after ``integrate_deltas`` composes all height
+            # deltas. Always scheduled (not gated on ``include_talus``) so
+            # the post-delta slope/curvature/ridge/basin fields are
+            # available to ``materials_v2`` / ``scatter_intelligent`` /
+            # ``label_stamping`` / ``topographic_indices`` even when talus
+            # is disabled. When talus is enabled, both this AND
+            # ``structural_masks_post_talus`` run — talus reads correct
+            # slope from THIS recompute, then post_talus recomputes again
+            # against post-talus height. Cheap (single Sobel-style filter)
+            # and produces deterministic byte-identical results because
+            # ``pass_structural_masks`` is purely derivative.
+            *(("structural_masks_post_deltas",) if has_scene_read else ()),
             *(("talus", "structural_masks_post_talus") if include_talus else ()),
             *(("pass_lava_simulation",) if include_lava else ()),
             # Codex round-3 fix (PR #58 thread 1): ``topographic_indices``
@@ -1873,6 +1887,46 @@ def register_default_passes(*, strict: bool = False) -> None:
             description=(
                 "Recompute structural terrain masks after talus mutates height "
                 "so materials_v2 and scatter consume current slope/curvature fields."
+            ),
+        ),
+        PassDefinition(
+            name="structural_masks_post_deltas",
+            func=_tw.pass_structural_masks,
+            requires_channels=("height",),
+            produces_channels=(
+                "slope",
+                "curvature",
+                "concavity",
+                "convexity",
+                "ridge",
+                "basin",
+                "saliency_macro",
+                "hero_exclusion",
+            ),
+            overrides=(
+                "slope",
+                "curvature",
+                "concavity",
+                "convexity",
+                "ridge",
+                "basin",
+                "saliency_macro",
+                "hero_exclusion",
+            ),
+            seed_namespace="structural_masks_post_deltas",
+            requires_scene_read=False,
+            supports_region_scope=False,
+            description=(
+                "PR-F2 (cross-audit P0 2026-05-09): recompute structural terrain "
+                "masks AFTER ``integrate_deltas`` composes coastline_delta + "
+                "stratigraphy_delta + worn-path/road_worn_path_delta + "
+                "wind_erosion_delta + others into ``height``. Without this "
+                "recompute, downstream materials_v2 / scatter_intelligent / "
+                "label_stamping / topographic_indices would consume slope, "
+                "curvature, ridge, etc. derived from the PRE-delta surface — "
+                "which is exactly the audit-reported pass-order rot. Identical "
+                "function to structural_masks_post_erosion / _post_talus; the "
+                "name disambiguates the schedule slot for census tracking."
             ),
         ),
         PassDefinition(
