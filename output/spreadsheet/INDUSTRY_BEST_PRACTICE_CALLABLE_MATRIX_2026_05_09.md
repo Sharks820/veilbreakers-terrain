@@ -1,6 +1,6 @@
 # Industry Best-Practice Callable Matrix
 
-- Generated: 2026-05-09T10:46:49.016004+00:00
+- Generated: 2026-05-09T11:48:50.737570+00:00
 - Tool: `scripts/build_industry_best_practice_callable_matrix.py`
 - Coverage scope: `industry_best_practice_matrix`
 - Inclusion rules: one row per live callable discovered by `collect_callables()` and joined to grade/verification evidence; generated output folders are excluded.
