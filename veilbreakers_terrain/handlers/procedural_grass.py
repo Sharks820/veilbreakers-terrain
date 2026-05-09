@@ -385,13 +385,23 @@ class ProceduralGrassSystem:
             water_sdf = _distance_transform_edt(~wet) * cell_size_m
             mask *= (water_sdf >= water_edge_min_m).astype(np.float32)
 
-        # Wetness affinity from drainage (or wetness, or moisture).
-        drainage = _stack_attr(stack, "drainage")
-        if drainage is None:
-            drainage = _stack_attr(stack, "wetness")
-        drainage_norm = _normalise_array(drainage)
-        if drainage_norm is not None:
-            affinity = 1.0 - np.abs(drainage_norm - species.wetness_affinity)
+        # PR-B (cross-audit P0 2026-05-09): wetness affinity from the
+        # Topographic Wetness Index (vb_TWI) when available — TWI =
+        # ln(area / tan(slope)) is the canonical AAA moisture proxy
+        # (Horizon FW + Death Stranding wetland scatter both bake from
+        # this). Falls back to drainage / wetness for legacy / non-D35
+        # pipelines. Phase C D35 produces vb_TWI but until this PR no
+        # downstream pass actually read it — verifier-confirmed dead
+        # channel.
+        twi = _stack_attr(stack, "vb_TWI")
+        moisture_source = _normalise_array(twi)
+        if moisture_source is None:
+            drainage = _stack_attr(stack, "drainage")
+            if drainage is None:
+                drainage = _stack_attr(stack, "wetness")
+            moisture_source = _normalise_array(drainage)
+        if moisture_source is not None:
+            affinity = 1.0 - np.abs(moisture_source - species.wetness_affinity)
             affinity = np.clip(affinity, 0.0, 1.0).astype(np.float32)
             mask *= affinity
 
@@ -573,8 +583,14 @@ class ProceduralGrassSystem:
             else:
                 biome_vals = None
 
-            if drainage_norm is not None:
-                moistures = drainage_norm[rows, cols]
+            # PR-B (cross-audit P0 2026-05-09): record per-instance moisture
+            # from vb_TWI when available (matches the affinity-mask source
+            # in _density_mask_from_species).  Falls back to drainage_norm.
+            twi_arr = _stack_attr(stack, "vb_TWI")
+            twi_norm = _normalise_array(twi_arr)
+            moisture_grid = twi_norm if twi_norm is not None else drainage_norm
+            if moisture_grid is not None:
+                moistures = moisture_grid[rows, cols]
             else:
                 moistures = np.zeros(positions.shape[0], dtype=np.float32)
 

@@ -194,10 +194,20 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
     skip_scatter = bool(composition_hints.get("skip_scatter", False))
     include_waterfalls = bool(composition_hints.get("waterfalls", True))
-    # Phase C D30-32 (Issue #27) — opt-in structural label-stamping. Off by default
-    # so existing fixtures stay byte-identical; downstream texturing/scatter
-    # consumers that want authored region tags request it explicitly.
-    include_label_stamping = bool(composition_hints.get("label_stamping", False))
+    # Phase C D30-32 (Issue #27) — structural label-stamping.
+    # PR-B (cross-audit P0 2026-05-09): default-on for AAA quality
+    # profiles. Phase C D30-32 shipped pass_label_stamping opt-in via
+    # composition_hints["label_stamping"]=True, OFF by default — meaning
+    # PR #57's investment was effectively shelfware in every default
+    # AAA run (Agent 5 verifier finding: "PR #57 stamped channels are
+    # dead pixels in default runs"). We flip the default ON when
+    # quality_profile is AAA-tier; preview/mobile/low keep it OFF so
+    # existing low-fidelity fixtures stay byte-identical. The hint can
+    # still override to False if a caller explicitly wants it off.
+    _aaa_quality = quality_profile not in _PREVIEW_QUALITY_PROFILES
+    include_label_stamping = bool(
+        composition_hints.get("label_stamping", _aaa_quality)
+    )
     biome_hint = str(
         composition_hints.get("biome")
         or composition_hints.get("biome_name")
