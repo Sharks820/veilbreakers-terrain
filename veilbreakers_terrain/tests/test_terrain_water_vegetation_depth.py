@@ -156,9 +156,14 @@ def test_register_water_and_bathymetry_passes_publish_expected_contracts():
     # falling back to legacy water_surface. All three are in
     # optional_channels; only height is strictly required. The contract
     # is "any wet-state source is sufficient".
-    assert "water_surface" in (
-        bathy_def.requires_channels + bathy_def.optional_channels
-    )
+    # PR-A round-4 (CodeRabbit review): assert ALL three canonical
+    # wet-state channels are in the contract — not just legacy — so
+    # accidental removal of the canonical mask / wsfm gets caught.
+    bathy_all_channels = bathy_def.requires_channels + bathy_def.optional_channels
+    for wet_channel in ("water_surface_mask", "water_surface_elevation_m", "water_surface"):
+        assert wet_channel in bathy_all_channels, (
+            f"bathymetry must declare '{wet_channel}' in requires/optional"
+        )
 
 
 def test_geyser_and_swamp_specs_return_empty_when_no_sites_detected():
@@ -813,9 +818,14 @@ def test_bundle_o_supplemental_pass_contracts_are_declared():
     # alongside the new canonical water_surface_mask + water_surface_
     # elevation_m channels. Bathymetry runs whenever ANY wet-state
     # source is present, with mask preferred over legacy.
-    assert "water_surface" in (
-        bathymetry.requires_channels + bathymetry.optional_channels
-    )
+    # PR-A round-4 (CodeRabbit review): assert ALL three canonical
+    # wet-state channels — accidental removal of the canonical mask /
+    # wsfm should fail this test, not just be caught by integration.
+    bathy_all_channels = bathymetry.requires_channels + bathymetry.optional_channels
+    for wet_channel in ("water_surface_mask", "water_surface_elevation_m", "water_surface"):
+        assert wet_channel in bathy_all_channels, (
+            f"bathymetry must declare '{wet_channel}' in requires/optional"
+        )
     assert "bathymetry" in bathymetry.produces_channels
     assert "water_depth_zone" in bathymetry.produces_channels
 
