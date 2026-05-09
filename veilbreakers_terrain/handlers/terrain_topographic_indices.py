@@ -387,18 +387,14 @@ def topographic_indices_pass_definition() -> PassDefinition:
     )
 
 
-def register_topographic_indices_pass() -> None:
-    """Legacy registrar — terrain_pipeline.register_default_passes now uses
-    ``topographic_indices_pass_definition()`` directly to avoid the CodeQL
-    cycle. This function remains for any external callers that imported it.
-    """
-    # Local import — only reached when an external caller invokes this.
-    from .terrain_pipeline import TerrainPassController
-
-    TerrainPassController.register_pass(topographic_indices_pass_definition())
+# NOTE: register_topographic_indices_pass was removed in Phase C D35 hardening
+# because lazy `from .terrain_pipeline import TerrainPassController` still
+# triggered CodeQL's py/cyclic-import rule. Canonical broker pattern:
+# terrain_pipeline pulls topographic_indices_pass_definition() and registers
+# directly. terrain_topographic_indices has zero terrain_pipeline dependency.
 
 
 __all__ = [
     "pass_topographic_indices",
-    "register_topographic_indices_pass",
+    "topographic_indices_pass_definition",
 ]

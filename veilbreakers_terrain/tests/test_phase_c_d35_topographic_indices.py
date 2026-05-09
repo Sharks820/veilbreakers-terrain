@@ -42,7 +42,7 @@ from veilbreakers_terrain.handlers.terrain_semantics import (
 )
 from veilbreakers_terrain.handlers.terrain_topographic_indices import (
     pass_topographic_indices,
-    register_topographic_indices_pass,
+    topographic_indices_pass_definition,
 )
 
 
@@ -110,8 +110,11 @@ def _registry_isolation():  # pyright: ignore[reportUnusedFunction]
 
 def test_pass_definition_declares_all_4_produced_channels() -> None:
     """The PassDefinition must declare all 4 spec channels in produces_channels."""
+    # Register via the broker pattern (terrain_pipeline pulls the
+    # PassDefinition factory and registers directly — avoids the static
+    # CodeQL-flagged import cycle).
     TerrainPassController.PASS_REGISTRY.pop("topographic_indices", None)
-    register_topographic_indices_pass()
+    TerrainPassController.register_pass(topographic_indices_pass_definition())
     defn = TerrainPassController.get_pass("topographic_indices")
     assert set(defn.produces_channels) == {
         "vb_aspect_deg",
@@ -126,8 +129,11 @@ def test_pass_definition_declares_all_4_produced_channels() -> None:
 
 def test_pass_definition_requires_height() -> None:
     """The PassDefinition must declare height as a hard requirement."""
+    # Register via the broker pattern (terrain_pipeline pulls the
+    # PassDefinition factory and registers directly — avoids the static
+    # CodeQL-flagged import cycle).
     TerrainPassController.PASS_REGISTRY.pop("topographic_indices", None)
-    register_topographic_indices_pass()
+    TerrainPassController.register_pass(topographic_indices_pass_definition())
     defn = TerrainPassController.get_pass("topographic_indices")
     assert "height" in defn.requires_channels, (
         f"requires_channels must contain 'height'; got {defn.requires_channels!r}"
@@ -258,7 +264,9 @@ def test_byte_identical_output_on_repeat_run() -> None:
 def _registered_consumer_definitions() -> "dict[str, PassDefinition]":
     """Register topo + every consumer pass and return their PassDefinitions."""
     TerrainPassController.PASS_REGISTRY.clear()
-    register_topographic_indices_pass()
+    # Broker pattern: terrain_pipeline pulls the factory and registers
+    # directly. Test mirrors that path to avoid the static CodeQL cycle.
+    TerrainPassController.register_pass(topographic_indices_pass_definition())
     # Foliage / scatter consumer passes — register each via its public registrar.
     from veilbreakers_terrain.handlers.terrain_assets import (
         register_bundle_e_passes,
