@@ -2746,6 +2746,18 @@ def export_unity_manifest(
         "foam",
         "mist",
         "wet_rock",
+        # PR-C (cross-audit P0 2026-05-09): pass_river_convergence
+        # produces these 3 channels; exposing them in the water-runtime
+        # contract makes them available to Unity-side foam shaders /
+        # river-mouth gameplay zones.  Phase C had them stranded
+        # (Verifier 3 finding: "produced but not in any Unity export
+        # schema").  When the producer pass is unscheduled (preview
+        # quality, no scene_read) the values stay None and the
+        # `any(...)` gate above silently skips them — preserves
+        # backward compat.
+        "river_mouth_mask",
+        "confluence_foam",
+        "delta_fan_direction",
     )
     if any(stack.get(channel) is not None for channel in water_contract_channels):
         for issue in validate_water_runtime_contract(
