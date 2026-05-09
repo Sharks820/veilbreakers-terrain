@@ -5,22 +5,22 @@
     "blender_tool": 1604,
     "camera_readability": 401,
     "core": 8,
-    "geometry_mesh": 1454,
-    "materials_texturing": 806,
+    "geometry_mesh": 1455,
+    "materials_texturing": 807,
     "pipeline_wiring": 1250,
     "scatter_ecology": 770,
     "visual_qa": 397,
-    "water": 851
+    "water": 852
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "LOW": 1900
+    "LOW": 1901
   },
   "tool_blocker_count": 0,
-  "total_callables": 1900,
+  "total_callables": 1901,
   "wiring_status_counts": {
     "direct_test_covered": 240,
-    "helper_reachable": 1440,
+    "helper_reachable": 1441,
     "runtime_primary": 220
   }
 }
