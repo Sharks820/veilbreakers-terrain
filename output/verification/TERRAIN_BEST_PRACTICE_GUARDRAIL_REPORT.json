@@ -1,7 +1,7 @@
 {
   "matrix_path": "output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_08.csv",
-  "live_count": 1908,
-  "matrix_count": 1908,
+  "live_count": 1903,
+  "matrix_count": 1903,
   "is_blocking": false,
   "missing_rows": [],
   "field_gaps": {},
@@ -88,10 +88,6 @@
     "_to_int": [
       "terrain_scene_read.py::_to_int",
       "terrain_stratigraphy.py::_to_int"
-    ],
-    "_compute_slope_aspect": [
-      "terrain_topographic_indices.py::_compute_slope_aspect",
-      "weathering.py::_compute_slope_aspect"
     ],
     "_apply_unity_scale": [
       "terrain_unity_export.py::_apply_unity_scale",

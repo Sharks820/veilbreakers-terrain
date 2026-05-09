@@ -1,14 +1,14 @@
 # Terrain Best-Practice Guardrail Report
 
-- Generated: 2026-05-08T22:50:27.570714+00:00
+- Generated: 2026-05-08T23:18:33.880361+00:00
 - Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_08.csv`
-- Live callables: 1908
-- Matrix rows: 1908
+- Live callables: 1903
+- Matrix rows: 1903
 - Blocking: false
 - Missing rows: 0
 - Rows with required-field gaps: 0
 - Rows with unknown domains: 0
-- Duplicate callable-name groups: 13
+- Duplicate callable-name groups: 12
 - Reviewed duplicate callable-name groups: 57
 - P0 upgrade rows: 0
 - Non-A grade rows: 0
@@ -18,7 +18,6 @@
 ## Duplicate Callable Names
 
 - `_apply_unity_scale`: terrain_unity_export.py::_apply_unity_scale, terrain_unity_export.py::_apply_unity_scale, terrain_unity_export.py::_apply_unity_scale
-- `_compute_slope_aspect`: terrain_topographic_indices.py::_compute_slope_aspect, weathering.py::_compute_slope_aspect
 - `_ndimage_callable`: _terrain_depth.py::_ndimage_callable, terrain_twelve_step.py::_ndimage_callable
 - `_scipy_distance_transform_edt`: terrain_saliency.py::_scipy_distance_transform_edt, terrain_vegetation_depth.py::_scipy_distance_transform_edt
 - `_scipy_uniform_filter`: terrain_saliency.py::_scipy_uniform_filter, terrain_vegetation_depth.py::_scipy_uniform_filter
