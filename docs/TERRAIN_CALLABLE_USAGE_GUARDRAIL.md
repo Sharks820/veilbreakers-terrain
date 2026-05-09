@@ -19,7 +19,7 @@ Every callable used for terrain generation must satisfy its matrix row: best-pra
 - Use `pathing_roads` callables for roads, paths, navmesh, A*, bridges, fords, splines, cost fields, and traversal constraints. Matrix rows: 65. P0 blockers: 0.
 - Use `scatter_ecology` callables for point distribution, vegetation placement, biome/ecotone logic, wildlife zones, density masks, and exclusion rules. Matrix rows: 201. P0 blockers: 0.
 - Use `terrain_pipeline` callables for canonical pass orchestration, dependency contracts, handler registration, checkpoints, and generated-map provenance. Matrix rows: 153. P0 blockers: 0.
-- Use `terrain_texturing` callables for terrain texture/PBR work: material weights, splatmaps, base color, normal, roughness, height, AO, Quixel/Substance-style layers, stochastic shaders, and texel density. Matrix rows: 132. P0 blockers: 0.
+- Use `terrain_texturing` callables for terrain texture/PBR work: material weights, splatmaps, base color, normal, roughness, height, AO, Quixel/Substance-style layers, stochastic shaders, and texel density. Matrix rows: 133. P0 blockers: 0.
 - Use `validation_qa` callables for quality gates, visual QA, callable audits, deterministic checks, performance budgets, golden snapshots, scene inspection, and issue reporting. Matrix rows: 156. P0 blockers: 0.
 
 ## Hard Blocks
