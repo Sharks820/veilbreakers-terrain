@@ -410,10 +410,34 @@ def _intent(label_stamping: bool) -> TerrainIntentState:
     )
 
 
-def test_default_sequence_excludes_label_stamping_by_default() -> None:
-    """Without the opt-in hint the pass is NOT scheduled."""
-    seq = build_default_pass_sequence(_intent(label_stamping=False))
+def test_default_sequence_excludes_label_stamping_for_preview_quality() -> None:
+    """Without the opt-in hint AND on a preview-tier quality profile,
+    label_stamping is NOT scheduled (preserves byte-identical legacy
+    fixtures).
+
+    PR-B (cross-audit P0 2026-05-09) flipped the default to ON for AAA
+    quality profiles since the prior universal opt-in OFF made PR #57's
+    structural label investment shelfware in every default AAA run
+    (Agent 5 verifier finding). preview / mobile / low quality profiles
+    keep label_stamping OFF; AAA-tier defaults to ON.
+    """
+    intent = _intent(label_stamping=False)
+    # Override quality_profile to a preview tier so the default-OFF path engages.
+    object.__setattr__(intent, "quality_profile", "preview")
+    seq = build_default_pass_sequence(intent)
     assert "label_stamping" not in seq
+
+
+def test_default_sequence_includes_label_stamping_by_default_on_aaa() -> None:
+    """PR-B (cross-audit P0 2026-05-09): AAA quality profiles default
+    label_stamping to ON so the structural label investment from PR #57
+    actually fires on production AAA runs."""
+    intent = _intent(label_stamping=False)
+    # _intent already sets quality_profile="aaa_open_world".
+    seq = build_default_pass_sequence(intent)
+    assert "label_stamping" in seq, (
+        "PR-B contract: AAA quality profiles default to ON for label_stamping"
+    )
 
 
 def test_default_sequence_includes_label_stamping_when_requested() -> None:
