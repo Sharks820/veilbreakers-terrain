@@ -14,13 +14,10 @@ pipeline run.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import numpy as np
 from numpy.typing import NDArray
-
-if TYPE_CHECKING:
-    from veilbreakers_terrain.handlers.terrain_semantics import TerrainSceneRead
 
 
 FloatArray = NDArray[np.float32]
@@ -92,7 +89,7 @@ def test_structural_masks_post_deltas_in_default_sequence_when_scene_read():
         tile_size=16,
         cell_size=1.0,
         composition_hints={},
-        scene_read=cast("TerrainSceneRead", object()),
+        scene_read=cast(Any, object()),
         quality_profile="aaa_open_world",
     )
 
@@ -129,7 +126,7 @@ def test_structural_masks_post_deltas_runs_before_materials_and_scatter():
         tile_size=16,
         cell_size=1.0,
         composition_hints={},
-        scene_read=cast("TerrainSceneRead", object()),
+        scene_read=cast(Any, object()),
         quality_profile="aaa_open_world",
     )
 
@@ -181,6 +178,80 @@ def test_structural_masks_post_deltas_recomputes_slope_after_height_mutation():
     assert diff[6:10, 6:10].max() > 0.01, (
         "post-delta slope recompute should produce a non-trivial change "
         f"in the perturbed region; max diff = {diff[6:10, 6:10].max():.4f}"
+    )
+
+
+def test_structural_masks_post_deltas_stays_paired_with_integrate_deltas_after_normalize():
+    """CodeRabbit + Copilot review (PR #61): the runtime calls
+    ``_normalize_delta_integration_sequence`` which moves
+    ``integrate_deltas`` to AFTER the last delta-producing pass (e.g.
+    ``pass_road_network`` produces ``road_worn_path_delta``).  The static
+    schedule from ``build_default_pass_sequence`` puts
+    ``structural_masks_post_deltas`` immediately after ``integrate_deltas``,
+    but if we don't ALSO relocate the recompute, normalization can split
+    the pair and the recompute lands BEFORE the integrator — exactly the
+    bug this PR was supposed to fix.
+
+    The normalizer must keep the recompute paired with the integrator
+    regardless of where the integrator moves.
+    """
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
+        TerrainPassController,
+        _normalize_delta_integration_sequence,
+        register_default_passes,
+    )
+
+    register_default_passes()
+
+    # Pick any registered delta-producing pass (the test will then PLACE
+    # that pass AFTER the static integrate_deltas slot in the raw
+    # sequence below, so the test does not depend on where the pass
+    # actually lives in build_default_pass_sequence — it depends only
+    # on the producer being registered so the normalizer's
+    # producer-detection fires). Synthetic / unregistered names would
+    # hit the "unregistered passes" warning and the normalizer would
+    # fall through to a no-op, so registry-backed names are required.
+    from veilbreakers_terrain.handlers.terrain_delta_integrator import (
+        _DELTA_CHANNELS,
+    )
+
+    delta_set = set(_DELTA_CHANNELS)
+    delta_producers_registered = [
+        name
+        for name, defn in TerrainPassController.PASS_REGISTRY.items()
+        if delta_set.intersection(defn.produces_channels)
+        and name != "integrate_deltas"
+    ]
+    assert delta_producers_registered, (
+        "test fixture invalid: registry has no delta-producing passes"
+    )
+    # Pick one (deterministic order via sorted).
+    producer = sorted(delta_producers_registered)[0]
+
+    # Construct a sequence where the delta-producer is AFTER the static
+    # integrate_deltas + post_deltas pair. Normalization must move BOTH
+    # past the producer to maintain the pairing invariant.
+    raw_seq = [
+        "structural_masks",
+        "integrate_deltas",
+        "structural_masks_post_deltas",
+        producer,
+    ]
+    normalized = _normalize_delta_integration_sequence(raw_seq)
+
+    integrate_idx = normalized.index("integrate_deltas")
+    post_deltas_idx = normalized.index("structural_masks_post_deltas")
+    producer_idx = normalized.index(producer)
+
+    # 1. integrate_deltas moved to AFTER the delta-producer
+    assert integrate_idx > producer_idx, (
+        f"integrate_deltas (idx {integrate_idx}) must be AFTER "
+        f"{producer} (idx {producer_idx}) post-normalize; got: {normalized}"
+    )
+    # 2. post_deltas IMMEDIATELY follows the relocated integrator
+    assert post_deltas_idx == integrate_idx + 1, (
+        f"structural_masks_post_deltas (idx {post_deltas_idx}) must be "
+        f"adjacent to integrate_deltas (idx {integrate_idx}); got: {normalized}"
     )
 
 
