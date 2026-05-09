@@ -424,6 +424,11 @@ def test_default_sequence_includes_label_stamping_when_requested() -> None:
     # any materials_v2 consumer (which may not be in this sequence).
     assert seq.index("label_stamping") > seq.index("structural_masks")
     assert seq.index("label_stamping") > seq.index("framing")
+    # pass_road_network produces road_worn_path_delta; _normalize_delta_
+    # integration_sequence moves integrate_deltas after it at runtime, so the
+    # static anchor must already be after pass_road_network to keep
+    # label_stamping after the composed height delta.
+    assert seq.index("label_stamping") > seq.index("pass_road_network")
 
 
 # ---------------------------------------------------------------------------

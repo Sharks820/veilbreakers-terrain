@@ -88,6 +88,16 @@ _LAVA_SOURCE_HINT_KEYS = frozenset(
 # material-label channels reflect the FINAL terrain/water/structural
 # state read by ``materials_v2``.  Names not present in a given build's
 # pass_sequence are silently ignored by the scan.
+#
+# NOTE: ``pass_road_network`` must be in this set even though it runs before
+# ``materials_v2`` in the static sequence, because ``_normalize_delta_
+# integration_sequence`` (called in ``run_pipeline``) moves
+# ``integrate_deltas`` to AFTER the last delta producer.
+# ``pass_road_network`` produces ``road_worn_path_delta``, so normalization
+# places ``integrate_deltas`` after it, meaning any ``label_stamping``
+# anchor placed before ``pass_road_network`` would end up BEFORE both the
+# road mutation and its composed height delta — contrary to the "after the
+# LAST mutator" guarantee.
 _LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
     "pass_composite_hmap",
     "structural_masks",
@@ -115,6 +125,10 @@ _LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
     "pass_water_depth",
     "erosion",
     "pass_hydrology",
+    # Road network produces road_worn_path_delta; _normalize_delta_integration_
+    # sequence will place integrate_deltas after this pass.  Without this entry
+    # label_stamping would be anchored before the road/delta composition.
+    "pass_road_network",
 })
 
 
