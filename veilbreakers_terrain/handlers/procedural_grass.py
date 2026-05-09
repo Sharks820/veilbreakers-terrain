@@ -393,8 +393,16 @@ class ProceduralGrassSystem:
         # pipelines. Phase C D35 produces vb_TWI but until this PR no
         # downstream pass actually read it — verifier-confirmed dead
         # channel.
+        # Verifier 2 risk fix on PR-B: ``_normalise_array`` returns
+        # all-zeros on uniform input (hi - lo < 1e-9). When vb_TWI is
+        # produced as a uniform / stub array (degenerate D35 producer
+        # on a flat tile), the prior code silently accepted those
+        # zeros and suppressed the drainage fallback. Treat uniform
+        # TWI as "absent" so the legacy drainage fallback engages.
         twi = _stack_attr(stack, "vb_TWI")
         moisture_source = _normalise_array(twi)
+        if moisture_source is not None and not np.any(moisture_source):
+            moisture_source = None
         if moisture_source is None:
             drainage = _stack_attr(stack, "drainage")
             if drainage is None:
@@ -586,8 +594,13 @@ class ProceduralGrassSystem:
             # PR-B (cross-audit P0 2026-05-09): record per-instance moisture
             # from vb_TWI when available (matches the affinity-mask source
             # in _density_mask_from_species).  Falls back to drainage_norm.
+            # Verifier 2 risk fix: treat uniform TWI as "absent" so
+            # drainage fallback engages on degenerate D35 producers
+            # (matches the same guard in _density_mask_from_species).
             twi_arr = _stack_attr(stack, "vb_TWI")
             twi_norm = _normalise_array(twi_arr)
+            if twi_norm is not None and not np.any(twi_norm):
+                twi_norm = None
             moisture_grid = twi_norm if twi_norm is not None else drainage_norm
             if moisture_grid is not None:
                 moistures = moisture_grid[rows, cols]
