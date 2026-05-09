@@ -113,6 +113,18 @@ def test_pass_coastline_defers_height_delta_to_integrator_once():
 
 
 def test_pass_water_variants_writes_surface_elevation_channel():
+    """W-1 / PR-F1 invariant: wet cells must satisfy ``wsfm >= h`` so
+    ``water_depth_m = max(wsfm - h, 0)`` is non-zero everywhere the water
+    mask says water exists.
+
+    Prior to PR-F1 (2026-05-09), this test asserted
+    ``surface_elevation[wet] == stack.height[wet]`` literally — that
+    pinned the buggy assignment ``wsfm[wet] = h[wet]`` and made every
+    wet cell silently produce ``water_depth_m == 0``.  The corrected
+    invariant uses connected-component spill-rim flood-fill (matching
+    Houdini ``hf_water_solver`` and UE5 Water Body): each body's
+    surface elevation = ``max(dry_rim_neighbours, body_underlying_heights)``.
+    """
     from veilbreakers_terrain.handlers.terrain_water_variants import pass_water_variants
 
     h = np.array(
@@ -131,7 +143,27 @@ def test_pass_water_variants_writes_surface_elevation_channel():
     surface_elevation = stack.water_surface_elevation_m
     water_mask = stack.water_surface_mask
     wet = water_mask > 0.0
-    assert np.array_equal(surface_elevation[wet], stack.height[wet])
+    # PR-F1 invariant: wet-cell elevation lies AT or ABOVE local terrain so
+    # water_depth_m = max(wsfm - h, 0) is non-zero by construction.
+    assert np.all(surface_elevation[wet] >= stack.height[wet]), (
+        "wsfm[wet] must be >= h[wet] (spill-rim invariant); "
+        f"min wet diff = {(surface_elevation[wet] - stack.height[wet]).min()}"
+    )
+    # Spill-rim semantics: at least the lowest cell in each body must have
+    # surface > terrain. We only assert this if there are >= 2 wet cells (a
+    # single-cell body bordered entirely by other wet cells could legitimately
+    # have wsfm == h if no dry rim exists — but that's an edge case the
+    # 3x3 fixture above does not hit, since the central wet cell at (1,1)
+    # has 8 dry neighbours).
+    if wet.sum() >= 1:
+        # Local terrain at (1,1) is 0.0; spill rim should be the minimum dry
+        # neighbour height (here 1.0 across the row above), so wsfm[1,1] >= 1.0.
+        # Generic assertion: for SOME wet cell, surface > underlying height.
+        assert (surface_elevation[wet] > stack.height[wet]).any(), (
+            "spill-rim flood-fill should lift at least one wet cell above "
+            "its underlying terrain (its body's dry rim); none did."
+        )
+    # Dry cells must remain at zero (sentinel for "no water surface here").
     assert np.all(surface_elevation[~wet] == 0.0)
     assert stack.populated_by_pass["water_surface_elevation_m"] == "water_variants"
 

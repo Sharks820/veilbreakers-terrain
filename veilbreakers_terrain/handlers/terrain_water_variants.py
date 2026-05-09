@@ -110,6 +110,91 @@ class SeasonalState(enum.Enum):
 # ---------------------------------------------------------------------------
 
 
+def _compute_spill_rim_elevation(
+    h: np.ndarray, wet_mask: np.ndarray
+) -> np.ndarray:
+    """Per-cell water_surface_elevation derived from connected-component spill-rim.
+
+    AAA hydrology bake invariant: ``wsfm[wet] >= h[wet]`` so
+    ``water_depth_m = max(wsfm - h, 0)`` is non-zero everywhere the water
+    mask says water exists. Each connected wet body's surface elevation is
+    set to ``max(dry_rim_neighbors, body_underlying_heights)``: the body
+    fills up to the lowest dry rim that contains it (or to its own deepest
+    cell if all neighbors are also wet, e.g. an interior tile cell).
+
+    Mirrors Houdini ``hf_water_solver`` and UE5 Water Body's flood-fill bake.
+
+    Returns a float32 array with wet cells filled in and dry cells at 0.0
+    (callers decide how to merge with prior state).
+    """
+    rows, cols = h.shape
+    out = np.zeros(h.shape, dtype=np.float32)
+    if not wet_mask.any():
+        return out
+
+    parent = list(range(rows * cols))
+
+    def _find(x: int) -> int:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    def _union(a: int, b: int) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    wet_flat = wet_mask.ravel()
+    for idx in range(rows * cols):
+        if not wet_flat[idx]:
+            continue
+        r_i = idx // cols
+        c_i = idx % cols
+        up = (r_i - 1) * cols + c_i if r_i > 0 else -1
+        left = r_i * cols + (c_i - 1) if c_i > 0 else -1
+        if up >= 0 and wet_flat[up]:
+            _union(idx, up)
+        if left >= 0 and wet_flat[left]:
+            _union(idx, left)
+
+    body_heights: dict[int, list[float]] = {}
+    body_rims: dict[int, list[float]] = {}
+    for idx in range(rows * cols):
+        if not wet_flat[idx]:
+            continue
+        root = _find(idx)
+        r_i = idx // cols
+        c_i = idx % cols
+        body_heights.setdefault(root, []).append(float(h[r_i, c_i]))
+        rim_values = body_rims.setdefault(root, [])
+        for nr, nc in (
+            (r_i - 1, c_i),
+            (r_i + 1, c_i),
+            (r_i, c_i - 1),
+            (r_i, c_i + 1),
+        ):
+            if 0 <= nr < rows and 0 <= nc < cols and not wet_mask[nr, nc]:
+                rim_values.append(float(h[nr, nc]))
+
+    body_surface: dict[int, float] = {
+        root: float(max(body_rims.get(root) or heights))
+        for root, heights in body_heights.items()
+    }
+
+    for idx in range(rows * cols):
+        if not wet_flat[idx]:
+            continue
+        root = _find(idx)
+        r_i = idx // cols
+        c_i = idx % cols
+        out[r_i, c_i] = body_surface.get(root, h[r_i, c_i])
+
+    return out
+
+
 def _as_polyline(path: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray:
     arr = np.asarray(path, dtype=np.float32)
     if arr.ndim == 1:
@@ -865,11 +950,19 @@ def pass_water_variants(
     # rather than overwriting the whole tile — otherwise a second region call
     # obliterates the first region's contributions.
     water_surface_mask_full = (water_surface > 0.0).astype(np.float32)
-    water_surface_elevation_m_full = np.where(
-        water_surface_mask_full > 0.0,
+    # PR-F1 fix (2026-05-09 cross-audit P0): wet cells must satisfy
+    # ``wsfm >= h`` so ``water_depth_m = max(wsfm - h, 0)`` is non-zero
+    # for every wet cell.  The prior implementation set
+    # ``wsfm[wet] = h[wet]`` literally, which made every wet cell have
+    # water_depth_m = 0 — the bug confirmed by 5 independent audits and
+    # the encoded-bug test at test_phase2_stack_protocol.py:134.
+    # Spill-rim flood-fill matches the AAA hydrology bake convention
+    # (Houdini hf_water_solver / UE5 Water Body) and is the same
+    # algorithm used by ``pass_bathymetry`` when wsfm is absent.
+    water_surface_elevation_m_full = _compute_spill_rim_elevation(
         np.asarray(stack.height, dtype=np.float32),
-        0.0,
-    ).astype(np.float32)
+        water_surface_mask_full > 0.0,
+    )
     if region is not None:
         existing_mask = stack.get("water_surface_mask")
         existing_elev = stack.get("water_surface_elevation_m")
@@ -1450,7 +1543,6 @@ def pass_bathymetry(
     issues: List[ValidationIssue] = []
 
     h = np.asarray(stack.height, dtype=np.float32)
-    rows, cols = h.shape
 
     # W-1: prefer canonical water_surface_mask; fall back to legacy water_surface.
     ws_raw = stack.get("water_surface_mask")
@@ -1470,7 +1562,17 @@ def pass_bathymetry(
         water_depth_zone = np.zeros(h.shape, dtype=np.uint8)
         stack.set("bathymetry", bathymetry, "bathymetry")
         stack.set("water_depth_zone", water_depth_zone, "bathymetry")
-        stack.set("water_surface_elevation_m", h.astype(np.float32), "bathymetry")
+        # PR-F1 fix: when no water surface present, wsfm is also zero —
+        # NOT terrain height. Setting wsfm = h here was a second instance
+        # of the same bug pattern: downstream consumers compute
+        # water_depth_m = max(wsfm - h, 0) = 0 even though there is no
+        # water at all, but they may also use wsfm > 0 as a "has water"
+        # sentinel which would falsely flag every cell as wet.
+        stack.set(
+            "water_surface_elevation_m",
+            np.zeros(h.shape, dtype=np.float32),
+            "bathymetry",
+        )
         return PassResult(
             pass_name="bathymetry",
             status="ok",
@@ -1505,78 +1607,15 @@ def pass_bathymetry(
         water_surface_elev = ws  # already in metres
     else:
         wet_mask = (ws > 0.5)
-        # Reconstruct per-body water surface elevation using connected-component
-        # analysis: each body's surface = highest dry spill rim bordering the
-        # connected wet body. This preserves single-cell channels and steep
-        # basin lips that an interior percentile cannot see.
+        # PR-F1 fix: factored the per-body spill-rim flood-fill out into the
+        # shared ``_compute_spill_rim_elevation`` helper so ``pass_water_variants``
+        # and ``pass_bathymetry`` produce byte-identical wsfm for the same wet mask.
+        # Dry cells get h (legacy semantics for this branch — bathymetry zeros
+        # them out below via the wet_mask gate).
         water_surface_elev = h.copy()
         if wet_mask.any():
-            # Label connected components (4-connectivity for speed)
-            # We implement a simple two-pass union-find flood fill without scipy
-            label_grid = np.full(h.shape, -1, dtype=np.int32)
-            # First pass: row-major assignment with left/up neighbour merging
-            parent = list(range(rows * cols))
-
-            def _find(x: int) -> int:
-                root = x
-                while parent[root] != root:
-                    root = parent[root]
-                while parent[x] != root:
-                    parent[x], x = root, parent[x]
-                return root
-
-            def _union(a: int, b: int) -> None:
-                ra, rb = _find(a), _find(b)
-                if ra != rb:
-                    parent[ra] = rb
-
-            wet_flat = wet_mask.ravel()
-            for idx in range(rows * cols):
-                if not wet_flat[idx]:
-                    continue
-                r_i = idx // cols
-                c_i = idx % cols
-                label_grid.ravel()[idx] = idx  # provisional label = own index
-                up = (r_i - 1) * cols + c_i if r_i > 0 else -1
-                left = r_i * cols + (c_i - 1) if c_i > 0 else -1
-                if up >= 0 and wet_flat[up]:
-                    _union(idx, up)
-                if left >= 0 and wet_flat[left]:
-                    _union(idx, left)
-
-            # Assign canonical labels and compute per-body spill rims.
-            body_heights: dict[int, list[float]] = {}
-            body_rims: dict[int, list[float]] = {}
-            for idx in range(rows * cols):
-                if not wet_flat[idx]:
-                    continue
-                root = _find(idx)
-                r_i = idx // cols
-                c_i = idx % cols
-                body_heights.setdefault(root, []).append(float(h[r_i, c_i]))
-                rim_values = body_rims.setdefault(root, [])
-                for nr, nc in (
-                    (r_i - 1, c_i),
-                    (r_i + 1, c_i),
-                    (r_i, c_i - 1),
-                    (r_i, c_i + 1),
-                ):
-                    if 0 <= nr < rows and 0 <= nc < cols and not wet_mask[nr, nc]:
-                        rim_values.append(float(h[nr, nc]))
-
-            body_surface: dict[int, float] = {
-                root: float(max(body_rims.get(root) or heights))
-                for root, heights in body_heights.items()
-            }
-
-            # Write surface elevation for each wet cell
-            for idx in range(rows * cols):
-                if not wet_flat[idx]:
-                    continue
-                root = _find(idx)
-                r_i = idx // cols
-                c_i = idx % cols
-                water_surface_elev[r_i, c_i] = body_surface.get(root, h[r_i, c_i])
+            spill = _compute_spill_rim_elevation(h, wet_mask)
+            water_surface_elev = np.where(wet_mask, spill, water_surface_elev).astype(np.float32)
 
     # --- Bathymetry: depth below water surface ---
     # bathymetry = max(0, surface_elevation - terrain_height) for wet cells

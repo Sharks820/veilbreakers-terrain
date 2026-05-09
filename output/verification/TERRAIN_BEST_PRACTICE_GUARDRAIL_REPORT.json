@@ -1,6 +1,6 @@
 {
   "matrix_path": "output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv",
-  "live_count": 1923,
+  "live_count": 1924,
   "matrix_count": 1909,
   "is_blocking": true,
   "missing_rows": [
@@ -17,7 +17,8 @@
     "terrain_labels.py::_stamp_label_in_channel",
     "terrain_labels.py::pass_label_stamping",
     "terrain_labels.py::label_stamping_pass_definition",
-    "terrain_unity_export.py::_water_integration_note_for_backend"
+    "terrain_unity_export.py::_water_integration_note_for_backend",
+    "terrain_water_variants.py::_compute_spill_rim_elevation"
   ],
   "field_gaps": {},
   "unknown_domains": {},
