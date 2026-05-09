@@ -377,6 +377,18 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # road_sdf_dist is available to materials_v2 / scatter_intelligent.
             "pass_road_network",
             "materials_v2",
+            # PR-E (cross-audit P0 2026-05-09): schedule the two
+            # vegetation orphan passes whose channels ARE consumed by
+            # scatter / procedural_grass. ``vegetation_depth`` produces
+            # ``detail_density`` (consumed by scatter as an `overrides`
+            # owner via PassDefinition); ``emergent_grass`` produces
+            # ``grass_density_map`` (consumed by procedural_grass as
+            # an override). Both run AFTER materials_v2 (which produces
+            # ``splatmap_weights_layer`` that emergent_grass requires)
+            # and BEFORE scatter_intelligent / pass_procedural_grass.
+            # Closes Agent 2 verifier finding: "vegetation_depth and
+            # emergent_grass registered but never scheduled."
+            *(("vegetation_depth", "emergent_grass") if has_scene_read else ()),
             *(("emit_overhang_meshes",) if has_scene_read else ()),
             *(("scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read and not skip_scatter else ()),
             # C-2: Bundle J ecosystem passes
