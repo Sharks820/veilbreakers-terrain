@@ -1745,17 +1745,20 @@ def register_bathymetry_pass() -> None:
         PassDefinition(
             name="bathymetry",
             func=pass_bathymetry,
-            requires_channels=("height", "water_surface"),
-            # CodeRabbit review fix (PR-A round-2): pass_bathymetry now
-            # canonically reads ``water_surface_mask`` (preferred) and
-            # ``water_surface_elevation_m`` (fallback) before falling
-            # back to legacy ``water_surface``. Declare the canonical
-            # channels in optional_channels so the PassDAG knows
-            # bathymetry consumes them and can schedule producers
-            # upstream when present.
+            # CodeRabbit + Copilot review fix (PR-A round-2 + round-3):
+            # pass_bathymetry now canonically reads water_surface_mask
+            # (preferred) and water_surface_elevation_m (fallback)
+            # before falling back to legacy water_surface. The legacy
+            # channel is no longer strictly required — it's the LAST
+            # fallback. Move it to optional_channels alongside the new
+            # canonical channels so the PassDAG can run pass_bathymetry
+            # whenever ANY of the three is present, not strictly when
+            # the legacy channel exists.
+            requires_channels=("height",),
             optional_channels=(
                 "water_surface_mask",
                 "water_surface_elevation_m",
+                "water_surface",
             ),
             produces_channels=("bathymetry", "water_depth_zone", "water_surface_elevation_m"),
             overrides=("water_surface_elevation_m",),
