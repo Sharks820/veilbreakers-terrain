@@ -394,6 +394,23 @@ class TerrainMaskStack:
     rock_hardness: Optional[np.ndarray] = None
     snow_line_factor: Optional[np.ndarray] = None
 
+    # Topographic indices (Phase C D35 / pass_topographic_indices) — derived
+    # foliage-stack inputs per spec §3.5 / §4.2:
+    # vb_aspect_deg       — float32 (H, W) slope aspect in degrees [0, 360);
+    #                       0=N, 90=E, 180=S, 270=W (compass clockwise).
+    # vb_aspect_north     — float32 (H, W), cos(aspect_radians) in [-1, +1];
+    #                       +1 = perfectly north-facing (cool, moist), -1 = south.
+    # vb_canopy_openness  — float32 (H, W) sky view factor in [0, 1];
+    #                       1 = unobscured sky, 0 = deep valley (horizon hemisphere).
+    # vb_TWI              — float32 (H, W) Topographic Wetness Index =
+    #                       ln(flow_accumulation_area / tan(slope)); larger = wetter.
+    # All four are produced by ``pass_topographic_indices`` and consumed
+    # (optionally) by foliage-catalog / scatter passes for placement rules.
+    vb_aspect_deg: Optional[np.ndarray] = None
+    vb_aspect_north: Optional[np.ndarray] = None
+    vb_canopy_openness: Optional[np.ndarray] = None
+    vb_TWI: Optional[np.ndarray] = None
+
     # Bundle A supplements (Addendum 1.B.1 erosion mask preservation)
     sediment_accumulation_at_base: Optional[np.ndarray] = None
     pool_deepening_delta: Optional[np.ndarray] = None
@@ -736,6 +753,11 @@ class TerrainMaskStack:
             "snow_coverage",
             # Biome surface feature delta (FIX-B14-4)
             "biome_surface_feature_delta",
+            # Topographic indices (Phase C D35 / pass_topographic_indices)
+            "vb_aspect_deg",
+            "vb_aspect_north",
+            "vb_canopy_openness",
+            "vb_TWI",
         ),
     )
 

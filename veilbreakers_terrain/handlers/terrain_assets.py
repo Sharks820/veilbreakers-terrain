@@ -1000,6 +1000,14 @@ def register_bundle_e_passes() -> None:
                 # so detail_density already holds their layers before scatter merges
                 # its tree-crown contribution on top via dict.update().
                 "detail_density",
+                # Phase C D35: derived topographic indices for foliage placement
+                # rules (spec §4.2). Consumed via stack.get(...) when present;
+                # absent in legacy/preview profiles, where placement falls back
+                # to slope/wetness alone.
+                "vb_aspect_deg",
+                "vb_aspect_north",
+                "vb_canopy_openness",
+                "vb_TWI",
             ),
             produces_channels=("tree_instance_points", "detail_density"),
             # scatter_intelligent merges into existing detail_density written by
