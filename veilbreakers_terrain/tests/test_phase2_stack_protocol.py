@@ -113,6 +113,21 @@ def test_pass_coastline_defers_height_delta_to_integrator_once():
 
 
 def test_pass_water_variants_writes_surface_elevation_channel():
+    """W-1 / PR-F1 invariant: wet cells must satisfy ``wsfm >= h`` so
+    ``water_depth_m = max(wsfm - h, 0)`` is non-zero everywhere the water
+    mask says water exists.
+
+    Prior to PR-F1 (2026-05-09), this test asserted
+    ``surface_elevation[wet] == stack.height[wet]`` literally — that
+    pinned the buggy assignment ``wsfm[wet] = h[wet]`` and made every
+    wet cell silently produce ``water_depth_m == 0``.  The corrected
+    invariant uses connected-component spill-rim flood-fill (matching
+    Houdini ``hf_water_solver`` and UE5 Water Body): each body's
+    surface elevation = ``max(highest_dry_rim_neighbor,
+    highest_body_underlying_height)``.  The body's own height max is
+    always included so ``wsfm >= h`` holds even for "perched" wet cells
+    that sit above all their dry neighbors.
+    """
     from veilbreakers_terrain.handlers.terrain_water_variants import pass_water_variants
 
     h = np.array(
@@ -131,9 +146,185 @@ def test_pass_water_variants_writes_surface_elevation_channel():
     surface_elevation = stack.water_surface_elevation_m
     water_mask = stack.water_surface_mask
     wet = water_mask > 0.0
-    assert np.array_equal(surface_elevation[wet], stack.height[wet])
+    # PR-F1 invariant: wet-cell elevation lies AT or ABOVE local terrain so
+    # water_depth_m = max(wsfm - h, 0) is non-zero by construction.
+    assert np.all(surface_elevation[wet] >= stack.height[wet]), (
+        "wsfm[wet] must be >= h[wet] (spill-rim invariant); "
+        f"min wet diff = {(surface_elevation[wet] - stack.height[wet]).min()}"
+    )
+    # Spill-rim semantics: when a wet body has at least one dry neighbour,
+    # its surface elevation is lifted to the body's HIGHEST dry rim (or
+    # the body's max underlying height, whichever is greater) — NOT the
+    # minimum rim. The 3x3 fixture has its single wet cell at (1,1)
+    # surrounded by 8 dry cells with heights {1, 2, 3, 4, 5, 6, 7, 8};
+    # max rim = 8, body height max = 0, so wsfm[1,1] = 8.0.  Generic
+    # assertion: at least one wet cell must be lifted above its terrain.
+    if wet.any():
+        assert (surface_elevation[wet] > stack.height[wet]).any(), (
+            "spill-rim flood-fill should lift at least one wet cell above "
+            "its underlying terrain (its body's dry rim); none did."
+        )
+    # Dry cells must remain at zero (sentinel for "no water surface here").
     assert np.all(surface_elevation[~wet] == 0.0)
     assert stack.populated_by_pass["water_surface_elevation_m"] == "water_variants"
+
+
+def test_compute_spill_rim_elevation_basin_uses_highest_dry_rim():
+    """``_compute_spill_rim_elevation`` direct contract: for a single wet
+    body in a basin, wsfm equals the highest dry rim height across the
+    whole body (water fills up to the top of the rim before spilling)."""
+    from veilbreakers_terrain.handlers.terrain_water_variants import (
+        _compute_spill_rim_elevation,
+    )
+
+    # Bowl: wet cells in centre, dry rim heights ascending around the edge.
+    h = np.array(
+        [
+            [10.0, 11.0, 12.0, 13.0, 14.0],
+            [9.0, 0.0, 0.0, 0.0, 15.0],
+            [8.0, 0.0, 0.0, 0.0, 16.0],
+            [7.0, 0.0, 0.0, 0.0, 17.0],
+            [18.0, 19.0, 20.0, 21.0, 22.0],
+        ],
+        dtype=np.float32,
+    )
+    wet = np.zeros_like(h, dtype=bool)
+    wet[1:4, 1:4] = True
+
+    out = _compute_spill_rim_elevation(h, wet)
+
+    # 4-connectivity: rim neighbors are top/bottom/left/right of wet cells.
+    # The body wet[1:4, 1:4] has dry rims at:
+    #   top row 0:  cols 1..3 → 11, 12, 13
+    #   bot row 4:  cols 1..3 → 19, 20, 21
+    #   left col 0: rows 1..3 → 9, 8, 7
+    #   right col 4:rows 1..3 → 15, 16, 17
+    # Corner cells (0,0)=10, (0,4)=14, (4,0)=18, (4,4)=22 are NOT
+    # 4-connected to any wet cell so they don't enter the rim sample.
+    # Max rim = 21.  Body's own height max = 0.  Spill rim = 21.
+    assert np.all(out[wet] == 21.0), (
+        f"all wet cells should share the body's max-rim elevation (21); got {out[wet]}"
+    )
+    # Dry cells stay at zero.
+    assert np.all(out[~wet] == 0.0)
+
+
+def test_compute_spill_rim_elevation_perched_wet_cell_uses_body_height():
+    """Codex P2 / Copilot regression pin: when a connected wet body
+    contains a cell whose underlying terrain is HIGHER than every dry
+    neighbor, the body's surface must rise to the wet cell's height so
+    ``wsfm[wet] >= h[wet]`` holds for that cell.  The previous
+    ``rims or heights`` form silently dropped the body-height term
+    whenever any rim sample existed, allowing wsfm < h on perched cells.
+    """
+    from veilbreakers_terrain.handlers.terrain_water_variants import (
+        _compute_spill_rim_elevation,
+    )
+
+    # Wet body of 3 cells in a row; one wet cell is HIGHER than every
+    # dry neighbor of the body.
+    h = np.array(
+        [
+            [1.0, 1.0, 1.0],
+            [0.0, 5.0, 0.0],   # middle wet cell at h=5 is the perched cell
+            [1.0, 1.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    wet = np.array(
+        [
+            [False, False, False],
+            [True, True, True],
+            [False, False, False],
+        ]
+    )
+
+    out = _compute_spill_rim_elevation(h, wet)
+
+    # Highest dry rim across the body = 1.0; body's own max height = 5.0.
+    # Spill rim = max(rim_max=1.0, body_height_max=5.0) = 5.0.
+    # Without the bug fix, wsfm would have been 1.0 → wsfm < h at the
+    # perched cell → water_depth_m collapses to 0.
+    assert np.all(out[wet] >= h[wet]), (
+        f"wsfm[wet] must be >= h[wet] (perched-cell invariant); "
+        f"got out[wet]={out[wet]}, h[wet]={h[wet]}"
+    )
+    assert np.all(out[wet] == 5.0)
+
+
+def test_compute_spill_rim_elevation_isolated_body_no_dry_rim():
+    """Edge case: when a wet body has no dry neighbors at all (e.g.
+    entire grid is wet, or a body spans the full tile interior), the
+    body-height-max term keeps wsfm well-defined and the invariant holds.
+    """
+    from veilbreakers_terrain.handlers.terrain_water_variants import (
+        _compute_spill_rim_elevation,
+    )
+
+    h = np.array(
+        [
+            [3.0, 5.0],
+            [2.0, 4.0],
+        ],
+        dtype=np.float32,
+    )
+    wet = np.ones_like(h, dtype=bool)
+
+    out = _compute_spill_rim_elevation(h, wet)
+
+    # No dry rim → use body-height-max = 5.0 for every wet cell.
+    assert np.all(out == 5.0)
+    assert np.all(out[wet] >= h[wet])
+
+
+def test_compute_spill_rim_elevation_empty_wet_mask_returns_zeros():
+    """Determinism contract: empty wet mask returns all-zeros without
+    crashing or running the union-find."""
+    from veilbreakers_terrain.handlers.terrain_water_variants import (
+        _compute_spill_rim_elevation,
+    )
+
+    h = np.full((4, 4), 7.5, dtype=np.float32)
+    wet = np.zeros_like(h, dtype=bool)
+
+    out = _compute_spill_rim_elevation(h, wet)
+
+    assert out.shape == h.shape
+    assert out.dtype == np.float32
+    assert np.all(out == 0.0)
+
+
+def test_compute_spill_rim_elevation_two_separate_bodies_independent():
+    """Two disjoint wet bodies must compute independent spill rims;
+    a low rim on body A must not lower body B and vice versa.
+    """
+    from veilbreakers_terrain.handlers.terrain_water_variants import (
+        _compute_spill_rim_elevation,
+    )
+
+    # Body A: top-left, surrounded by low rims.  Body B: bottom-right,
+    # surrounded by high rims.  Any leaking of B's rim into A would lift
+    # A's surface incorrectly (and vice versa).
+    h = np.array(
+        [
+            [2.0, 0.0, 1.0, 99.0, 99.0],
+            [0.0, 0.0, 1.0, 99.0, 99.0],
+            [1.0, 1.0, 1.0, 99.0, 99.0],
+            [99.0, 99.0, 99.0, 0.0, 0.0],
+            [99.0, 99.0, 99.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    wet = np.zeros_like(h, dtype=bool)
+    wet[0:2, 0:2] = True   # body A
+    wet[3:5, 3:5] = True   # body B
+
+    out = _compute_spill_rim_elevation(h, wet)
+
+    # Body A's rims: (0,2)=1, (1,2)=1, (2,0..2)=1,1,1 → rim_max=1, body_h_max=2 → wsfm=2.
+    assert np.all(out[0:2, 0:2] == 2.0), f"body A wsfm wrong: {out[0:2, 0:2]}"
+    # Body B's rims: (2,3..4)=99, (3..4,2)=99, all 99 → rim_max=99, body_h_max=0 → wsfm=99.
+    assert np.all(out[3:5, 3:5] == 99.0), f"body B wsfm wrong: {out[3:5, 3:5]}"
 
 
 def test_structural_masks_publish_hero_exclusion_channel():

@@ -1,11 +1,11 @@
 # Terrain Best-Practice Guardrail Report
 
-- Generated: 2026-05-09T03:19:46.652022+00:00
+- Generated: 2026-05-09T05:18:42.534763+00:00
 - Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv`
-- Live callables: 1923
+- Live callables: 1924
 - Matrix rows: 1909
 - Blocking: true
-- Missing rows: 14
+- Missing rows: 15
 - Rows with required-field gaps: 0
 - Rows with unknown domains: 0
 - Duplicate callable-name groups: 14
@@ -31,6 +31,7 @@
 - `terrain_labels.py::pass_label_stamping`
 - `terrain_labels.py::label_stamping_pass_definition`
 - `terrain_unity_export.py::_water_integration_note_for_backend`
+- `terrain_water_variants.py::_compute_spill_rim_elevation`
 
 ## Duplicate Callable Names
 
