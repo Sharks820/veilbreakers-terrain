@@ -459,6 +459,9 @@ def derive_pass_seed(
     return int.from_bytes(digest[:4], "big") & 0xFFFFFFFF
 
 
+_POST_DELTAS_RECOMPUTE_PASS = "structural_masks_post_deltas"
+
+
 def _normalize_delta_integration_sequence(pass_sequence: List[str]) -> List[str]:
     """Ensure ``integrate_deltas`` runs after the last delta-producing pass.
 
@@ -467,6 +470,13 @@ def _normalize_delta_integration_sequence(pass_sequence: List[str]) -> List[str]
     the composed heightfield, so controller sequencing normalizes the
     integrator placement instead of relying on every caller to insert it
     manually.
+
+    PR-F2 (2026-05-09): also keeps ``structural_masks_post_deltas`` paired
+    immediately after ``integrate_deltas`` regardless of where the integrator
+    moves. Otherwise the recompute can land BEFORE the integrator and
+    materials_v2 / scatter_intelligent / label_stamping / topographic_indices
+    silently consume pre-delta slope/curvature — the exact pass-order rot
+    this PR closes.
     """
     seq = list(pass_sequence)
     if not seq or "integrate_deltas" not in TerrainPassController.PASS_REGISTRY:
@@ -475,7 +485,10 @@ def _normalize_delta_integration_sequence(pass_sequence: List[str]) -> List[str]
     from .terrain_delta_integrator import _DELTA_CHANNELS
 
     delta_channels = set(_DELTA_CHANNELS)
-    seq_without_integrator = [name for name in seq if name != "integrate_deltas"]
+    # Strip BOTH the integrator and its paired recompute so they are always
+    # re-inserted together at the post-producer slot.
+    pinned_passes = {"integrate_deltas", _POST_DELTAS_RECOMPUTE_PASS}
+    seq_without_integrator = [name for name in seq if name not in pinned_passes]
 
     # P2-5: surface unregistered pass names instead of silently skipping them.
     # A typo or missing registration would otherwise cause delta integrators to
@@ -506,6 +519,15 @@ def _normalize_delta_integration_sequence(pass_sequence: List[str]) -> List[str]
     insert_at = producer_indexes[-1] + 1
     normalized = list(seq_without_integrator)
     normalized.insert(insert_at, "integrate_deltas")
+    # PR-F2 pairing: restore the post-deltas recompute immediately after
+    # the integrator. Only pair when the recompute was scheduled by the
+    # caller (otherwise we'd be silently adding it to legacy callers that
+    # didn't ask for it) AND the pass is registered.
+    if (
+        _POST_DELTAS_RECOMPUTE_PASS in pass_sequence
+        and _POST_DELTAS_RECOMPUTE_PASS in TerrainPassController.PASS_REGISTRY
+    ):
+        normalized.insert(insert_at + 1, _POST_DELTAS_RECOMPUTE_PASS)
     return normalized
 
 
