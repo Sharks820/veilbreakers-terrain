@@ -593,10 +593,10 @@ class ProceduralGrassSystem:
 
             # PR-B (cross-audit P0 2026-05-09): record per-instance moisture
             # from vb_TWI when available (matches the affinity-mask source
-            # in _density_mask_from_species).  Falls back to drainage_norm.
+            # in _eligibility_mask).  Falls back to drainage_norm.
             # Verifier 2 risk fix: treat uniform TWI as "absent" so
             # drainage fallback engages on degenerate D35 producers
-            # (matches the same guard in _density_mask_from_species).
+            # (matches the same guard in _eligibility_mask).
             twi_arr = _stack_attr(stack, "vb_TWI")
             twi_norm = _normalise_array(twi_arr)
             if twi_norm is not None and not np.any(twi_norm):

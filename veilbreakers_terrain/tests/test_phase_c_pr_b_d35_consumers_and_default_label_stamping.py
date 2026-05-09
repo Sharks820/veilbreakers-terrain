@@ -30,6 +30,11 @@ def _intent(rows: int = 16, *, scene_read: bool = True, **hints: Any) -> Any:
         BBox,
         TerrainIntentState,
     )
+    # Copilot review fix: pop quality_profile BEFORE building composition_hints
+    # so the composition_hints dict doesn't carry a stray "quality_profile"
+    # entry. Pipeline reads intent.quality_profile, not the hint, but the
+    # bleed pollutes the test fixture and confuses future readers.
+    quality_profile = str(hints.pop("quality_profile", "aaa_open_world"))
     return TerrainIntentState(
         seed=42,
         region_bounds=BBox(0.0, 0.0, float(rows), float(rows)),
@@ -37,7 +42,7 @@ def _intent(rows: int = 16, *, scene_read: bool = True, **hints: Any) -> Any:
         cell_size=1.0,
         composition_hints=dict(hints),
         scene_read=cast(Any, object()) if scene_read else None,
-        quality_profile=str(hints.pop("quality_profile", "aaa_open_world")),
+        quality_profile=quality_profile,
     )
 
 
