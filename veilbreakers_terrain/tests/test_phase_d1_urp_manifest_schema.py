@@ -13,8 +13,12 @@ from __future__ import annotations
 import json
 import pathlib
 import tempfile
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import pytest as _pytest_module
 
 from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 from veilbreakers_terrain.handlers.terrain_unity_backends import (
@@ -145,6 +149,34 @@ def test_schema_version_minor_bump_accepted():
     assert m.to_dict()["schema_version"] == "1.99"
 
 
+def test_direct_construction_rejects_v2_schema_version():
+    """CodeRabbit round-2 fix: direct construction must enforce schema-major.
+
+    Before the fix, ``_check_major`` only ran in ``from_dict``, so a literal
+    like ``WaterSurfaceManifest(schema_version="2.0", ...)`` could bypass
+    the v1-only guard and serialise unchanged.  After the fix, every
+    manifest dataclass — and ``UnityExportConfig`` — calls
+    ``_check_major(self.schema_version)`` in ``__post_init__`` so the
+    write path is closed too.
+    """
+    import pytest as _pytest
+
+    from veilbreakers_terrain.handlers.terrain_unity_backends import (
+        UnityExportConfig,
+    )
+
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        WaterSurfaceManifest(schema_version="2.0")
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        SkyManifest(schema_version="2.0")
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        AtmosphericManifest(schema_version="2.0")
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        UpscalerManifest(schema_version="2.0")
+    with _pytest.raises(ValueError, match="schema major mismatch"):
+        UnityExportConfig(schema_version="2.0")
+
+
 def test_recursive_self_in_upgrade_compat_rejected():
     """A backend listing itself as an alt is a config bug — reject."""
     import pytest as _pytest
@@ -239,8 +271,11 @@ def test_canonical_alt_order_is_permutation_of_backend_registry():
 
     # Same slot set in both maps.
     assert set(CANONICAL_ALT_ORDER.keys()) == set(BACKEND_REGISTRY.keys())
+    # CodeRabbit round-2 fix: compare sorted sequences (multiset equality)
+    # rather than sets so duplicate entries trip this guard.  A pure ``set``
+    # comparison would silently accept a duplicated backend.
     for slot, registry in BACKEND_REGISTRY.items():
-        assert set(CANONICAL_ALT_ORDER[slot]) == set(registry), (
+        assert sorted(CANONICAL_ALT_ORDER[slot]) == sorted(registry), (
             f"slot {slot!r} permutation mismatch: "
             f"CANONICAL_ALT_ORDER={CANONICAL_ALT_ORDER[slot]!r} vs "
             f"BACKEND_REGISTRY={registry!r}"
@@ -250,6 +285,30 @@ def test_canonical_alt_order_is_permutation_of_backend_registry():
     # documents the failure mode for future readers and pins the helper
     # against accidental signature changes.
     _validate_canonical_alt_order()
+
+
+def test_canonical_alt_order_validator_rejects_duplicate_entries(
+    monkeypatch: "_pytest_module.MonkeyPatch",
+) -> None:
+    """CodeRabbit round-2 fix: a tuple with a duplicate backend must be rejected.
+
+    Before the fix, ``set(canonical) == set(registry)`` would treat
+    ``("a", "a", "b", "c")`` as equal to ``("a", "b", "c", "d")`` when
+    sets dedup, missing both the duplicated ``a`` and the missing ``d``.
+    The sorted-sequence comparison catches both cases.
+    """
+    import pytest as _pytest
+
+    from veilbreakers_terrain.handlers import terrain_unity_backends as tub
+
+    # Patch CANONICAL_ALT_ORDER so the upscaler slot has the same length
+    # as the registry but contains a duplicated entry and is missing one.
+    bad = dict(tub.CANONICAL_ALT_ORDER)
+    bad["upscaler"] = ("stp_1_0", "stp_1_0", "fsr_1_0", "dlss_4_5", "off")
+    monkeypatch.setattr(tub, "CANONICAL_ALT_ORDER", bad)
+
+    with _pytest.raises(RuntimeError, match="not a permutation"):
+        tub._validate_canonical_alt_order()
 
 
 def test_canonical_alt_order_upscaler_substitution_priority_pinned():

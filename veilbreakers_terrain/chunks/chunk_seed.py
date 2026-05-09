@@ -127,7 +127,6 @@ def chunk_seed_bytes(
     # would raise struct.error on values >= 2**31. Mask negative
     # input via & 0xFFFFFFFF so signed-int callers (e.g. -1 used as
     # sentinel) still pack cleanly.
-    extra_bytes = bytes(extra)
     # Hardening PR B Fix #8 (VC finding): mirror the namespace check —
     # silent uint32 truncation of ``len(extra)`` would break collision-
     # resistance.  Real callers pass <16-byte salt but this catches a
@@ -136,17 +135,25 @@ def chunk_seed_bytes(
     # Codex review fix: raise ``ValueError`` rather than ``assert`` so the
     # overflow guard remains active when CPython is run with ``-O`` (which
     # strips ``assert`` statements).
-    if len(extra_bytes) >= (1 << 32):
+    #
+    # CodeRabbit round-2 fix: validate length BEFORE materializing
+    # ``bytes(extra)`` so a pathological multi-GB ``memoryview``/
+    # ``bytearray`` raises ``ValueError`` cleanly instead of trying to
+    # allocate the copy first and crashing with ``MemoryError``.  ``len()``
+    # works on any buffer-protocol object without copying.
+    extra_len = len(extra)
+    if extra_len >= (1 << 32):
         raise ValueError(
-            f"extra salt too long: {len(extra_bytes)} bytes exceeds uint32 "
+            f"extra salt too long: {extra_len} bytes exceeds uint32 "
             "length-prefix (2**32-1 == 4 GiB)."
         )
+    extra_bytes = bytes(extra)
     payload = (
         struct.pack("<I", int(intent_seed) & 0xFFFFFFFF)
         + _frame_namespace(namespace)
         + struct.pack("<qq", int(tile_x), int(tile_y))
         + _frame_region(region_bounds)
-        + struct.pack("<I", len(extra_bytes))
+        + struct.pack("<I", extra_len)
         + extra_bytes
     )
     return hashlib.blake2b(payload, digest_size=16).digest()
