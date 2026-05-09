@@ -102,6 +102,7 @@ _LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
     "stratigraphy",
     "coastline",
     "pass_terrain_features",
+    "framing",
     "talus",
     "structural_masks_post_talus",
     "lava_emit",
