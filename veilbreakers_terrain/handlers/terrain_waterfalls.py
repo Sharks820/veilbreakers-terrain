@@ -2519,8 +2519,11 @@ def pass_waterfalls(
     particle_emitter_specs = _build_particle_emitter_specs(
         chains, wind_direction_rad=wind_direction_rad
     )
-    if particle_emitter_specs:
-        stack.set("particle_emitter_specs", particle_emitter_specs, "waterfalls")
+    # Spec PR #21 (Phase C D28-29): always populate ``particle_emitter_specs``
+    # so the produces_channels contract is honoured even when no chains
+    # produced any emitters (the empty-list case is downstream-safe — the
+    # ``emit_particle_systems`` bridge tolerates an empty input).
+    stack.set("particle_emitter_specs", particle_emitter_specs, "waterfalls")
     # AAA req #6: export velocity field as float2 channel
     stack.set("waterfall_velocity", vel_field, "waterfalls")
     # Step 10: Wire flow speed to wave amplitude (5 cm displacement per m/s).
@@ -2547,8 +2550,13 @@ def pass_waterfalls(
     if caustic_map is not None:
         produced.append("caustic_atlas_path")
     produced.append("water_depth_atlas_path")
-    if particle_emitter_specs:
-        produced.append("particle_emitter_specs")
+    # Spec PR #21 (Phase C D28-29): ``particle_emitter_specs`` is always
+    # written to the stack at line ~2526 above (empty list is downstream-safe
+    # — the ``emit_particle_systems`` bridge tolerates an empty input). Report
+    # it unconditionally so PassResult metadata stays consistent with the
+    # PassDefinition.produces_channels contract — previously this was only
+    # appended when the list was truthy, which lied about the pass output.
+    produced.append("particle_emitter_specs")
 
     return PassResult(
         pass_name="waterfalls",
@@ -2819,6 +2827,11 @@ def register_bundle_c_passes() -> None:
                 "water_depth_atlas_path",
                 "riverbed_caustics",
                 "flow_speed",
+                # Spec PR #21 (Phase C D28-29): waterfalls writes
+                # ``particle_emitter_specs`` (line ~2523) but never declared
+                # the channel; ``emit_particle_systems`` then read it. Listing
+                # it here makes the producer→consumer DAG edge explicit.
+                "particle_emitter_specs",
             ),
             # OVERRIDE: Bundle F's ``caves`` pass writes a ``wet_rock`` mask for
             # dripping/seeping surfaces inside caves. Bundle C's waterfall pass
@@ -2830,7 +2843,10 @@ def register_bundle_c_passes() -> None:
             # that channel and applies a pool-outflow boost multiplier near
             # plunge basins (lines ~2348-2351). The boosted field is written back
             # under the same name so downstream passes see the final speed map.
-            overrides=("wet_rock", "flow_speed"),
+            # OVERRIDE: ``particle_emitter_specs`` — declared above as a
+            # produced channel; ``overrides`` makes the secondary-writer
+            # contract explicit per spec PR #21 row.
+            overrides=("wet_rock", "flow_speed", "particle_emitter_specs"),
             seed_namespace="waterfalls",
             requires_scene_read=True,
             may_modify_geometry=False,
@@ -2841,7 +2857,13 @@ def register_bundle_c_passes() -> None:
         PassDefinition(
             name="emit_particle_systems",
             func=pass_emit_particle_systems,
+            # Spec PR #21 (Phase C D28-29): bridge-pass contracts. The
+            # emitter list is written upstream by ``waterfalls`` as the
+            # opaque channel ``particle_emitter_specs``; we declare it as
+            # optional so this bridge runs even when waterfalls didn't
+            # populate any (it then publishes an empty layer).
             requires_channels=(),
+            optional_channels=("particle_emitter_specs",),
             produces_channels=(),
             seed_namespace="emit_particle_systems",
             requires_scene_read=False,
