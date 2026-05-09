@@ -377,8 +377,27 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # road_sdf_dist is available to materials_v2 / scatter_intelligent.
             "pass_road_network",
             "materials_v2",
+            # PR-E (cross-audit P0 2026-05-09): vegetation_depth produces
+            # detail_density which scatter_intelligent consumes (it has
+            # overrides=("detail_density",) so vegetation_depth must
+            # write FIRST and scatter overrides). Schedule AFTER
+            # materials_v2 + BEFORE scatter_intelligent.
+            *(("vegetation_depth",) if has_scene_read else ()),
             *(("emit_overhang_meshes",) if has_scene_read else ()),
             *(("scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read and not skip_scatter else ()),
+            # PR-E (cross-audit P0 2026-05-09 — Codex P2 + Copilot review
+            # on PR #68): emergent_grass produces ``grass_density_map``
+            # with ``overrides=("grass_density_map",)`` which means it
+            # is the LATER, more-authoritative writer. ``pass_procedural_grass``
+            # ALSO produces grass_density_map (without overrides) so we
+            # must schedule emergent_grass AFTER pass_procedural_grass —
+            # otherwise pass_procedural_grass clobbers emergent's output
+            # AND triggers ChannelOwnershipError because it isn't
+            # declared as an override-writer of a channel emergent
+            # already wrote. Post-procedural_grass placement preserves
+            # emergent_grass's biome-specific density map as the final
+            # value the scatter export sees.
+            *(("emergent_grass",) if has_scene_read and not skip_scatter else ()),
             # C-2: Bundle J ecosystem passes
             "audio_zones",
             "wildlife_zones",
