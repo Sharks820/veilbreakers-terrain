@@ -318,6 +318,19 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # C-8: sightline framing before scatter
             "framing",
             *(("water_variants", "pass_seasonal_water_state", "bathymetry", "pass_water_depth") if has_scene_read else ()),
+            # PR-A (cross-audit P0 2026-05-09): schedule the two registered
+            # water orphan passes that produce channels read by 5 existing
+            # downstream call sites. ``pass_water_flow_speed`` produces
+            # ``flow_speed`` which terrain_waterfalls reads at 5 sites
+            # (148, 1521, 1856, 2389, ...) — silently degrading to zeros
+            # before this PR. ``pass_river_convergence`` produces
+            # ``river_mouth_mask``, ``confluence_foam``, ``delta_fan_direction``
+            # which the unity export schema and waterfall foam shader can
+            # consume once wired (PR-W follow-up). Both depend on
+            # ``flow_accumulation`` + ``flow_direction`` from pass_hydrology
+            # and on ``water_surface_mask`` from pass_water_variants —
+            # already scheduled upstream.
+            *(("pass_water_flow_speed", "pass_river_convergence") if has_scene_read else ()),
             # Codex review (PR #36 P2): ``pass_coastline`` reads
             # ``water_surface_elevation_m`` to derive shoreline; that channel is
             # written by ``pass_water_variants`` upstream. Scheduling coastline

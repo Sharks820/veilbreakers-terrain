@@ -1115,7 +1115,15 @@ def register_bundle_g_passes() -> None:
         PassDefinition(
             name="banded_macro",
             func=pass_banded_macro,
-            requires_channels=(),
+            # PR-A B15-P0-32 fix: banded_macro READS stack.height (see line
+            # 1024) before composing the banded result back into it. The
+            # prior empty requires_channels=() declaration was a wave-0
+            # parallel-execution race risk: a parallel scheduler that
+            # respects the contract could fire banded_macro before any
+            # height producer (macro_world / pass_generate_low_freq_hmap),
+            # silently corrupting the composition. Sequential mode hid the
+            # bug; production parallel waves would not.
+            requires_channels=("height",),
             produces_channels=("height",),
             # OVERRIDE: Bundle G's banded-noise macro replaces whatever pure
             # noise macro (macro_world / pass_generate_low_freq_hmap) wrote

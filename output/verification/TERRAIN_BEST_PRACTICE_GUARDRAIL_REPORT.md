@@ -1,11 +1,11 @@
 # Terrain Best-Practice Guardrail Report
 
-- Generated: 2026-05-09T06:33:09.410428+00:00
+- Generated: 2026-05-09T07:23:25.345072+00:00
 - Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv`
 - Live callables: 1924
-- Matrix rows: 1909
-- Blocking: true
-- Missing rows: 15
+- Matrix rows: 1924
+- Blocking: false
+- Missing rows: 0
 - Rows with required-field gaps: 0
 - Rows with unknown domains: 0
 - Duplicate callable-name groups: 14
@@ -14,24 +14,6 @@
 - Non-A grade rows: 0
 - Blocking grade-status rows: 0
 - Verification blockers: 0
-
-## Missing Matrix Rows
-
-- `terrain_labels.py::LabelStamp.area_cells`
-- `terrain_labels.py::LabelStack.add`
-- `terrain_labels.py::LabelStack.stamps_for_label`
-- `terrain_labels.py::LabelStack.stamps_at`
-- `terrain_labels.py::LabelStack.label_ids_present`
-- `terrain_labels.py::LabelStack.to_dict`
-- `terrain_labels.py::LabelStack.from_dict`
-- `terrain_labels.py::_try_scipy_label`
-- `terrain_labels.py::_label_components`
-- `terrain_labels.py::_bbox_of_component`
-- `terrain_labels.py::_stamp_label_in_channel`
-- `terrain_labels.py::pass_label_stamping`
-- `terrain_labels.py::label_stamping_pass_definition`
-- `terrain_unity_export.py::_water_integration_note_for_backend`
-- `terrain_water_variants.py::_compute_spill_rim_elevation`
 
 ## Duplicate Callable Names
 
