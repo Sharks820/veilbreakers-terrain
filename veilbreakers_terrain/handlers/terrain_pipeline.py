@@ -142,6 +142,10 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
     skip_scatter = bool(composition_hints.get("skip_scatter", False))
     include_waterfalls = bool(composition_hints.get("waterfalls", True))
+    # Phase C D30-32 (Issue #27) — opt-in structural label-stamping. Off by default
+    # so existing fixtures stay byte-identical; downstream texturing/scatter
+    # consumers that want authored region tags request it explicitly.
+    include_label_stamping = bool(composition_hints.get("label_stamping", False))
     biome_hint = str(
         composition_hints.get("biome")
         or composition_hints.get("biome_name")
@@ -185,6 +189,25 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         "pass_banded_advanced",
         validation_pass,
     ]
+    # Phase C D30-32 (Issue #27) — opt-in label-stamping. Inserted AFTER
+    # ``structural_masks`` (so slope+curvature exist) and BEFORE the
+    # ``materials_v2`` consumer (so stamped labels override analytical slope).
+    # Stays out of pass_sequence when the hint is False so default tests are
+    # unaffected.
+    #
+    # Codex round-3 fix (PR #57 thread 2): the simple post-structural_masks
+    # placement is correct for headless / no-scene-read runs (where
+    # ``water_surface_mask`` is never populated), but in the canonical
+    # scene-read pipeline the water mask is written by ``pass_water_variants``
+    # which is only inserted later (validation_full block).  Defer the
+    # actual insertion until after the scene-read inserts run; we'll
+    # reposition the pass to land after ``pass_water_depth`` (the final
+    # water-mask producer in the sequence) so the river_channel /
+    # lake_shore stamps actually fire.  When scene_read is False, we keep
+    # the post-structural_masks placement.
+    if include_label_stamping and not has_scene_read:
+        insert_at = pass_sequence.index("structural_masks") + 1
+        pass_sequence.insert(insert_at, "label_stamping")
     if has_scene_read:
         # Hydrology + erosion operate on the low-freq height before compositing.
         # Insert them at index 3 (before pass_generate_high_freq_detail).
@@ -320,6 +343,28 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             if prereq not in pass_sequence:
                 pass_sequence.insert(insert_at, prereq)
                 insert_at += 1
+    # Codex round-3 fix (PR #57 thread 2): in the canonical scene-read
+    # pipeline ``water_surface_mask`` is written by ``pass_water_variants``
+    # (and the optional ``pass_water_depth`` follow-up), both of which are
+    # inserted by the validation_full water block above.  We deferred the
+    # ``label_stamping`` insert when scene_read is True so that it lands
+    # AFTER the water producer here — otherwise the river_channel /
+    # lake_shore branch sees ``water_surface_mask is None`` and never
+    # emits its stamps.  Place it directly after ``pass_water_depth``
+    # (or ``pass_water_variants`` if depth isn't scheduled), still
+    # before ``materials_v2``.
+    if include_label_stamping and has_scene_read and "label_stamping" not in pass_sequence:
+        anchor: Optional[str] = None
+        for candidate in ("pass_water_depth", "bathymetry", "pass_seasonal_water_state", "water_variants"):
+            if candidate in pass_sequence:
+                anchor = candidate
+                break
+        if anchor is None:
+            # No water producer scheduled — fall back to the headless
+            # post-structural_masks placement so the pass still runs.
+            anchor = "structural_masks"
+        insert_at = pass_sequence.index(anchor) + 1
+        pass_sequence.insert(insert_at, "label_stamping")
     return pass_sequence
 
 
@@ -1885,6 +1930,13 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_pass_water_depth()
     register_biome_channel_pass()
     register_terrain_label_passes()
+    # Phase C D30-32 (Issue #27) — structural label-stamping. Optional in the
+    # default sequence (gated by composition_hints["label_stamping"]) so
+    # existing fixtures stay byte-identical. Registered here directly via the
+    # canonical PassDefinition so terrain_labels does NOT have to import
+    # terrain_pipeline (avoids the static CodeQL cycle).
+    from .terrain_labels import label_stamping_pass_definition
+    TerrainPassController.register_pass(label_stamping_pass_definition())
     register_snow_line_pass()
     # Phase C D35: pass_topographic_indices emits vb_aspect_deg /
     # vb_aspect_north / vb_canopy_openness / vb_TWI from height (post-erosion,
@@ -1919,3 +1971,28 @@ __all__ = [
     "pass_water_depth",
     "register_pass_water_depth",
 ]
+
+
+# Phase C D30-32 — structural label types live in ``terrain_labels``.
+# We DO NOT re-export them at module top here because that creates a
+# CodeQL-flagged static import cycle (terrain_pipeline -> terrain_labels
+# -> terrain_pipeline). Callers should import directly:
+#     from veilbreakers_terrain.handlers.terrain_labels import LabelStamp
+#
+# A lazy `__getattr__` provides backwards-compat for callers that still
+# reach for these on terrain_pipeline; it imports terrain_labels on first
+# access (after both modules are fully loaded), avoiding the cycle.
+def __getattr__(name: str) -> object:
+    """Lazy attribute access for terrain_labels re-exports (PEP 562)."""
+    _label_exports = {
+        "LABEL_TO_LEGACY_CHANNEL",
+        "LabelStack",
+        "LabelStamp",
+        "STRUCTURAL_LABELS",
+        "pass_label_stamping",
+        "label_stamping_pass_definition",
+    }
+    if name in _label_exports:
+        from . import terrain_labels  # local import, after both modules loaded
+        return getattr(terrain_labels, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

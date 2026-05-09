@@ -1,9 +1,24 @@
 {
   "matrix_path": "output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv",
-  "live_count": 1909,
+  "live_count": 1923,
   "matrix_count": 1909,
-  "is_blocking": false,
-  "missing_rows": [],
+  "is_blocking": true,
+  "missing_rows": [
+    "terrain_labels.py::LabelStamp.area_cells",
+    "terrain_labels.py::LabelStack.add",
+    "terrain_labels.py::LabelStack.stamps_for_label",
+    "terrain_labels.py::LabelStack.stamps_at",
+    "terrain_labels.py::LabelStack.label_ids_present",
+    "terrain_labels.py::LabelStack.to_dict",
+    "terrain_labels.py::LabelStack.from_dict",
+    "terrain_labels.py::_try_scipy_label",
+    "terrain_labels.py::_label_components",
+    "terrain_labels.py::_bbox_of_component",
+    "terrain_labels.py::_stamp_label_in_channel",
+    "terrain_labels.py::pass_label_stamping",
+    "terrain_labels.py::label_stamping_pass_definition",
+    "terrain_unity_export.py::_water_integration_note_for_backend"
+  ],
   "field_gaps": {},
   "unknown_domains": {},
   "p0_rows": {},
@@ -37,6 +52,7 @@
       "terrain_foliage_catalog.py::SpeciesSpec.to_dict",
       "terrain_god_ray_hints.py::GodRayHint.to_dict",
       "terrain_golden_snapshots.py::GoldenSnapshot.to_dict",
+      "terrain_labels.py::LabelStack.to_dict",
       "terrain_path_contracts.py::PathNetworkContract.to_dict",
       "terrain_path_contracts.py::PathSegmentContract.to_dict",
       "terrain_quixel_ingest.py::QuixelAsset.to_dict",
@@ -59,6 +75,7 @@
       "_water_network.py::WaterNetwork.from_dict",
       "terrain_advanced.py::TerrainLayer.from_dict",
       "terrain_golden_snapshots.py::GoldenSnapshot.from_dict",
+      "terrain_labels.py::LabelStack.from_dict",
       "terrain_telemetry_dashboard.py::TelemetryRecord.from_dict",
       "terrain_unity_backends.py::AtmosphericManifest.from_dict",
       "terrain_unity_backends.py::SkyManifest.from_dict",
@@ -68,6 +85,11 @@
     "_vec3": [
       "blender_capability_bridge.py::_vec3",
       "light_integration.py::_vec3"
+    ],
+    "add": [
+      "terrain_hot_reload.py::HotReloadWatcher.add",
+      "terrain_labels.py::LabelStack.add",
+      "terrain_validation.py::ValidationReport.add"
     ],
     "derive_pass_seed": [
       "terrain_pipeline.py::derive_pass_seed",
@@ -297,10 +319,6 @@
     "_sample_height_bilinear": [
       "terrain_horizon_lod.py::_sample_height_bilinear",
       "terrain_saliency.py::_sample_height_bilinear"
-    ],
-    "add": [
-      "terrain_hot_reload.py::HotReloadWatcher.add",
-      "terrain_validation.py::ValidationReport.add"
     ],
     "force_reload_all": [
       "terrain_hot_reload.py::HotReloadWatcher.force_reload_all",
