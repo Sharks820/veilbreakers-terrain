@@ -49,6 +49,9 @@ def test_vegetation_depth_scheduled_when_scene_read():
 
 
 def test_emergent_grass_scheduled_when_scene_read():
+    """emergent_grass owns grass_density_map via overrides; must run
+    AFTER pass_procedural_grass (which produces the same channel without
+    overrides) so its biome-specific density wins."""
     from veilbreakers_terrain.handlers.terrain_pipeline import (
         build_default_pass_sequence,
     )
@@ -59,7 +62,11 @@ def test_emergent_grass_scheduled_when_scene_read():
         "materials_v2"
     )
     if "pass_procedural_grass" in seq:
-        assert seq.index("emergent_grass") < seq.index("pass_procedural_grass")
+        assert seq.index("emergent_grass") > seq.index("pass_procedural_grass"), (
+            "emergent_grass must run AFTER pass_procedural_grass to be "
+            "the authoritative grass_density_map writer (Codex/Copilot "
+            "review fix on PR #68)."
+        )
 
 
 def test_vegetation_orphans_not_scheduled_without_scene_read():
