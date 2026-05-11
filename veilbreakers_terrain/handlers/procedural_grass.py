@@ -253,7 +253,13 @@ def _biome_id_to_name(biome_id_value: int, biome_id_map: dict[str, int]) -> Opti
     return None
 
 
-# Default biome id map mirrors handlers/vegetation_system.py BIOME_VEGETATION_SETS keys.
+# Default biome id map. Covers the full 18-biome canonical palette from
+# `terrain_biome_registry.CANONICAL_BIOME_IDS`. IDs 0-13 mirror the legacy
+# `vegetation_system.BIOME_VEGETATION_SETS` ordering for backward compat;
+# IDs 14-17 were added 2026-05-10 to close the silent-degrade-to-id-0 bug
+# where 4 canonical biomes (`ruined_fortress`, `abandoned_village`,
+# `battlefield`, `veil_crack_zone`) had no entry and got thornwood-forest
+# density rules applied to them.
 DEFAULT_BIOME_ID_MAP: dict[str, int] = {
     "thornwood_forest": 0,
     "corrupted_swamp": 1,
@@ -269,6 +275,10 @@ DEFAULT_BIOME_ID_MAP: dict[str, int] = {
     "mushroom_forest": 11,
     "crystal_cavern": 12,
     "deep_forest": 13,
+    "ruined_fortress": 14,
+    "abandoned_village": 15,
+    "battlefield": 16,
+    "veil_crack_zone": 17,
 }
 
 

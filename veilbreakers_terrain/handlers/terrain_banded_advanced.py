@@ -539,7 +539,19 @@ def pass_banded_advanced(state, region):  # type: ignore[no-untyped-def]
         hints = getattr(state.intent, "composition_hints", {}) or {}
         sigma = float(hints.get("banded_advanced_sigma", sigma))
 
-    smoothed = apply_anti_grain_smoothing(h_arr, sigma=sigma, variant="classic")
+    # 2026-05-10 v9 quality bump: default to the Papari/Kyprianidis
+    # anisotropic Kuwahara variant. "classic" used quadrant-min-variance
+    # which preserves edges but produces blocky 4-direction artifacts on
+    # diagonal ridges/banks. Anisotropic samples 8 directions weighted by
+    # the local structure tensor, giving smooth curved edge preservation
+    # (the actual AAA bar for stylised painterly terrain). Callers can
+    # force the legacy behaviour via composition_hint
+    # ``banded_advanced_variant``.
+    variant = "anisotropic"
+    if state.intent is not None:
+        hints = getattr(state.intent, "composition_hints", {}) or {}
+        variant = str(hints.get("banded_advanced_variant", variant))
+    smoothed = apply_anti_grain_smoothing(h_arr, sigma=sigma, variant=variant)
     stack.set("height", smoothed.astype(np.float32), "pass_banded_advanced")
 
     return PassResult(
