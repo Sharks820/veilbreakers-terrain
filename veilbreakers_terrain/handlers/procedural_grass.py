@@ -253,7 +253,17 @@ def _biome_id_to_name(biome_id_value: int, biome_id_map: dict[str, int]) -> Opti
     return None
 
 
-# Default biome id map mirrors handlers/vegetation_system.py BIOME_VEGETATION_SETS keys.
+# Default biome id map. Covers the full 18-biome canonical palette from
+# `terrain_biome_registry.CANONICAL_BIOME_IDS`. IDs 0-13 mirror the legacy
+# `vegetation_system.BIOME_VEGETATION_SETS` ordering for backward compat;
+# IDs 14-17 were added to close the silent-degrade-to-id-0 bug where 4
+# canonical biomes had no entry and got thornwood-forest density rules.
+#
+# NOTE: when the stack has been populated by ``pass_compute_biome_channels``,
+# ``stack.biome_names`` is set and biome_id values are Voronoi indices into
+# that list (not necessarily matching these static IDs).  ``pass_procedural_grass``
+# builds the map dynamically from ``stack.biome_names`` when available and
+# falls back to this constant only for stacks that pre-date biome_channels.
 DEFAULT_BIOME_ID_MAP: dict[str, int] = {
     "thornwood_forest": 0,
     "corrupted_swamp": 1,
@@ -269,6 +279,10 @@ DEFAULT_BIOME_ID_MAP: dict[str, int] = {
     "mushroom_forest": 11,
     "crystal_cavern": 12,
     "deep_forest": 13,
+    "ruined_fortress": 14,
+    "abandoned_village": 15,
+    "battlefield": 16,
+    "veil_crack_zone": 17,
 }
 
 
@@ -864,7 +878,17 @@ def pass_procedural_grass(state: Any, region: Any = None) -> Any:
     species_library = hints.get("grass_species_library", VEILBREAKERS_GRASS_SPECIES)
     max_instances = int(hints.get("grass_max_instances_per_species", 25_000))
     seed = derive_pass_seed(state.intent.seed, "procedural_grass", state.tile_x, state.tile_y, region)
-    system = ProceduralGrassSystem(rng_seed=seed)
+    # Build biome_id_map from stack.biome_names when available (set by
+    # pass_compute_biome_channels).  biome_id values are Voronoi indices into
+    # that list, so the correct map is simply the enumeration order.  Fall back
+    # to DEFAULT_BIOME_ID_MAP for stacks that pre-date the biome_channels pass.
+    _biome_names: Any = getattr(stack, "biome_names", None)
+    biome_id_map: Optional[dict[str, int]] = (
+        {name: idx for idx, name in enumerate(_biome_names)}
+        if _biome_names
+        else None
+    )
+    system = ProceduralGrassSystem(rng_seed=seed, biome_id_map=biome_id_map)
     records = system.generate_grass_placement(
         stack,
         species_library,

@@ -539,14 +539,60 @@ def pass_banded_advanced(state, region):  # type: ignore[no-untyped-def]
         hints = getattr(state.intent, "composition_hints", {}) or {}
         sigma = float(hints.get("banded_advanced_sigma", sigma))
 
-    smoothed = apply_anti_grain_smoothing(h_arr, sigma=sigma, variant="classic")
+    # Determine Kuwahara variant.
+    #
+    # Default rule:
+    #   - AAA-tier quality:  "anisotropic" (Papari/Kyprianidis-Kang) for smooth
+    #     curved edge preservation — the stylised painterly terrain quality bar.
+    #   - Preview/mobile/low quality profiles: "classic" (4-quadrant integral-image)
+    #     — significantly cheaper; avoids the 3×(8,H,W) float64 accumulators that
+    #     the anisotropic path allocates.
+    #   - Large grids (either axis > 2048): "classic" unless the caller opts in
+    #     explicitly via the ``banded_advanced_variant`` hint, to prevent OOM on
+    #     production-size tiles where those accumulators exceed 3 GB at 4096×4096.
+    #
+    # Callers can override via ``composition_hints["banded_advanced_variant"]``.
+    from .terrain_pipeline import _PREVIEW_QUALITY_PROFILES
+    quality_profile = (
+        str(getattr(state.intent, "quality_profile", "") or "")
+        if state.intent is not None
+        else ""
+    )
+    _is_preview = quality_profile in _PREVIEW_QUALITY_PROFILES
+    _large_grid = max(h_arr.shape) > 2048
+
+    _default_variant = "classic" if (_is_preview or _large_grid) else "anisotropic"
+    variant = _default_variant
+
+    variant_issues: list[ValidationIssue] = []
+    if state.intent is not None:
+        hints = getattr(state.intent, "composition_hints", {}) or {}
+        raw_variant = hints.get("banded_advanced_variant")
+        if raw_variant is not None:
+            if isinstance(raw_variant, str) and raw_variant in ("classic", "anisotropic"):
+                variant = raw_variant
+            else:
+                variant_issues.append(
+                    ValidationIssue(
+                        code="BANDED_ADVANCED_UNKNOWN_VARIANT",
+                        severity="soft",
+                        message=(
+                            f"pass_banded_advanced: banded_advanced_variant {raw_variant!r} "
+                            "is not 'classic' or 'anisotropic'; ignoring and using default "
+                            f"({_default_variant!r})."
+                        ),
+                    )
+                )
+
+    smoothed = apply_anti_grain_smoothing(h_arr, sigma=sigma, variant=variant)
     stack.set("height", smoothed.astype(np.float32), "pass_banded_advanced")
 
     return PassResult(
         pass_name="pass_banded_advanced",
-        status="ok",
+        status="warning" if variant_issues else "ok",
         duration_seconds=time.perf_counter() - t0,
-        metrics={"sigma": sigma, "height_shape": list(smoothed.shape)},
+        issues=variant_issues,
+        metrics={"sigma": sigma, "variant": variant, "height_shape": list(smoothed.shape)},
     )
 
 
