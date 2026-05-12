@@ -882,7 +882,7 @@ def pass_procedural_grass(state: Any, region: Any = None) -> Any:
     # pass_compute_biome_channels).  biome_id values are Voronoi indices into
     # that list, so the correct map is simply the enumeration order.  Fall back
     # to DEFAULT_BIOME_ID_MAP for stacks that pre-date the biome_channels pass.
-    _biome_names: Any = getattr(stack, "biome_names", None)
+    _biome_names: Optional[list[str]] = getattr(stack, "biome_names", None)
     biome_id_map: Optional[dict[str, int]] = (
         {name: idx for idx, name in enumerate(_biome_names)}
         if _biome_names

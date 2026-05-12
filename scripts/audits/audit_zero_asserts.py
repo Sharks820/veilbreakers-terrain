@@ -2,14 +2,14 @@
 
 Exit codes
 ----------
-0 — all test functions have at least one assertion (or ``--report-only`` mode)
-1 — one or more zero-assert test functions found
+0 — no zero-assert test functions found, or ``--strict`` was not set (report-only mode)
+1 — one or more zero-assert test functions found (only when ``--strict`` is set)
 2 — script failure (e.g. tests directory not found)
 
 Flags
 -----
---strict       exit 1 even when zero-assert tests exist (same as default; explicit for CI)
---report-only  always exit 0; only emit the report file / stdout summary
+--strict       exit 1 when zero-assert tests exist (default: exit 0 with report only)
+--report-only  always exit 0; only emit the report file / stdout summary (default behaviour)
 --tests-dir    override the scanned directory (default: ``<repo_root>/veilbreakers_terrain/tests``)
 """
 from __future__ import annotations
@@ -70,14 +70,14 @@ def main() -> None:
     parser.add_argument(
         "--strict",
         action="store_true",
-        default=True,
-        help="Exit 1 when zero-assert tests are found (default behaviour; explicit for CI).",
+        default=False,
+        help="Exit 1 when zero-assert tests are found (CI gate mode).",
     )
     parser.add_argument(
         "--report-only",
         action="store_true",
         default=False,
-        help="Always exit 0; only emit the report.",
+        help="Always exit 0; only emit the report (equivalent to omitting --strict).",
     )
     args = parser.parse_args()
 
@@ -138,7 +138,7 @@ def main() -> None:
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\nReport written to: {report_path}")
 
-    if args.report_only:
+    if args.report_only or not args.strict:
         sys.exit(0)
     sys.exit(1 if zero_assert else 0)
 

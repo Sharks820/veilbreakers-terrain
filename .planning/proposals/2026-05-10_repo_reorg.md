@@ -14,7 +14,7 @@ out_of_scope:
 
 ## Executive Summary
 
-1. **31 GB of untracked render output** sits in `output/aaa_v2..v8/` and `output/aaa_demo/` — none currently gitignored. Highest-priority fix is a Wave-1 `.gitignore` rule so a stray `git add .` cannot accidentally commit binary `.blend`/`.png` mountains.
+1. **31 GB of untracked render output** sits in `output/aaa_v2..v8/` and `output/aaa_demo/` — none gitignored at audit time (2026-05-10, pre-Wave-1; Wave-1 PR #69 closes this). Highest-priority fix is a Wave-1 `.gitignore` rule so a stray `git add .` cannot accidentally commit binary `.blend`/`.png` mountains.
 2. **2.8 GB of untracked third-party content** (`vendor/`, `assets/free/`) was not covered by explicit gitignore patterns at audit time (2026-05-10, pre-Wave-1). Wave-1 PR #69 adds explicit `assets/` and `vendor/` patterns. Hot-path scripts (`scripts/render_aaa_v*`) already hard-code `assets/free/` and `output/aaa_v*` paths; cannot relocate without breaking 8 render scripts.
 3. **8 untracked render scripts** (`scripts/render_aaa_v2..v8.py`, `render_aaa_demo.py`) need to be either committed (v8 canonical) or moved under `scripts/experiments/` (v2–v7 superseded). Memory log declares v8 canonical; v2–v7 should be archived rather than deleted (they reference real bake-pipeline experiments documented in pickup state).
 4. **22,816-LOC `procedural_meshes.py`** is referenced by 4 production handler modules (`_bridge_mesh`, `_mesh_bridge`, `_terrain_depth`, `environment`) and 1 test — splitting requires a re-export shim. Defer to Wave 4 with a dedicated PR. Do NOT move during the reorg.
@@ -346,13 +346,14 @@ git mv scripts/render_road_visual.py scripts/renders/
 git mv scripts/render_scatter_visual.py scripts/renders/
 git mv scripts/render_water_visual.py scripts/renders/
 
-# Canonical v8 render — deterministic flow:
-# If the file is currently tracked at scripts/ root, use git mv:
+# Canonical v8 render — use the correct command based on tracking status:
 mkdir -p scripts/renders
-git mv scripts/render_aaa_v8_mountain.py scripts/renders/render_aaa_v8_mountain.py
-# If the file is currently untracked and already physically at destination, use git add:
-# git add scripts/renders/render_aaa_v8_mountain.py
-# (Do not run git add on the old path after git mv — staging happens automatically.)
+# Check tracking status first:
+#   git ls-files --error-unmatch scripts/render_aaa_v8_mountain.py 2>/dev/null \
+#     && git mv scripts/render_aaa_v8_mountain.py scripts/renders/render_aaa_v8_mountain.py \
+#     || { mv scripts/render_aaa_v8_mountain.py scripts/renders/; git add scripts/renders/render_aaa_v8_mountain.py; }
+# Short form: if tracked, use git mv; if untracked, move then git add.
+# Never git add the old path — only the new destination.
 ```
 
 3d. Move fetchers:
