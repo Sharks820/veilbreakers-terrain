@@ -152,7 +152,7 @@ For each domain file (`furniture.py`, `vegetation.py`, etc.):
 | Risk | Likelihood | Severity | Mitigation |
 |---|---|---|---|
 | Hidden name dependency between two domain functions (e.g. `generate_chair_mesh` calls `_some_helper_defined_in_weapons`) | Medium | High | Phase 0 keeps everything in `_legacy.py`; subsequent phases migrate domains one at a time. Each phase verifies imports resolve and pytest passes. |
-| `pyright-strict-baseline.json:273+` anchors drift | High | Medium | Run `pyright_strict_baseline_gate.py` at end of each phase; commit baseline updates as part of the phase PR. |
+| `pyright-strict-baseline.json` may need new entries if any newly-split files trigger fresh strict diagnostics (baseline currently has no `procedural_meshes` rows — verified post-PR-#73) | Medium | Medium | Run `pyright_strict_baseline_gate.py` at end of each phase; commit baseline updates as part of the phase PR. |
 | `GRADES_VERIFIED.csv` row anchored to specific file path | Low | Medium | Audit CSV before Phase 0; update row(s) if file path or line numbers are part of the assertion. |
 | `test_sim_modules.py:76` lazy import path | Low | Low | Lazy import (`from veilbreakers_terrain.procedural_meshes import generate_rope_bridge_mesh`) still resolves via `__init__.py` shim — no change needed. |
 | 4 handler importers reference internal names (`_make_result`, etc.) | Medium | High | Phase 0 shim explicitly re-exports `_`-prefixed names. Verify before merging Phase 0 PR by grepping every importer's import list. |

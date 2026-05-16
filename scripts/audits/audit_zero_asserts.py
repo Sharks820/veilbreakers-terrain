@@ -121,11 +121,19 @@ def main() -> None:
             if len(by_file[f]) > 5:
                 print(f"    ... +{len(by_file[f]) - 5} more")
 
-    # Emit deterministic JSON report to output/verification/
+    # Emit deterministic JSON report to output/verification/.
+    # tests_dir is normalised to a POSIX path relative to the repo root so the
+    # committed artifact is byte-identical across Windows/Linux/CI runners
+    # (any absolute path would otherwise diff every run on a different machine).
     _REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        tests_dir_rel = tests_dir.resolve().relative_to(_REPO_ROOT).as_posix()
+    except ValueError:
+        # tests_dir lives outside the repo (custom --tests-dir); keep as-is.
+        tests_dir_rel = str(tests_dir)
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "tests_dir": str(tests_dir),
+        "tests_dir": tests_dir_rel,
         "test_files_scanned": test_file_count,
         "test_functions_total": test_fn_count,
         "zero_assert_count": len(zero_assert),

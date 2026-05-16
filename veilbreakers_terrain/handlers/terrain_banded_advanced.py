@@ -552,13 +552,13 @@ def pass_banded_advanced(state, region):  # type: ignore[no-untyped-def]
     #     production-size tiles where those accumulators exceed 3 GB at 4096×4096.
     #
     # Callers can override via ``composition_hints["banded_advanced_variant"]``.
-    from .terrain_pipeline import _PREVIEW_QUALITY_PROFILES
+    from .terrain_pipeline import PREVIEW_QUALITY_PROFILES
     quality_profile = (
         str(getattr(state.intent, "quality_profile", "") or "")
         if state.intent is not None
         else ""
     )
-    _is_preview = quality_profile in _PREVIEW_QUALITY_PROFILES
+    _is_preview = quality_profile in PREVIEW_QUALITY_PROFILES
     _large_grid = max(h_arr.shape) > 2048
 
     _default_variant = "classic" if (_is_preview or _large_grid) else "anisotropic"
