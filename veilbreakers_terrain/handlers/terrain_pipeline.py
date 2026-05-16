@@ -74,8 +74,6 @@ def _make_gate_issue(code: str, severity: str, message: str) -> ValidationIssue:
 
 
 PREVIEW_QUALITY_PROFILES = frozenset({"preview", "mobile", "low"})
-# Backwards-compat alias; prefer the public name above for cross-module imports.
-_PREVIEW_QUALITY_PROFILES = PREVIEW_QUALITY_PROFILES
 _ABSENT_CHANNEL = object()
 _VOLCANIC_HINT_TOKENS = frozenset({"volcanic", "lava", "caldera", "magma"})
 _LAVA_SOURCE_HINT_KEYS = frozenset(

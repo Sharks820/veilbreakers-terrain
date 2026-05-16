@@ -122,9 +122,11 @@ def main() -> None:
                 print(f"    ... +{len(by_file[f]) - 5} more")
 
     # Emit deterministic JSON report to output/verification/.
-    # tests_dir is normalised to a POSIX path relative to the repo root so the
-    # committed artifact is byte-identical across Windows/Linux/CI runners
-    # (any absolute path would otherwise diff every run on a different machine).
+    # Two normalisations keep the committed artifact byte-identical across
+    # Windows/Linux/CI runners so it does not diff on every machine:
+    #   - tests_dir → POSIX path relative to the repo root
+    #   - no run timestamp in the payload (would diff every invocation);
+    #     the wall-clock time is still printed to stdout for ad-hoc use.
     _REPORT_DIR.mkdir(parents=True, exist_ok=True)
     try:
         tests_dir_rel = tests_dir.resolve().relative_to(_REPO_ROOT).as_posix()
@@ -132,7 +134,6 @@ def main() -> None:
         # tests_dir lives outside the repo (custom --tests-dir); keep as-is.
         tests_dir_rel = str(tests_dir)
     report = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
         "tests_dir": tests_dir_rel,
         "test_files_scanned": test_file_count,
         "test_functions_total": test_fn_count,
@@ -142,6 +143,7 @@ def main() -> None:
             for f, name, line in zero_assert
         ],
     }
+    print(f"\nRun timestamp: {datetime.now(timezone.utc).isoformat()}")
     report_path = _REPORT_DIR / "audit_zero_asserts.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\nReport written to: {report_path}")
