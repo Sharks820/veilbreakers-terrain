@@ -101,8 +101,10 @@ def main() -> None:
                     continue
                 test_fn_count += 1
                 if not has_assertion(node):
-                    rel = path.relative_to(tests_dir.parent.parent)
-                    zero_assert.append((str(rel), node.name, node.lineno))
+                    # as_posix() so the path is forward-slash on Windows too —
+                    # otherwise the committed JSON diffs per OS.
+                    rel = path.relative_to(tests_dir.parent.parent).as_posix()
+                    zero_assert.append((rel, node.name, node.lineno))
 
     print(f"Total test files scanned: {test_file_count}")
     print(f"Total test functions:     {test_fn_count}")
@@ -122,30 +124,34 @@ def main() -> None:
                 print(f"    ... +{len(by_file[f]) - 5} more")
 
     # Emit deterministic JSON report to output/verification/.
-    # Two normalisations keep the committed artifact byte-identical across
+    # Three normalisations keep the committed artifact byte-identical across
     # Windows/Linux/CI runners so it does not diff on every machine:
     #   - tests_dir → POSIX path relative to the repo root
     #   - no run timestamp in the payload (would diff every invocation);
     #     the wall-clock time is still printed to stdout for ad-hoc use.
+    #   - zero_assert_tests list explicitly sorted by (file, line), and
+    #     json.dumps(sort_keys=True) for alphabetical top-level field order,
+    #     so output stays stable across Python versions / AST walk changes.
     _REPORT_DIR.mkdir(parents=True, exist_ok=True)
     try:
         tests_dir_rel = tests_dir.resolve().relative_to(_REPO_ROOT).as_posix()
     except ValueError:
         # tests_dir lives outside the repo (custom --tests-dir); keep as-is.
         tests_dir_rel = str(tests_dir)
+    zero_assert_sorted = sorted(zero_assert, key=lambda row: (row[0], row[2], row[1]))
     report = {
         "tests_dir": tests_dir_rel,
         "test_files_scanned": test_file_count,
         "test_functions_total": test_fn_count,
-        "zero_assert_count": len(zero_assert),
+        "zero_assert_count": len(zero_assert_sorted),
         "zero_assert_tests": [
             {"file": f, "function": name, "line": line}
-            for f, name, line in zero_assert
+            for f, name, line in zero_assert_sorted
         ],
     }
     print(f"\nRun timestamp: {datetime.now(timezone.utc).isoformat()}")
     report_path = _REPORT_DIR / "audit_zero_asserts.json"
-    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     print(f"\nReport written to: {report_path}")
 
     if args.report_only or not args.strict:

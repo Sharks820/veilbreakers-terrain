@@ -587,11 +587,17 @@ def pass_banded_advanced(state, region):  # type: ignore[no-untyped-def]
     smoothed = apply_anti_grain_smoothing(h_arr, sigma=sigma, variant=variant)
     stack.set("height", smoothed.astype(np.float32), "pass_banded_advanced")
 
+    # Soft validation issues for an unknown banded_advanced_variant hint go in
+    # ``warnings``, not ``issues``, and the status stays "ok". TerrainPassController
+    # gates produced-channel NaN/Inf assertions, quality gates, and checkpoint
+    # emission on status == "ok" (see terrain_pipeline.py:966/981/1018 and
+    # terrain_checkpoints.py:659); a bad hint must not silently disable those
+    # safety guarantees when the pass still produced a valid height output.
     return PassResult(
         pass_name="pass_banded_advanced",
-        status="warning" if variant_issues else "ok",
+        status="ok",
         duration_seconds=time.perf_counter() - t0,
-        issues=variant_issues,
+        warnings=variant_issues,
         metrics={"sigma": sigma, "variant": variant, "height_shape": list(smoothed.shape)},
     )
 
