@@ -1,0 +1,283 @@
+{
+  "test_files_scanned": 192,
+  "test_functions_total": 3846,
+  "tests_dir": "veilbreakers_terrain/tests",
+  "zero_assert_count": 55,
+  "zero_assert_tests": [
+    {
+      "file": "veilbreakers_terrain/tests/test_asset_generation.py",
+      "function": "test_runpod_backend_construct_logs_warning",
+      "line": 385
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_asset_generation.py",
+      "function": "test_rodin_backend_construct_logs_warning",
+      "line": 438
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_1_fresh_scene_read_passes",
+      "line": 98
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_2_attached_viewport_passes",
+      "line": 131
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_2_out_of_view_ok_bypasses",
+      "line": 146
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_3_unlocked_anchors_pass",
+      "line": 153
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_4_real_geometry_allowed",
+      "line": 184
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_5_small_edits_pass",
+      "line": 211
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_5_bulk_edit_flag_allows",
+      "line": 234
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_6_valid_placement_class_passes",
+      "line": 244
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_rule_7_plugin_version_passes",
+      "line": 272
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_vantage_fresh_passes",
+      "line": 354
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_intact_anchor_passes",
+      "line": 462
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_unlocked_anchor_treated_as_intact",
+      "line": 521
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_within_tolerance_passes",
+      "line": 577
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_addon_loaded",
+      "line": 639
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_addon_version_matches_minimum",
+      "line": 645
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_handlers_registered_for_env_run_terrain_pass",
+      "line": 666
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_handlers_registered_for_env_export_unity_bundle",
+      "line": 674
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_force_reload_noop_headless",
+      "line": 698
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_assert_z_is_up_allows_z",
+      "line": 716
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_bundle_r.py",
+      "function": "test_assert_boolean_safe_small_ok",
+      "line": 787
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_environment_scatter_handlers.py",
+      "function": "test_none_stack_is_noop",
+      "line": 1004
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_performance_optimization.py",
+      "function": "test_disconnect_is_idempotent",
+      "line": 429
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_phase_b_d24_nan_inf_assertions.py",
+      "function": "test_clean_float_array_passes",
+      "line": 52
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_phase_b_d24_nan_inf_assertions.py",
+      "function": "test_int_array_is_skipped",
+      "line": 110
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_phase_b_d24_nan_inf_assertions.py",
+      "function": "test_bool_array_is_skipped",
+      "line": 116
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_phase_b_d24_nan_inf_assertions.py",
+      "function": "test_none_is_skipped",
+      "line": 120
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_phase_c_d35_topographic_indices.py",
+      "function": "test_vb_TWI_is_finite_for_nonflat_input",
+      "line": 215
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_phase_c_d35_topographic_indices.py",
+      "function": "test_all_4_channels_are_finite_for_nonflat_input",
+      "line": 226
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_move_accepted",
+      "line": 228
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_rotate_accepted",
+      "line": 233
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_scale_accepted",
+      "line": 238
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_loop_cut_accepted",
+      "line": 243
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_bevel_accepted",
+      "line": 248
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_merge_vertices_accepted",
+      "line": 253
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_dissolve_edges_accepted",
+      "line": 258
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_dissolve_faces_accepted",
+      "line": 263
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_precision_mesh_editing.py",
+      "function": "test_original_operations_still_work",
+      "line": 268
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_preflight_crossrepo.py",
+      "function": "test_toolkit_package_importable",
+      "line": 34
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_returns_valid_meshspec",
+      "line": 84
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_returns_valid_meshspec",
+      "line": 143
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_returns_valid_meshspec",
+      "line": 191
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_returns_valid_meshspec",
+      "line": 246
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_returns_valid_meshspec",
+      "line": 294
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_accepts_start_end_positions",
+      "line": 298
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_supports_stone_arch_style",
+      "line": 315
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_supports_rope_style",
+      "line": 319
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_supports_drawbridge_style",
+      "line": 323
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_depth.py",
+      "function": "test_rotated_bridge",
+      "line": 331
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_waterfalls.py",
+      "function": "test_freefall_impact_matches_closed_form_drop",
+      "line": 208
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_waterfalls.py",
+      "function": "test_generate_foam_mask_uses_ext_richer_base",
+      "line": 494
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_terrain_waterfalls.py",
+      "function": "test_generate_mist_zone_uses_ext_richer_base",
+      "line": 551
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_w2_w4_water_depth_seam.py",
+      "function": "test_shoreline_blend_is_one_at_half_metre_depth",
+      "line": 199
+    },
+    {
+      "file": "veilbreakers_terrain/tests/test_w2_w4_water_depth_seam.py",
+      "function": "test_shoreline_blend_zero_at_dry_cells",
+      "line": 212
+    }
+  ]
+}

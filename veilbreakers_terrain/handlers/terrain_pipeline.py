@@ -73,7 +73,7 @@ def _make_gate_issue(code: str, severity: str, message: str) -> ValidationIssue:
     return ValidationIssue(code=code, severity=severity, message=message)
 
 
-_PREVIEW_QUALITY_PROFILES = frozenset({"preview", "mobile", "low"})
+PREVIEW_QUALITY_PROFILES = frozenset({"preview", "mobile", "low"})
 _ABSENT_CHANNEL = object()
 _VOLCANIC_HINT_TOKENS = frozenset({"volcanic", "lava", "caldera", "magma"})
 _LAVA_SOURCE_HINT_KEYS = frozenset(
@@ -204,7 +204,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     # quality_profile is AAA-tier; preview/mobile/low keep it OFF so
     # existing low-fidelity fixtures stay byte-identical. The hint can
     # still override to False if a caller explicitly wants it off.
-    _aaa_quality = quality_profile not in _PREVIEW_QUALITY_PROFILES
+    _aaa_quality = quality_profile not in PREVIEW_QUALITY_PROFILES
     include_label_stamping = bool(
         composition_hints.get("label_stamping", _aaa_quality)
     )
@@ -230,7 +230,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     has_scene_read = getattr(intent, "scene_read", None) is not None
     validation_pass = (
         "validation_minimal"
-        if quality_profile in _PREVIEW_QUALITY_PROFILES
+        if quality_profile in PREVIEW_QUALITY_PROFILES
         else "validation_full"
     )
     pass_sequence = [
