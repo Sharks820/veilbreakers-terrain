@@ -68,6 +68,40 @@ def _json_dumps_callsites_missing_allow_nan(path: Path) -> list[tuple[int, str]]
 
     Uses AST traversal — robust to whitespace and comment changes that a
     pure-regex sweep would mis-classify.
+
+    Matcher scope (intentional — Copilot review thread PRRT_kwDOSDBoMs6DLEcO,
+    2026-05-19):
+
+    This matcher supports exactly four attribute-call shapes:
+
+    1. ``json.dumps(...)``
+    2. ``json.dump(...)``
+    3. ``_json.dumps(...)``  (the ``import json as _json`` alias used by
+       a few handlers to avoid shadowing local ``json`` parameters)
+    4. ``_json.dump(...)``
+
+    It explicitly does NOT match:
+
+    - ``from json import dumps; dumps(payload, indent=2)`` (bare-name
+      call — ``func`` is ``ast.Name``, not ``ast.Attribute``).
+    - ``import json as J; J.dumps(...)`` (arbitrary aliases other than
+      the canonical ``_json``).
+    - ``getattr(json, 'dumps')(...)`` (dynamic attribute lookup).
+
+    Rationale: a full ``ImportFrom``/alias-resolving matcher would add
+    visitor state + flow tracking complexity to guard against a coverage
+    gap that does not exist today. A 2026-05-19 sweep of all 13
+    ``_GUARDED_FILES`` confirmed every Unity-bound JSON callsite uses
+    shape (1) or (2); none use ``from json import dumps`` or arbitrary
+    aliases. The narrow matcher catches the realistic regression (a
+    future contributor copy-pasting an existing ``json.dumps`` line and
+    dropping the ``allow_nan=False`` kwarg) without false-negative risk
+    in current code.
+
+    If a guarded file ever adopts shape #3-equivalent (e.g.
+    ``from json import dumps``) or a new alias, widen the matcher here
+    AND add a focused unit test that the new shape is caught — do not
+    rely on the existing parametrized test alone.
     """
     src = path.read_text(encoding="utf-8")
     tree = ast.parse(src, filename=str(path))
@@ -78,6 +112,8 @@ def _json_dumps_callsites_missing_allow_nan(path: Path) -> list[tuple[int, str]]
             continue
         func = node.func
         # Match ``<json|_json>.dump`` and ``<json|_json>.dumps`` only.
+        # See docstring above for the intentional scope decision +
+        # the four supported call shapes.
         if not isinstance(func, ast.Attribute):
             continue
         if func.attr not in ("dump", "dumps"):

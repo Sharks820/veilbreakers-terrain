@@ -292,7 +292,7 @@ def render_camera_proof(
     manifest_path = build_manifest_path(out_path)
     manifest_path.write_text(
         # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — visual-render-proof
-        # manifest is the canonical Wave-VV proof artifact; NaN in non_black_ratio
+        # manifest is the canonical Wave-VV proof artifact; NaN in nonblack_ratio
         # / byte_size would silently mask a failed render proof.
         json.dumps(manifest.to_dict(), indent=2, sort_keys=False, allow_nan=False)
         + "\n",
