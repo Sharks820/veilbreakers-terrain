@@ -216,8 +216,14 @@ def test_pipeline_end_to_end_runs_all_four_passes():
         results = controller.run_pipeline()
 
     assert len(results) >= 4
+    # T0.5-2 (Y04 v3 §P.8.2 / Part P §P.3): tighten from {"ok", "warning"} to
+    # strict "ok" so accidental promotion of a real failure into "warning"
+    # surfaces here as a test failure instead of silently passing.
     for r in results:
-        assert r.status in {"ok", "warning"}, f"pass {r.pass_name} failed: {r.issues}"
+        assert r.status == "ok", (
+            f"pass {r.pass_name} status={r.status!r} (expected 'ok'); "
+            f"issues={r.issues}"
+        )
 
 
 def test_controller_default_pipeline_uses_validation_full_for_standard():
@@ -233,6 +239,13 @@ def test_controller_default_pipeline_uses_validation_full_for_standard():
         results = controller.run_pipeline(checkpoint=False)
 
     assert [r.pass_name for r in results][-1] == "validation_full"
+    # T0.5-2 NOTE: this assertion is intentionally permissive of {"ok", "warning"}
+    # because `validation_full` legitimately emits "warning" when scene_read=False
+    # (it skips checks that require scene context). Tightening here to "ok"-only
+    # was attempted under T0.5-2 and reverted — this is not the gate-flip site
+    # the audit was calling out. The narrow tightening lives at line 195 (the
+    # quality_profile="preview" path with `_register_fast_erosion_pass` where
+    # all passes do emit "ok").
     assert all(r.status in {"ok", "warning"} for r in results)
 
 
