@@ -405,6 +405,9 @@ def export_shadow_clipmap_exr(mask: np.ndarray, output_path: Path) -> None:
 
     sidecar = actual_path.with_suffix(".json")
     sidecar.write_text(
+        # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — shadow-clipmap sidecar is
+        # Unity-consumed; NaN in value_min/value_max/lit_fraction would silently
+        # mask a corrupted shadow bake.
         json.dumps(
             {
                 "schema": "veilbreakers.terrain.shadow_clipmap/v1",
@@ -418,6 +421,7 @@ def export_shadow_clipmap_exr(mask: np.ndarray, output_path: Path) -> None:
                 "cascade_levels": len(_CASCADE_CONFIGS),
             },
             indent=2,
+            allow_nan=False,
         ),
         encoding="utf-8",
     )

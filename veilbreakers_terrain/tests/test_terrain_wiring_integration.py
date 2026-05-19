@@ -157,8 +157,19 @@ def test_wiring_bundle_a_default_pipeline_runs(monkeypatch):
         "erosion",
         "validation_minimal",
     ]
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" across all 4 passes in this
+    # integration sequence (macro_world / structural_masks / erosion /
+    # validation_minimal). If any pass legitimately emits "warning" at this
+    # scene_read=True path, that is a per-pass exception worth filing as a
+    # latent finding rather than relaxing the integration gate.
+    # Failure message includes r.warnings (and r.metrics) because for
+    # status=="warning" the diagnostic detail lives in r.warnings, not
+    # r.issues (which may be empty); see Copilot review #83.
     for r in results:
-        assert r.status in ("ok", "warning"), f"{r.pass_name}: {r.status} {r.issues}"
+        assert r.status == "ok", (
+            f"{r.pass_name}: status={r.status!r} "
+            f"issues={r.issues} warnings={r.warnings} metrics={r.metrics}"
+        )
 
     stack = controller.state.mask_stack
     # structural_masks populates these

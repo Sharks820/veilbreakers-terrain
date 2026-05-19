@@ -102,4 +102,6 @@ def export_footprint_data_json(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": "1.0", "points": [asdict(p) for p in points]}
-    output_path.write_text(json.dumps(payload, indent=2))
+    # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — loud-at-source for
+    # footprint-surface sidecar (Unity-consumed).
+    output_path.write_text(json.dumps(payload, indent=2, allow_nan=False))

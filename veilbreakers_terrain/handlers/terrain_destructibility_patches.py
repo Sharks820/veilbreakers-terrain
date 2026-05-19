@@ -171,4 +171,6 @@ def export_destructibility_json(
             for p in patches
         ],
     }
-    output_path.write_text(json.dumps(payload, indent=2))
+    # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — loud-at-source for
+    # destructibility-patches sidecar (Unity-consumed).
+    output_path.write_text(json.dumps(payload, indent=2, allow_nan=False))
