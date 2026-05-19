@@ -31,6 +31,8 @@ fix": writing the production-targeting replacement is a separate PR
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from veilbreakers_terrain.handlers.environment import (
@@ -38,22 +40,50 @@ from veilbreakers_terrain.handlers.environment import (
 )
 
 
-def test_production_mesh_from_heightmap_is_importable() -> None:
-    """Smoke check: the production analog of the deleted in-test helper is
-    importable. Catches refactors that rename/remove the production callable
-    without updating the audit-corpus pointer above.
+def test_production_mesh_from_heightmap_public_contract() -> None:
+    """Behavioral smoke check: the production analog of the deleted in-test
+    helper exposes the canonical kwargs-only signature the audit corpus
+    points readers at.
+
+    A bare ``assert is not None`` would be redundant with the import at
+    line 36 (an ImportError at collection time would already fail the
+    suite). Instead, this test introspects the public contract so a future
+    refactor that, e.g., re-orders kwargs into positional args or renames
+    ``heightmap``/``height_scale`` is caught here.
     """
-    assert _create_terrain_mesh_from_heightmap is not None
     assert callable(_create_terrain_mesh_from_heightmap)
+
+    sig = inspect.signature(_create_terrain_mesh_from_heightmap)
+    expected_kwargs = {
+        "name",
+        "heightmap",
+        "terrain_size",
+        "height_scale",
+        "seed",
+        "terrain_type",
+    }
+    actual = set(sig.parameters.keys())
+    missing = expected_kwargs - actual
+    assert not missing, (
+        f"production analog dropped expected kwargs: {sorted(missing)}; "
+        f"audit-corpus pointer in this file must be updated to match the new contract"
+    )
 
 
 @pytest.mark.xfail(
     reason=(
-        "T0.5-7 follow-on: production mesh-from-heightmap geometric-quality "
-        "regression net (manifold integrity, normal orientation, no-degenerate-faces, "
-        "connectivity, no-duplicate-verts) has not been re-authored against "
-        "_create_terrain_mesh_from_heightmap yet. Tracked as a Tier-4 cleanup "
-        "follow-on. Removing this xfail requires landing the real tests."
+        "Forcing-function placeholder per FIX_PATTERN_v1 §3 C6 + Y04 v3 §P.8.5 "
+        "Tier-4 cleanup AUGMENTED (this xfail itself is the tracking artifact, "
+        "filed as T4-NEW-ZZ4-08 — \"author production mesh-from-heightmap "
+        "geometric-quality regression net against environment._create_terrain_mesh_from_heightmap "
+        "(manifold integrity, normal orientation, no-degenerate-faces, connectivity, "
+        "no-duplicate-verts), gated by pytest.importorskip('bpy') since the "
+        "MagicMock bpy stub at conftest.py:55-89 cannot validate bmesh.ops.create_grid "
+        "output\"). Removing this xfail in any future PR requires landing the "
+        "real production-targeting tests in the same PR. The audit's original "
+        "prescription to re-import from handlers.terrain_world_orchestration is "
+        "stale (that symbol does not exist); the canonical pointer is "
+        "environment._create_terrain_mesh_from_heightmap at environment.py:1758."
     ),
     strict=True,
 )
@@ -61,8 +91,17 @@ def test_production_mesh_geometric_quality_regression_net_exists() -> None:
     """Forcing function (xfail-strict): when the production-targeting
     geometric-quality regression net is authored in a follow-on PR, this
     xfail will flip and force the author to delete the marker.
+
+    Note (pattern-recognition CE review on PR #76): this xfail-strict has
+    INVERTED semantics from the per-raise-path xfail-strict in
+    ``test_restore_pass_state.py`` (PR #75 / T0.5-3) — that file uses
+    xfail to mark "bug → fix" (production change flips it green); this
+    file uses xfail to mark "void → test" (new test authoring flips it
+    green). Both are legitimate `xfail(strict=True)` modes; do NOT share
+    a helper between them, because the inversion would obscure intent.
     """
     raise NotImplementedError(
         "Author production mesh-from-heightmap geometric-quality tests "
-        "in a follow-on PR and remove this xfail."
+        "in a follow-on PR (T4-NEW-ZZ4-08) and remove this xfail decorator. "
+        "Use pytest.importorskip('bpy') to gate on real Blender."
     )
