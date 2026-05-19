@@ -621,7 +621,15 @@ def test_run_validation_suite_ok_when_clean():
     _set_channel(stack, "splatmap_weights_layer", np.full((*shape, 2), 0.5, dtype=np.float32))
     _set_channel(stack, "navmesh_area_id", np.zeros(shape, dtype=np.uint8))
     report = run_validation_suite(stack, _make_intent(stack))
-    assert report.overall_status in ("ok", "warning")
+    # T0.5-2 (Y04 v3 §P.8.2): permissive-"ok|warning" preserved deliberately.
+    # The validation suite legitimately emits overall_status="warning" even on
+    # a "clean" stack because it surfaces soft seam_discontinuity issues that
+    # arise from any non-trivial heightmap shape. The test's actual contract
+    # (enforced by the next assertion) is "no HARD issues" — not "fully ok".
+    # Strict-"ok" here would force test-side relaxation of the seam-detector,
+    # which is the wrong direction. See PR #80 verifier discovery in
+    # test_terrain_pipeline_smoke.py:249 for the same pattern.
+    assert report.overall_status in ("ok", "warning"), report
     assert len(report.hard_issues) == 0
 
 
@@ -697,6 +705,13 @@ def test_pass_validation_full_returns_pass_result():
     controller, _checkpoint_dir = _make_controller_with_checkpoint()
     result = pass_validation_full(controller.state, None)
     assert result.pass_name == "validation_full"
+    # T0.5-2 (Y04 v3 §P.8.2): permissive-"ok|warning" preserved deliberately.
+    # `_make_controller_with_checkpoint` does NOT populate `scene_read` on the
+    # intent — and `pass_validation_full` legitimately downgrades its result to
+    # "warning" when scene_read is missing (per the PR #80 verifier discovery
+    # in test_terrain_pipeline_smoke.py:249). Strict-"ok" here would force a
+    # bogus failure tied to fixture shape, not to validator behavior.
+    # The assertion still enforces "not failed", which is the actual contract.
     assert result.status in ("ok", "warning"), (
         f"pass_validation_full returned '{result.status}' on a clean stack — "
         "validation must not fail on well-formed input"
