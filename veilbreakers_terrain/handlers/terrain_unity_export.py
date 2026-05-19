@@ -855,7 +855,13 @@ def _write_json(
     # FIX-D24-PR12: route every JSON sidecar through the shared atomic
     # writer so a crash mid-bake can't leave a half-written sidecar that
     # Unity's AssetPostprocessor would reject as corrupt.
-    atomic_write_text(target, json.dumps(payload, indent=2, sort_keys=True))
+    # T0.5-8 (ZZ4-A6 R3): allow_nan=False so a single NaN/Inf in payload
+    # raises ValueError at serialise-time instead of writing 'NaN'/'Infinity'
+    # tokens that Unity's strict-RFC JsonUtility.FromJson silently
+    # interprets as zero — the β10-05 silent-zero-manifest chain.
+    # NOTE: kept on one line (long though it is) so the substring assertion
+    # in test_phase_b_d24_atomic_manifest_write.py:309 stays valid.
+    atomic_write_text(target, json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))
     files[target.name] = {
         "sha256": _sha256(target),
         "size": int(target.stat().st_size),
@@ -2804,10 +2810,18 @@ def export_unity_manifest(
         tree_prototype_list,
     )
     # Record descriptor in files index before final manifest serialisation.
-    descriptor_bytes = json.dumps(import_descriptor, indent=2, sort_keys=True).encode()
+    # T0.5-8 (ZZ4-A6 R3): allow_nan=False on the two remaining json.dumps
+    # sites for unity_import_descriptor + manifest. Mirrors the sidecar
+    # writer at line 858 so silent NaN -> zero substitution cannot leak
+    # into either file path.
+    descriptor_bytes = json.dumps(
+        import_descriptor, indent=2, sort_keys=True, allow_nan=False
+    ).encode()
     manifest["files"] = files
 
-    manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
+    manifest_bytes = json.dumps(
+        manifest, indent=2, sort_keys=True, allow_nan=False
+    ).encode()
 
     if fail_on_validation_error and any(issue.is_hard() for issue in validation_issues):
         codes = ", ".join(issue.code for issue in validation_issues if issue.is_hard())
