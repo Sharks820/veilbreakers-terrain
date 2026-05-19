@@ -43,6 +43,7 @@ import numpy as np
 import pytest
 
 from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
+from veilbreakers_terrain.handlers.terrain_io import FiniteArrayError
 from veilbreakers_terrain.handlers.terrain_pipeline import (
     TerrainPassController,
     _ABSENT_CHANNEL,
@@ -51,6 +52,7 @@ from veilbreakers_terrain.handlers.terrain_pipeline import (
 )
 from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
+    PassContractError,
     PassDefinition,
     PassResult,
     TerrainIntentState,
@@ -349,6 +351,60 @@ class TestRollbackOnPassFuncRaise:
         assert stack.height_min_m == baseline_min
         assert stack.height_max_m == baseline_max
 
+    def test_rollback_restores_all_six_fields_in_one_raise(self) -> None:
+        """Consolidated test (T-P1-03 from CE testing-reviewer).
+
+        Mutates ALL six fields restored by ``_restore_pass_state`` in a
+        single failing pass, asserts all six revert. Catches the
+        'rollback was simplified during refactor and dropped a field'
+        regression class that per-field tests would each pass individually.
+        """
+        state = _build_state()
+        stack = state.mask_stack
+        original_height = stack.height.copy()
+        stack.populated_by_pass["height"] = "pre_consolidated_pass"
+        stack.dirty_channels.add("height")
+        # Force content_hash to its post-compute value BEFORE the snapshot is
+        # taken inside run_pass (line 908 of terrain_pipeline.py calls
+        # ``self.state.mask_stack.compute_hash()`` as a side-effect during
+        # run_pass setup; the snapshot at line 919 captures that hash, so
+        # rollback restores to the post-compute hash, not the fresh None).
+        baseline_provenance = dict(stack.populated_by_pass)
+        baseline_dirty = set(stack.dirty_channels)
+        baseline_min = stack.height_min_m
+        baseline_max = stack.height_max_m
+        baseline_hash_after_compute = stack.compute_hash()
+
+        def _mutates_everything_then_raises(
+            _state: TerrainPipelineState, _region: Optional[BBox]
+        ) -> Any:
+            _state.mask_stack.height[:, :] = 7777.0
+            _state.mask_stack.populated_by_pass["height"] = "raising_consolidated"
+            _state.mask_stack.populated_by_pass["new_ghost_key"] = "ghost"
+            _state.mask_stack.dirty_channels.add("intruder_channel")
+            _state.mask_stack.content_hash = "POISONED_BY_RAISE"
+            _state.mask_stack.height_min_m = -7777.0
+            _state.mask_stack.height_max_m = 7777.0
+            raise RuntimeError("rollback should restore all six fields")
+
+        _register_height_writing_pass(
+            name="raises_six_fields", func_action=_mutates_everything_then_raises
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            controller = TerrainPassController(state, checkpoint_dir=Path(td))
+            controller.run_pass("raises_six_fields")
+
+        np.testing.assert_array_equal(stack.height, original_height)
+        assert stack.populated_by_pass == baseline_provenance
+        assert stack.dirty_channels == baseline_dirty
+        # Rollback must restore content_hash to the snapshot-captured value,
+        # which equals our pre-call compute_hash() because the pass mutated
+        # only height-related state that compute_hash() already digested.
+        assert stack.content_hash == baseline_hash_after_compute
+        assert stack.height_min_m == baseline_min
+        assert stack.height_max_m == baseline_max
+
 
 # ---------------------------------------------------------------------------
 # Class 3 — raise paths NOT covered by rollback today (T0-4 prereq net)
@@ -393,7 +449,7 @@ class TestRollbackOnPassContractError:
 
         with tempfile.TemporaryDirectory() as td:
             controller = TerrainPassController(state, checkpoint_dir=Path(td))
-            with pytest.raises(Exception):
+            with pytest.raises(PassContractError):
                 controller.run_pass("wrong_return")
 
         # Today this fails — state is mutated. After T0-4 it should pass.
@@ -434,7 +490,7 @@ class TestRollbackOnPassContractError:
 
         with tempfile.TemporaryDirectory() as td:
             controller = TerrainPassController(state, checkpoint_dir=Path(td))
-            with pytest.raises(Exception):
+            with pytest.raises(PassContractError):
                 controller.run_pass("missing_produce")
 
         np.testing.assert_array_equal(state.mask_stack.height, original_height)
@@ -475,7 +531,7 @@ class TestRollbackOnPassContractError:
 
         with tempfile.TemporaryDirectory() as td:
             controller = TerrainPassController(state, checkpoint_dir=Path(td))
-            with pytest.raises(Exception):
+            with pytest.raises(FiniteArrayError):
                 controller.run_pass("nan_produce")
 
         np.testing.assert_array_equal(state.mask_stack.height, original_height)
@@ -524,7 +580,11 @@ class TestRollbackOnPassContractError:
 
         with tempfile.TemporaryDirectory() as td:
             controller = TerrainPassController(state, checkpoint_dir=Path(td))
-            with pytest.raises(Exception):
+            with pytest.raises(FiniteArrayError):
                 controller.run_pass("nan_override")
 
         np.testing.assert_array_equal(stack.wetness, original_wetness)
+        # T-P1-02 from CE testing-reviewer: rollback must restore provenance
+        # not just the array. After T0-4 lands, populated_by_pass['wetness']
+        # should revert to 'init_pre_test', NOT remain at 'nan_override'.
+        assert stack.populated_by_pass.get("wetness") == "init_pre_test"
