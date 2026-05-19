@@ -1,14 +1,39 @@
-"""Bundle A smoke tests for the terrain pass pipeline.
+"""Bundle A smoke tests for the terrain pass **pipeline orchestrator**.
 
-Covers the acceptance criteria from docs/terrain_ultra_implementation_plan_2026-04-08.md §6.5:
+⚠️ STUB-SEAM DISCLOSURE (T0.5-6 per Y04 v3 §P.8.2 / Part P §P.3):
+This file exercises ``TerrainPassController.run_pipeline`` / ``run_pass``
+orchestration behaviour — pass scheduling, channel population,
+checkpoint create/rollback, region scoping, protected-zone enforcement,
+scene-read gating, seed-determinism of the ORCHESTRATOR. It does NOT
+exercise production erosion (or any other production pass-body) end-
+to-end. The ``_register_fast_erosion_pass()`` helper at line 113
+deliberately substitutes a ``+0.25`` height delta for production
+``apply_hydraulic_erosion`` — fast deterministic stub so orchestration
+tests don't need to bake real Cycles erosion.
 
-1.  End-to-end pipeline runs
-2.  Mask stack channels populated
-3.  Determinism (bit-identical re-run with same seed)
-4.  Region scoping (only cells inside region change)
-5.  Protected zones honored (forbidden cells untouched)
-6.  Scene-read enforcement (SceneReadRequired raised)
-7.  Checkpoint create / rollback
+When a test claims "determinism" or "checkpoint", it means determinism /
+checkpoint of THE ORCHESTRATOR, NOT of the erosion algorithm itself.
+Production erosion is exercised in:
+  - ``test_terrain_erosion.py`` (123 tests / direct ``apply_hydraulic_erosion``)
+  - ``test_phase_a_d12_p0_08_hydraulic_mass_conservation.py``
+  - ``test_phase_a_d15_5_hydraulic_eol_deposit.py``
+  - ``test_stream_power_erosion.py``
+  - ``test_terrain_noise_bugfixes.py`` (gravity sign, downhill speed)
+
+Acceptance criteria covered (orchestrator-scope) from
+docs/terrain_ultra_implementation_plan_2026-04-08.md §6.5:
+
+1.  End-to-end pipeline runs (orchestrator path; pass-bodies stubbed)
+2.  Mask stack channels populated (orchestrator delivers declared channels)
+3.  Determinism (bit-identical re-run with same seed — orchestrator-side)
+4.  Region scoping (only cells inside region change — orchestrator-side)
+5.  Protected zones honored (orchestrator enforces; pass-bodies stubbed)
+6.  Scene-read enforcement (orchestrator raises SceneReadRequired)
+7.  Checkpoint create / rollback (orchestrator state machine)
+
+A future T0.5-6 follow-on may re-bind the stub to
+``apply_hydraulic_erosion(iterations=10)`` for a SMALL real-erosion
+smoke — tracked as a Tier-4 candidate.
 """
 
 from __future__ import annotations
