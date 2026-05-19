@@ -611,8 +611,14 @@ def test_brucks_snow_weight_written_when_second_pass_runs():
         # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — materials_v2 primary must
         # produce a clean PassResult; "warning" would hide a brucks_weight or
         # snow_coverage write regression flagged elsewhere in this test.
+        # Failure message includes warnings/issues/metrics because for
+        # status=="warning" the diagnostic detail lives in r.warnings, not
+        # r.issues (which may be empty); see Copilot review #83.
         assert result_primary.status == "ok", (
-            f"materials_v2 pass returned status={result_primary.status!r}"
+            f"materials_v2 pass returned status={result_primary.status!r} "
+            f"issues={result_primary.issues} "
+            f"warnings={result_primary.warnings} "
+            f"metrics={result_primary.metrics}"
         )
 
         brucks_after_primary = state.mask_stack.get("terrain_brucks_weight")
@@ -646,8 +652,14 @@ def test_brucks_snow_weight_written_when_second_pass_runs():
         result_volcanic = controller.run_pass("materials_v2_volcanic", checkpoint=False)
         # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — volcanic variant must overwrite
         # cleanly; "warning" would hide an override-channel-bypass regression.
+        # Failure message includes warnings/issues/metrics because for
+        # status=="warning" the diagnostic detail lives in r.warnings, not
+        # r.issues (which may be empty); see Copilot review #83.
         assert result_volcanic.status == "ok", (
-            f"materials_v2_volcanic pass returned status={result_volcanic.status!r}"
+            f"materials_v2_volcanic pass returned status={result_volcanic.status!r} "
+            f"issues={result_volcanic.issues} "
+            f"warnings={result_volcanic.warnings} "
+            f"metrics={result_volcanic.metrics}"
         )
 
         brucks_after_volcanic = state.mask_stack.get("terrain_brucks_weight")
