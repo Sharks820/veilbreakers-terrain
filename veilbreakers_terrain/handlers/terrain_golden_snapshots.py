@@ -554,6 +554,96 @@ def _gradient_p95(arr: np.ndarray) -> float:
     return float(np.percentile(mag, 95))
 
 
+# ---------------------------------------------------------------------------
+# T0.5-5 (Y04 v3 §P.8.2 / Part P §P.3): per-channel unit normaliser
+#
+# Closes ZZ4-A6 R5 (Shape C — "misdirected"). Assertion keys like
+# ``max_value_m`` / ``min_value_m`` / ``min_relief_m`` carry an implicit unit
+# (the ``_m`` suffix = meters). If a channel is documented in a different
+# unit (e.g. ``slope`` in radians, ``rotation_y_rad`` in radians, ``yaw_degrees``
+# in degrees), comparing the raw channel value against a meters-suffixed
+# threshold silently misdirects the assertion.
+#
+# This registry pins the canonical unit per channel. The
+# ``_assert_channel_unit_matches_suffix`` helper below is wired into
+# ``_evaluate_channel_assertion`` so a mismatch is flagged LOUDLY rather
+# than silently producing a wrong-unit pass/fail verdict.
+#
+# Adding a new channel: append to ``_CHANNEL_CANONICAL_UNITS``. If the unit
+# is unknown / dimensionless, use ``"dimensionless"`` so the helper can
+# distinguish "registered with no unit" from "not registered".
+_CHANNEL_CANONICAL_UNITS: dict[str, str] = {
+    # Heights / depths / elevations — all meters.
+    "height": "m",
+    "water_depth_m": "m",
+    "water_surface_elevation_m": "m",
+    "bathymetry": "m",
+    "terrain_displacement": "m",
+    "sediment_height": "m",
+    "bedrock_height": "m",
+    # Rotation / angular — radians (Python-side; rad↔deg conversion happens
+    # at the Unity boundary per T0-4.5 / T0.5-4).
+    "slope": "rad",
+    "rotation_y_rad": "rad",
+    "strata_orientation": "rad",
+    "flow_direction": "rad",
+    # Degrees — degrees-native channels.
+    "yaw_degrees": "deg",
+    # Per-cell counts and densities — dimensionless [0, 1] or counts.
+    "wetness": "dimensionless",
+    "drainage": "dimensionless",
+    "foam": "dimensionless",
+    "mist": "dimensionless",
+    "wet_rock": "dimensionless",
+    "macro_color": "dimensionless",
+    "talus": "dimensionless",
+    "grass_density_map": "dimensionless",
+    "snow_coverage": "dimensionless",
+    "terrain_brucks_weight": "dimensionless",
+    "cliff_candidate": "dimensionless",
+    "cliff_mask": "dimensionless",
+    "biome_id": "dimensionless",
+    "navmesh_area_id": "dimensionless",
+}
+
+# Map assertion-key suffix → canonical unit string.
+_ASSERTION_SUFFIX_TO_UNIT: dict[str, str] = {
+    "_m": "m",
+    "_rad": "rad",
+    "_deg": "deg",
+}
+
+
+def _assertion_unit_for_key(key: str) -> str | None:
+    """Return the unit declared by the assertion key suffix, or None."""
+    for suffix, unit in _ASSERTION_SUFFIX_TO_UNIT.items():
+        if key.endswith(suffix):
+            return unit
+    return None
+
+
+def _channel_unit_mismatch(channel: str, assertion_key: str) -> str | None:
+    """Return a diagnostic if the assertion key's unit mismatches the
+    channel's canonical unit; ``None`` if units match OR channel is not in
+    the registry (untracked channels default to legacy-permissive).
+    """
+    expected = _CHANNEL_CANONICAL_UNITS.get(channel)
+    if expected is None:
+        return None  # unregistered — legacy-permissive (do not break)
+    asserted = _assertion_unit_for_key(assertion_key)
+    if asserted is None:
+        return None  # assertion key has no unit-bearing suffix
+    if expected == asserted:
+        return None
+    return (
+        f"channel '{channel}' is registered as unit={expected!r} but the "
+        f"assertion key {assertion_key!r} declares unit={asserted!r} via "
+        f"its suffix — unit drift hazard per ZZ4-A6 R5 (Shape C). "
+        f"Use the matching-suffix key or update _CHANNEL_CANONICAL_UNITS "
+        f"in terrain_golden_snapshots.py if the channel's unit changed."
+    )
+
+
 def _within_radius(source_mask: np.ndarray, target_mask: np.ndarray, radius: int) -> np.ndarray:
     source = np.asarray(source_mask, dtype=bool)
     target = np.asarray(target_mask, dtype=bool)
@@ -589,6 +679,16 @@ def _evaluate_channel_assertion(
         "relief": float(np.nanmax(arr) - np.nanmin(arr)),
     }
     issues: List[str] = []
+
+    # T0.5-5 (Y04 v3 §P.8.2 / Part P §P.3): unit-drift gate.
+    # Scan every assertion key for a unit-bearing suffix and confirm the
+    # channel's canonical unit matches. Catches Shape C "misdirected"
+    # assertions where e.g. a radians-channel gets compared against a
+    # meters-suffixed threshold.
+    for assertion_key in assertion:
+        mismatch = _channel_unit_mismatch(channel, assertion_key)
+        if mismatch is not None:
+            issues.append(f"{channel}:unit_drift {mismatch}")
 
     if "range" in assertion:
         lo, hi = assertion["range"]
