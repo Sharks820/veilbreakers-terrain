@@ -6,15 +6,19 @@ orchestration behaviour — pass scheduling, channel population,
 checkpoint create/rollback, region scoping, protected-zone enforcement,
 scene-read gating, seed-determinism of the ORCHESTRATOR. It does NOT
 exercise production erosion (or any other production pass-body) end-
-to-end. The ``_register_fast_erosion_pass()`` helper at line 138
-deliberately substitutes a ``+0.25`` height delta for production
-``apply_hydraulic_erosion`` — fast deterministic stub so orchestration
-tests don't need to run a full pure-numpy hydraulic erosion bake.
+to-end. The ``_register_fast_erosion_pass()`` helper (search this file
+for the symbol — line numbers drift) deliberately substitutes a
+``+0.25`` height delta for production ``apply_hydraulic_erosion`` —
+fast deterministic stub so orchestration tests don't need to run a
+full pure-numpy hydraulic erosion bake.
 
 When a test claims "determinism" or "checkpoint", it means determinism /
 checkpoint of THE ORCHESTRATOR, NOT of the erosion algorithm itself.
 Production erosion is exercised in:
-  - ``test_terrain_erosion.py`` (17 tests / direct ``apply_hydraulic_erosion``)
+  - ``test_terrain_erosion.py`` (17 erosion-unit tests covering
+    ``apply_hydraulic_erosion``, ``apply_thermal_erosion``, and
+    ``apply_hydraulic_erosion_masks``; 11 of the 17 call
+    ``apply_hydraulic_erosion`` directly)
   - ``test_phase_a_d12_p0_08_hydraulic_mass_conservation.py``
   - ``test_phase_a_d15_5_hydraulic_eol_deposit.py``
   - ``test_stream_power_erosion.py``
