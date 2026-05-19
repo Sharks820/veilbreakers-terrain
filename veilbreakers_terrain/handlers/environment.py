@@ -2671,11 +2671,15 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
                 None,
             )
             try:
+                # T0-7 (Y04 v3 §P.8.1 ord 0k, partial): allow_pickle=False —
+                # neighbor heightmaps come from sibling tiles that may be
+                # under user-controlled paths; deny pickle to close the
+                # cross-tile RCE chain.
                 if west_tile is not None and "west" not in neighbor_edges:
-                    west_h = np.load(west_tile["heightmap_path"])
+                    west_h = np.load(west_tile["heightmap_path"], allow_pickle=False)
                     neighbor_edges["west"] = np.asarray(west_h)[:, -1].tolist()
                 if north_tile is not None and "north" not in neighbor_edges:
-                    north_h = np.load(north_tile["heightmap_path"])
+                    north_h = np.load(north_tile["heightmap_path"], allow_pickle=False)
                     neighbor_edges["north"] = np.asarray(north_h)[-1, :].tolist()
             except Exception as exc:
                 logger.warning(
