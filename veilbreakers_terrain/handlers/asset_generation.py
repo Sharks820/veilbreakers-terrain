@@ -783,7 +783,10 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> Path:
     suffix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
     tmp = path.with_name(f".{path.name}.{suffix}.tmp")
     with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
+        # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — loud-at-source per
+        # ZZ4-A6 R3; NaN/Inf in asset-generation manifests would silently
+        # ship as non-spec "NaN"/"Infinity" JSON tokens that Unity rejects.
+        json.dump(data, fh, indent=2, sort_keys=True, allow_nan=False)
     os.replace(tmp, path)
     return path
 

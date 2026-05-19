@@ -621,7 +621,19 @@ def test_run_validation_suite_ok_when_clean():
     _set_channel(stack, "splatmap_weights_layer", np.full((*shape, 2), 0.5, dtype=np.float32))
     _set_channel(stack, "navmesh_area_id", np.zeros(shape, dtype=np.uint8))
     report = run_validation_suite(stack, _make_intent(stack))
-    assert report.overall_status in ("ok", "warning")
+    # T0.5-2 (Y04 v3 §P.8.2): permissive-"ok|warning" preserved deliberately.
+    # `run_validation_suite` derives `overall_status` purely from issue
+    # severity (see ValidationReport.recompute_status at terrain_validation.py
+    # L143-150): any hard issue -> "failed"; else any soft issue -> "warning";
+    # else "ok". On this synthetic "clean" stack, the DEFAULT_VALIDATORS set
+    # can still surface SOFT issues — most reliably SEAM_DISCONTINUITY_* from
+    # `validate_tile_seam_continuity` on the random-fixture heightmap edges,
+    # which is a legitimate soft signal, not a fixture defect. The test's
+    # actual contract (enforced by the next assertion) is "no HARD issues" —
+    # not "fully ok". Strict-"ok" here would force test-side relaxation of
+    # the seam-detector, which is the wrong direction. See PR #80 verifier
+    # discovery in test_terrain_pipeline_smoke.py:249 for the same pattern.
+    assert report.overall_status in ("ok", "warning"), report
     assert len(report.hard_issues) == 0
 
 
@@ -697,6 +709,18 @@ def test_pass_validation_full_returns_pass_result():
     controller, _checkpoint_dir = _make_controller_with_checkpoint()
     result = pass_validation_full(controller.state, None)
     assert result.pass_name == "validation_full"
+    # T0.5-2 (Y04 v3 §P.8.2): permissive-"ok|warning" preserved deliberately.
+    # `pass_validation_full` (terrain_validation.py L2108-2159) sets its
+    # PassResult.status purely from the underlying ValidationReport: any
+    # hard issue -> "failed"; else any soft issue -> "warning"; else "ok".
+    # It does NOT consult `intent.scene_read` — that field only feeds the
+    # PassDefinition's `requires_scene_read=False` ordering hint (L2190).
+    # On this synthetic controller fixture (no real scene), the default
+    # validator set can still emit soft issues (e.g. SEAM_DISCONTINUITY_*
+    # from `validate_tile_seam_continuity` on the random-heightmap edges),
+    # legitimately yielding status="warning". Strict-"ok" here would force
+    # a bogus failure tied to fixture shape, not validator behavior. The
+    # assertion still enforces "not failed", which is the actual contract.
     assert result.status in ("ok", "warning"), (
         f"pass_validation_full returned '{result.status}' on a clean stack — "
         "validation must not fail on well-formed input"

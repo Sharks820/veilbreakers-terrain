@@ -574,7 +574,9 @@ def test_pass_caves_populates_channels_and_structures():
     controller = TerrainPassController(state, checkpoint_dir=None)
     result = controller.run_pass("caves", checkpoint=False)
 
-    assert result.status in ("ok", "warning")
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — caves pass with valid candidate
+    # inputs must succeed cleanly; "warning" masks a downstream regression.
+    assert result.status == "ok", result
     assert state.mask_stack.get("cave_candidate") is not None
     assert state.mask_stack.get("wet_rock") is not None
     assert isinstance(state.mask_stack.get("cave_mesh_specs"), list)
@@ -673,5 +675,7 @@ def test_pass_caves_can_discover_candidates_from_cliff_signals():
     controller = TerrainPassController(state, checkpoint_dir=None)
     result = controller.run_pass("caves", checkpoint=False)
 
-    assert result.status in ("ok", "warning")
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — region-scoped caves with valid
+    # cliff candidate must succeed cleanly.
+    assert result.status == "ok", result
     assert result.metrics["cave_count"] >= 1

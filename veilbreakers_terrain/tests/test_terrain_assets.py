@@ -658,7 +658,9 @@ def test_pass_populates_tree_instance_points(
     with tempfile.TemporaryDirectory() as td:
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
         result = controller.run_pass("scatter_intelligent", checkpoint=False)
-    assert result.status in ("ok", "warning")
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — scatter_intelligent happy path,
+    # any "warning" today is a latent regression in tree-instance-point shape.
+    assert result.status == "ok", result
     tp = state.mask_stack.tree_instance_points
     assert tp is not None
     assert tp.ndim == 2

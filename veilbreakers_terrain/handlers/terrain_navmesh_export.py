@@ -583,7 +583,15 @@ def export_navmesh_json(
     # AssetPostprocessor.
     atomic_write_text(
         output_path,
-        json.dumps(descriptor, indent=2, sort_keys=True, default=_json_default),
+        # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — navmesh descriptor is
+        # Unity-consumed; NaN/Inf in navmesh metadata would corrupt path-find.
+        json.dumps(
+            descriptor,
+            indent=2,
+            sort_keys=True,
+            default=_json_default,
+            allow_nan=False,
+        ),
     )
 
     # FIX-B14-P1-23: Unity reads the .bin navmesh asset, not a .obj sidecar.

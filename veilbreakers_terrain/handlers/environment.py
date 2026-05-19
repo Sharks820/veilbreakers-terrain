@@ -1426,7 +1426,9 @@ def _write_json_manifest(path: str | Path, payload: dict[str, Any]) -> str:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        json.dumps(payload, indent=2, sort_keys=True),
+        # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — loud-at-source per
+        # ZZ4-A6 R3 for the environment-handler JSON manifest hop.
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False),
         encoding="utf-8",
         newline="\n",
     )

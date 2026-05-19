@@ -142,7 +142,12 @@ def save_golden_snapshot(
     # FIX-D24-PR12: atomic write so a crash mid-bake can never leave a
     # half-written golden manifest that downstream comparators would
     # parse as corrupt.
-    atomic_write_text(json_path, json.dumps(snap.to_dict(), sort_keys=True, indent=2))
+    # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — loud-at-source per ZZ4-A6 R3;
+    # NaN in a golden snapshot would silently mask determinism drift.
+    atomic_write_text(
+        json_path,
+        json.dumps(snap.to_dict(), sort_keys=True, indent=2, allow_nan=False),
+    )
     return snap
 
 
@@ -415,6 +420,8 @@ def seed_golden_library(
     # leave a corrupt golden_library_manifest.json on disk.
     atomic_write_text(
         manifest_path,
+        # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — loud-at-source for the
+        # golden-library manifest (sibling to the per-snapshot json above).
         json.dumps(
             {
                 "pipeline_version": PIPELINE_VERSION,
@@ -425,6 +432,7 @@ def seed_golden_library(
             },
             sort_keys=True,
             indent=2,
+            allow_nan=False,
         ),
     )
     return snapshots
