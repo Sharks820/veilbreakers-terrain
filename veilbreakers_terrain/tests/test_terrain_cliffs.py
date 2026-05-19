@@ -435,7 +435,8 @@ def test_pass_cliffs_direct_region_scope_publishes_contract_channels():
 
     result = pass_cliffs(state, region=region)
 
-    assert result.status in ("ok", "warning")
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — pass_cliffs direct happy path.
+    assert result.status == "ok", result
     assert state.mask_stack.cliff_candidate is not None
     assert state.mask_stack.get("cliff_mask") is not None
     assert state.mask_stack.get("talus_mask") is not None
@@ -593,7 +594,8 @@ def test_pass_cliffs_populates_cliff_candidate_channel():
     with tempfile.TemporaryDirectory() as td:
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
         result = controller.run_pass("cliffs", checkpoint=False)
-    assert result.status in ("ok", "warning")
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — cliffs pass via controller path.
+    assert result.status == "ok", result
     assert state.mask_stack.cliff_candidate is not None
     assert state.mask_stack.cliff_candidate.dtype == bool
     assert isinstance(state.mask_stack.get("cliff_mesh_specs"), list)

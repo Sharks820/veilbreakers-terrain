@@ -608,7 +608,10 @@ def test_brucks_snow_weight_written_when_second_pass_runs():
 
         # Run the primary pass
         result_primary = controller.run_pass("materials_v2", checkpoint=False)
-        assert result_primary.status in ("ok", "warning"), (
+        # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — materials_v2 primary must
+        # produce a clean PassResult; "warning" would hide a brucks_weight or
+        # snow_coverage write regression flagged elsewhere in this test.
+        assert result_primary.status == "ok", (
             f"materials_v2 pass returned status={result_primary.status!r}"
         )
 
@@ -641,7 +644,9 @@ def test_brucks_snow_weight_written_when_second_pass_runs():
 
         # Run the secondary volcanic pass — must not raise and must write both channels
         result_volcanic = controller.run_pass("materials_v2_volcanic", checkpoint=False)
-        assert result_volcanic.status in ("ok", "warning"), (
+        # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — volcanic variant must overwrite
+        # cleanly; "warning" would hide an override-channel-bypass regression.
+        assert result_volcanic.status == "ok", (
             f"materials_v2_volcanic pass returned status={result_volcanic.status!r}"
         )
 
