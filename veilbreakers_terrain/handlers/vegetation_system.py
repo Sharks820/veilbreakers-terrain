@@ -1532,6 +1532,9 @@ def write_foliage_placement_manifest(manifest: dict[str, Any], out_path: Any) ->
     suffix = "".join(_random.choices(_string.ascii_letters + _string.digits, k=8))
     tmp = p.with_name(f".{p.name}.{suffix}.tmp")
     with tmp.open("w", encoding="utf-8") as fh:
-        _json.dump(manifest, fh, indent=2, sort_keys=True)
+        # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — vegetation manifest is
+        # Unity-consumed; NaN in instance positions / rotations would silently
+        # produce non-spec JSON.
+        _json.dump(manifest, fh, indent=2, sort_keys=True, allow_nan=False)
     _os.replace(tmp, p)
     return p
