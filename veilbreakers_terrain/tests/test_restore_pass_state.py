@@ -67,18 +67,13 @@ PassFunc = Callable[[TerrainPipelineState, Optional[BBox]], Any]
 # ---------------------------------------------------------------------------
 # Fixtures + helpers
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _clean_registry():  # pyright: ignore[reportUnusedFunction]
-    """Each test starts with an empty pass registry and cleans up after.
-
-    pyright marks autouse pytest fixtures unused because the static reference
-    is via pytest's collection machinery, not a direct call site.
-    """
-    TerrainPassController.clear_registry()
-    yield
-    TerrainPassController.clear_registry()
+#
+# Registry isolation between tests is provided by the suite-wide autouse
+# fixture ``_reset_pass_registry`` at ``conftest.py:133`` which saves /
+# clears / restores ``TerrainPassController.PASS_REGISTRY`` around every
+# test. No local autouse fixture is needed — earlier drafts of this file
+# defined a redundant ``_clean_registry`` (removed per Copilot review on
+# PR #75).
 
 
 def _build_state(*, tile_size: int = 16, seed: int = 1234) -> TerrainPipelineState:
