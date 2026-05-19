@@ -6,15 +6,15 @@ orchestration behaviour — pass scheduling, channel population,
 checkpoint create/rollback, region scoping, protected-zone enforcement,
 scene-read gating, seed-determinism of the ORCHESTRATOR. It does NOT
 exercise production erosion (or any other production pass-body) end-
-to-end. The ``_register_fast_erosion_pass()`` helper at line 113
+to-end. The ``_register_fast_erosion_pass()`` helper at line 138
 deliberately substitutes a ``+0.25`` height delta for production
 ``apply_hydraulic_erosion`` — fast deterministic stub so orchestration
-tests don't need to bake real Cycles erosion.
+tests don't need to run a full pure-numpy hydraulic erosion bake.
 
 When a test claims "determinism" or "checkpoint", it means determinism /
 checkpoint of THE ORCHESTRATOR, NOT of the erosion algorithm itself.
 Production erosion is exercised in:
-  - ``test_terrain_erosion.py`` (123 tests / direct ``apply_hydraulic_erosion``)
+  - ``test_terrain_erosion.py`` (17 tests / direct ``apply_hydraulic_erosion``)
   - ``test_phase_a_d12_p0_08_hydraulic_mass_conservation.py``
   - ``test_phase_a_d15_5_hydraulic_eol_deposit.py``
   - ``test_stream_power_erosion.py``
@@ -31,9 +31,11 @@ docs/terrain_ultra_implementation_plan_2026-04-08.md §6.5:
 6.  Scene-read enforcement (orchestrator raises SceneReadRequired)
 7.  Checkpoint create / rollback (orchestrator state machine)
 
-A future T0.5-6 follow-on may re-bind the stub to
+A future T0.5-6-stage2b re-bind may swap the stub to
 ``apply_hydraulic_erosion(iterations=10)`` for a SMALL real-erosion
-smoke — tracked as a Tier-4 candidate.
+smoke — tracked as a Tier-4 candidate; needs separate design because
+real-erosion brings non-deterministic-at-iteration-count edge cases
+that may flake the orchestrator-side determinism tests.
 """
 
 from __future__ import annotations
@@ -366,7 +368,8 @@ def test_mask_stack_channels_populated_after_each_pass():
 
 
 # ---------------------------------------------------------------------------
-# 3. Determinism — identical hashes for identical seeds
+# 3. Determinism — identical hashes for identical seeds (ORCHESTRATOR-side;
+#    erosion-body is the +0.25 stub from _register_fast_erosion_pass)
 # ---------------------------------------------------------------------------
 
 
@@ -485,7 +488,8 @@ def test_erosion_pass_requires_scene_read():
 
 
 # ---------------------------------------------------------------------------
-# 7. Checkpoint create / rollback
+# 7. Checkpoint create / rollback (ORCHESTRATOR-side state machine;
+#    erosion-body is the +0.25 stub from _register_fast_erosion_pass)
 # ---------------------------------------------------------------------------
 
 
