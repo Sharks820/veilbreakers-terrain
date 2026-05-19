@@ -24,7 +24,7 @@ import numpy as np
 def _make_stack_with_channel(channel_name: str, values: np.ndarray):
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
-    h, w = values.shape
+    h, _w = values.shape
     stack = TerrainMaskStack(
         tile_size=h - 1,
         cell_size=1.0,
@@ -85,8 +85,9 @@ class TestChannelUnitMismatchFlagged:
         ok, issues, _stats = _evaluate_channel_assertion(
             stack,
             "height",
-            # _rad suffix not in current production suffix set, but the
-            # registry knows it
+            # ``_rad`` suffix is in ``_ASSERTION_SUFFIX_TO_UNIT`` (this PR
+            # added it) — using it against a meters channel must surface
+            # unit_drift.
             {"min_value_rad": 0.5},
         )
 
@@ -195,7 +196,7 @@ class TestRegistryShape:
             "water_surface_elevation_m": "m",
             "slope": "rad",
             "rotation_y_rad": "rad",
-            "yaw_degrees": "deg",
+            "vb_aspect_deg": "deg",
         }
         for ch, expected_unit in critical.items():
             assert ch in _CHANNEL_CANONICAL_UNITS, (
@@ -215,3 +216,117 @@ class TestRegistryShape:
         assert _ASSERTION_SUFFIX_TO_UNIT["_m"] == "m"
         assert _ASSERTION_SUFFIX_TO_UNIT["_rad"] == "rad"
         assert _ASSERTION_SUFFIX_TO_UNIT["_deg"] == "deg"
+
+
+class TestChannelUnitMismatchUsesResolvedAlias:
+    """Copilot review (PR #88, thread PRRT_kwDOSDBoMs6DLego): when a caller
+    asks for a channel by an alias (e.g. ``heightmap`` → ``height``,
+    ``water_surface`` → ``water_surface_elevation_m``), ``_stack_channel``
+    resolves the alias before fetching the array. The unit-drift gate must
+    still trigger using the alias-resolved name so registry coverage
+    extends through alias indirection.
+    """
+
+    def test_alias_heightmap_resolves_to_height_and_triggers_unit_drift(
+        self,
+    ) -> None:
+        """``heightmap`` aliases to the registered ``height`` channel
+        (unit=m). A ``_rad``-suffixed assertion against the alias must
+        still surface a unit_drift issue.
+        """
+        from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+            _CHANNEL_ALIASES,
+            _CHANNEL_CANONICAL_UNITS,
+            _evaluate_channel_assertion,
+        )
+
+        # Fixture sanity: alias indirection still in effect and the
+        # resolved name is registered.
+        assert "heightmap" in _CHANNEL_ALIASES, (
+            "fixture invalidated: 'heightmap' alias removed; pick another "
+            "alias whose resolved target is in _CHANNEL_CANONICAL_UNITS"
+        )
+        assert "height" in _CHANNEL_CANONICAL_UNITS
+
+        height_arr = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float64)
+        # Stack stores ``height``; caller asserts via the ``heightmap`` alias.
+        stack = _make_stack_with_channel("height", height_arr)
+
+        ok, issues, _stats = _evaluate_channel_assertion(
+            stack,
+            "heightmap",  # alias name, not the resolved registry key
+            {"min_value_rad": 0.5},
+        )
+
+        assert ok is False, (
+            "unit drift on an alias-resolved channel must fail the assertion"
+        )
+        unit_drift = [i for i in issues if "unit_drift" in i]
+        assert unit_drift, (
+            f"alias resolution must extend unit_drift coverage; got {issues}"
+        )
+
+
+class TestAngularThresholdKeysEnforced:
+    """Codex review (PR #88, thread PRRT_kwDOSDBoMs6DLa4X, P1): when a
+    caller follows the new unit-drift diagnostic and renames their key
+    from ``max_value_m`` to ``max_value_rad`` / ``max_value_deg``, the
+    evaluator MUST actually check those bounds. Previously only ``_m``
+    keys were evaluated, so angular assertions silently stopped enforcing
+    their bound.
+    """
+
+    def test_max_value_rad_above_threshold_flags(self) -> None:
+        from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+            _evaluate_channel_assertion,
+        )
+
+        # ``slope`` in radians, value 1.4 — well above the 1.0 threshold.
+        slope_arr = np.array([[0.1, 0.5], [1.0, 1.4]], dtype=np.float32)
+        stack = _make_stack_with_channel("slope", slope_arr)
+
+        ok, issues, _stats = _evaluate_channel_assertion(
+            stack,
+            "slope",
+            {"max_value_rad": 1.0},
+        )
+
+        assert ok is False, "max_value_rad bound breach must fail"
+        max_issues = [i for i in issues if ":max " in i]
+        assert max_issues, f"expected max-bound issue; got {issues}"
+
+    def test_max_value_deg_above_threshold_flags(self) -> None:
+        from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+            _evaluate_channel_assertion,
+        )
+
+        aspect_arr = np.array([[10.0, 90.0], [180.0, 270.0]], dtype=np.float32)
+        stack = _make_stack_with_channel("vb_aspect_deg", aspect_arr)
+
+        ok, issues, _stats = _evaluate_channel_assertion(
+            stack,
+            "vb_aspect_deg",
+            {"max_value_deg": 180.0},
+        )
+
+        assert ok is False, "max_value_deg bound breach must fail"
+        max_issues = [i for i in issues if ":max " in i]
+        assert max_issues, f"expected max-bound issue; got {issues}"
+
+    def test_min_value_rad_below_threshold_flags(self) -> None:
+        from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+            _evaluate_channel_assertion,
+        )
+
+        slope_arr = np.array([[0.0, 0.1], [0.2, 0.3]], dtype=np.float32)
+        stack = _make_stack_with_channel("slope", slope_arr)
+
+        ok, issues, _stats = _evaluate_channel_assertion(
+            stack,
+            "slope",
+            {"min_value_rad": 0.5},
+        )
+
+        assert ok is False, "min_value_rad bound breach must fail"
+        min_issues = [i for i in issues if ":min " in i]
+        assert min_issues, f"expected min-bound issue; got {issues}"

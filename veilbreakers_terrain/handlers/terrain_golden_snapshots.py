@@ -560,14 +560,15 @@ def _gradient_p95(arr: np.ndarray) -> float:
 # Closes ZZ4-A6 R5 (Shape C — "misdirected"). Assertion keys like
 # ``max_value_m`` / ``min_value_m`` / ``min_relief_m`` carry an implicit unit
 # (the ``_m`` suffix = meters). If a channel is documented in a different
-# unit (e.g. ``slope`` in radians, ``rotation_y_rad`` in radians, ``yaw_degrees``
-# in degrees), comparing the raw channel value against a meters-suffixed
-# threshold silently misdirects the assertion.
+# unit (e.g. ``slope`` in radians, ``rotation_y_rad`` in radians,
+# ``vb_aspect_deg`` in degrees), comparing the raw channel value against a
+# meters-suffixed threshold silently misdirects the assertion.
 #
 # This registry pins the canonical unit per channel. The
-# ``_assert_channel_unit_matches_suffix`` helper below is wired into
-# ``_evaluate_channel_assertion`` so a mismatch is flagged LOUDLY rather
-# than silently producing a wrong-unit pass/fail verdict.
+# ``_channel_unit_mismatch`` helper (paired with ``_assertion_unit_for_key``)
+# below is wired into ``_evaluate_channel_assertion`` so a mismatch is
+# flagged LOUDLY rather than silently producing a wrong-unit pass/fail
+# verdict.
 #
 # Adding a new channel: append to ``_CHANNEL_CANONICAL_UNITS``. If the unit
 # is unknown / dimensionless, use ``"dimensionless"`` so the helper can
@@ -588,7 +589,7 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     "strata_orientation": "rad",
     "flow_direction": "rad",
     # Degrees — degrees-native channels.
-    "yaw_degrees": "deg",
+    "vb_aspect_deg": "deg",
     # Per-cell counts and densities — dimensionless [0, 1] or counts.
     "wetness": "dimensionless",
     "drainage": "dimensionless",
@@ -685,8 +686,16 @@ def _evaluate_channel_assertion(
     # channel's canonical unit matches. Catches Shape C "misdirected"
     # assertions where e.g. a radians-channel gets compared against a
     # meters-suffixed threshold.
+    #
+    # Check BOTH the requested ``channel`` name AND the alias-resolved
+    # ``resolved`` name. ``_CHANNEL_ALIASES`` lets callers ask for e.g.
+    # ``heightmap`` while the stack stores ``height``; we want unit-drift
+    # protection regardless of which name the caller used. First match
+    # wins; both ``None`` returns mean no drift.
     for assertion_key in assertion:
         mismatch = _channel_unit_mismatch(channel, assertion_key)
+        if mismatch is None and resolved != channel:
+            mismatch = _channel_unit_mismatch(resolved, assertion_key)
         if mismatch is not None:
             issues.append(f"{channel}:unit_drift {mismatch}")
 
@@ -703,10 +712,23 @@ def _evaluate_channel_assertion(
         stats["nonzero_ratio"] = ratio
         if ratio < float(assertion["min_nonzero_ratio"]):
             issues.append(f"{channel}:nonzero_ratio {ratio:.4f} < {float(assertion['min_nonzero_ratio']):.4f}")
+    # T0.5-5 codex P1 follow-up: also evaluate ``_rad`` / ``_deg`` keys so
+    # callers who follow the unit-drift diagnostic and rename to a matching
+    # angular suffix actually get their bound checked. Previously only
+    # ``_m`` keys were evaluated, so a renamed ``max_value_rad`` silently
+    # stopped enforcing any bound on the channel.
     if "max_value_m" in assertion and stats["max"] > float(assertion["max_value_m"]):
         issues.append(f"{channel}:max {stats['max']:.4f} > {float(assertion['max_value_m']):.4f}")
     if "min_value_m" in assertion and stats["min"] < float(assertion["min_value_m"]):
         issues.append(f"{channel}:min {stats['min']:.4f} < {float(assertion['min_value_m']):.4f}")
+    if "max_value_rad" in assertion and stats["max"] > float(assertion["max_value_rad"]):
+        issues.append(f"{channel}:max {stats['max']:.4f} > {float(assertion['max_value_rad']):.4f}")
+    if "min_value_rad" in assertion and stats["min"] < float(assertion["min_value_rad"]):
+        issues.append(f"{channel}:min {stats['min']:.4f} < {float(assertion['min_value_rad']):.4f}")
+    if "max_value_deg" in assertion and stats["max"] > float(assertion["max_value_deg"]):
+        issues.append(f"{channel}:max {stats['max']:.4f} > {float(assertion['max_value_deg']):.4f}")
+    if "min_value_deg" in assertion and stats["min"] < float(assertion["min_value_deg"]):
+        issues.append(f"{channel}:min {stats['min']:.4f} < {float(assertion['min_value_deg']):.4f}")
     if "min_peak" in assertion and stats["max"] < float(assertion["min_peak"]):
         issues.append(f"{channel}:peak {stats['max']:.4f} < {float(assertion['min_peak']):.4f}")
     if "min_mean" in assertion and stats["mean"] < float(assertion["min_mean"]):
