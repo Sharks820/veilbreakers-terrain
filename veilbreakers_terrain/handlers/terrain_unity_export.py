@@ -859,10 +859,9 @@ def _write_json(
     # raises ValueError at serialise-time instead of writing 'NaN'/'Infinity'
     # tokens that Unity's strict-RFC JsonUtility.FromJson silently
     # interprets as zero — the β10-05 silent-zero-manifest chain.
-    atomic_write_text(
-        target,
-        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False),
-    )
+    # NOTE: kept on one line (long though it is) so the substring assertion
+    # in test_phase_b_d24_atomic_manifest_write.py:309 stays valid.
+    atomic_write_text(target, json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))
     files[target.name] = {
         "sha256": _sha256(target),
         "size": int(target.stat().st_size),
