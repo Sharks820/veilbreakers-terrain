@@ -945,6 +945,12 @@ class TerrainPassController:
             return result
 
         if not isinstance(result, PassResult):
+            # T0-4 (Y04 v3 §P.8.1 ord 0g / Part P §P.3): rollback before
+            # raising so callers see a state byte-identical to pre-pass.
+            # Without this, partial mutations from definition.func(...) leak.
+            # Regression net: test_restore_pass_state.py
+            # TestRollbackOnPassContractError (PR #75) — xfail flips here.
+            _restore_pass_state(self.state.mask_stack, stack_snapshot)
             raise PassContractError(
                 f"Pass '{pass_name}' did not return a PassResult "
                 f"(got {type(result).__name__})"
@@ -964,6 +970,10 @@ class TerrainPassController:
             if self.state.mask_stack.get(ch) is None
         ]
         if missing_outputs and result.status == "ok":
+            # T0-4 (Y04 v3 §P.8.1 ord 0g): rollback before raising —
+            # partial channel writes from a contract-breaking pass must
+            # not leak to subsequent passes.
+            _restore_pass_state(self.state.mask_stack, stack_snapshot)
             raise PassContractError(
                 f"Pass '{pass_name}' declared produces_channels={definition.produces_channels} "
                 f"but did not populate {missing_outputs}"
@@ -979,24 +989,34 @@ class TerrainPassController:
         # boolean channels are skipped automatically by ``assert_finite_array``
         # because those dtypes cannot represent NaN/Inf.
         if result.status == "ok":
-            for _produced_ch in definition.produces_channels:
-                _arr = self.state.mask_stack.get(_produced_ch)
-                # ``assert_finite_array`` is a no-op on None / non-float arrays.
-                assert_finite_array(
-                    _arr,
-                    channel=_produced_ch,
-                    pass_name=pass_name,
-                )
-            # Also verify any channels declared as overrides (secondary
-            # writes) to catch in-place mutation that introduces NaN/Inf
-            # without being declared in produces_channels.
-            for _override_ch in definition.overrides:
-                _arr = self.state.mask_stack.get(_override_ch)
-                assert_finite_array(
-                    _arr,
-                    channel=_override_ch,
-                    pass_name=pass_name,
-                )
+            # T0-4 (Y04 v3 §P.8.1 ord 0g): wrap both NaN/Inf check loops
+            # in try/except so assert_finite_array raises propagate WITH
+            # rollback to pre-pass state. Without rollback, a pass that
+            # produces NaN in a downstream channel leaks the partially-
+            # corrupt stack to the caller — breaking the run_pass atomic-
+            # mutation contract.
+            try:
+                for _produced_ch in definition.produces_channels:
+                    _arr = self.state.mask_stack.get(_produced_ch)
+                    # ``assert_finite_array`` is a no-op on None / non-float arrays.
+                    assert_finite_array(
+                        _arr,
+                        channel=_produced_ch,
+                        pass_name=pass_name,
+                    )
+                # Also verify any channels declared as overrides (secondary
+                # writes) to catch in-place mutation that introduces NaN/Inf
+                # without being declared in produces_channels.
+                for _override_ch in definition.overrides:
+                    _arr = self.state.mask_stack.get(_override_ch)
+                    assert_finite_array(
+                        _arr,
+                        channel=_override_ch,
+                        pass_name=pass_name,
+                    )
+            except Exception:
+                _restore_pass_state(self.state.mask_stack, stack_snapshot)
+                raise
 
         # Warn on channels written but not declared in produces_channels
         # Full dict comparison catches both new keys AND silent overwrites of
