@@ -90,7 +90,10 @@ def test_direct_scatter_pass_and_connected_component_helpers():
     labels4 = _label_connected_components(mask, connectivity=4)
     labels8 = _label_connected_components(mask, connectivity=8)
 
-    assert result.status in ("ok", "warning")
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — scatter_intelligent happy path
+    # exercising the connected-components guard; "warning" masks tree-point
+    # shape regressions documented in the assertion two lines below.
+    assert result.status == "ok", result
     assert state.mask_stack.tree_instance_points.shape[1] == 5
     assert state.mask_stack.detail_density is not None
     assert int(labels4.max()) == 2

@@ -353,7 +353,10 @@ def test_pass_waterfalls_populates_channels():
         with tempfile.TemporaryDirectory() as td:
             controller = TerrainPassController(state, checkpoint_dir=Path(td))
             result = controller.run_pass("waterfalls", checkpoint=False)
-        assert result.status in ("ok", "warning")
+        # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — waterfalls pass on a 25m drop
+        # cliff heightmap must produce a clean PassResult; "warning" would mask
+        # a downstream foam / mist / wet_rock channel write regression.
+        assert result.status == "ok", result
         stack = state.mask_stack
         assert stack.waterfall_lip_candidate is not None
         assert stack.foam is not None
