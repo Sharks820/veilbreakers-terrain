@@ -16,7 +16,14 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
+      # T4-NEW-ZZ4-06 (per MASTER_FINAL §P.1.2 F7 / Y04 v3 §P.8.5): lfs:true
+      # so checkout materialises real binaries from LFS instead of leaving
+      # them as 130-byte pointer text. Without this, tests depending on
+      # LFS fixtures (PNG goldens, .npz baselines, .blend files) silently
+      # see pointer-text content and pass against false-signal data.
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
