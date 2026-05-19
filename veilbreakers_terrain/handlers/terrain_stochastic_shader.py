@@ -1013,7 +1013,12 @@ def export_unity_shader_template(
             f"properties: {sorted(missing)}"
         )
 
-    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — Unity shader template is
+    # Unity-consumed; NaN in a shader property would silently emit non-spec
+    # JSON Unity rejects on import.
+    output_path.write_text(
+        json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8"
+    )
     return payload
 
 
