@@ -2243,24 +2243,42 @@ def _cliff_strata_band_specs() -> list[tuple[float, float, float]]:
 
     T1-39 (Y04 v3, cert-YES, XR-003 missing-content). Previously the list was
     empty so ``VB_Cliff_Strata`` materialised with 0 polygons and every cliff
-    rendered monolithic-flat. The bands are tuned for the south cliff face
-    along Y ~ 0 m (river/lake side) — each band is a thin horizontal slab
-    that drapes along the cliff at a slightly offset Y position so the
-    sediment lines read as parallel beds rather than a single ribbon.
+    rendered monolithic-flat.
+
+    Band placement strategy (T1-39 round-2 per CE review CORR-T1-39-01):
+    the strata loop sweeps the full world-X range (-430..+430) and relies
+    on the per-step height guard (``LAKE_WATER_LEVEL + 12 < z < 310``) to
+    stamp bands ONLY on cliff-height terrain. Y values cover BOTH the
+    LAKE_XY band (Y ~ -315, the south cliff face) and the mid-map cliff
+    band (Y ~ 0), so wherever cliff geometry exists the strata read
+    correctly. The lift values stagger so bands do not z-fight.
+
+    NOTE: this is the initial placement set. Visual verification via the
+    11-camera Wave-VV proof is mandatory before claiming the cliff strata
+    look correct — if the south cliff has no cliff-height terrain at Y in
+    [-320, -310], or the mid-map cliff is absent, those band rows will
+    stamp 0 polygons silently and the cliff face will look monolithic
+    along that Y axis. Follow-up to add a render-pass that asserts
+    ``len(strata_bm.faces) > 0`` per band row.
 
     Tuple semantics — keep in sync with ``build_cliff_strata_and_talus``:
       - y_base: world-space Y centre for this band's ribbon.
       - band_h: half-thickness in metres (top/bot vertex offset from z).
       - lift:   vertical offset from the sampled terrain height.
     """
-    # 4 sediment bands, each laterally offset along Y so the eye reads them
-    # as parallel beds. lift values stagger from +0.4m to +2.8m so the bands
-    # do not z-fight with the underlying cliff mesh nor with each other.
+    # 7 sediment bands across BOTH cliff regions:
+    #   4 bands at Y in [-320..-310] for the south cliff face (LAKE_XY=-315)
+    #   3 bands at Y in [-2..7] for the mid-map cliff (if present)
+    # The height guards in the consuming loop ensure bands only stamp on
+    # actual cliff terrain regardless of which region exists.
     return [
-        (-2.0, 0.18, 0.40),   # bottom band — closest to river
-        (1.0, 0.22, 1.10),    # mid-low band
-        (4.0, 0.26, 1.90),    # mid-high band
-        (7.0, 0.30, 2.80),    # top band — sits highest on cliff face
+        (-320.0, 0.18, 0.40),  # south cliff — bottom band, closest to lake
+        (-317.0, 0.22, 1.10),  # south cliff — mid-low
+        (-314.0, 0.26, 1.90),  # south cliff — mid-high
+        (-311.0, 0.30, 2.80),  # south cliff — top
+        (-2.0, 0.20, 0.70),    # mid-map cliff — lower (if present)
+        (2.0, 0.24, 1.60),     # mid-map cliff — mid
+        (6.0, 0.28, 2.50),     # mid-map cliff — upper
     ]
 
 
@@ -2269,10 +2287,12 @@ def _cliff_ledge_y_bases() -> tuple[float, ...]:
 
     T1-39 (Y04 v3) sibling fix. Previously this was an empty tuple at the
     ``enumerate(())`` call site so ``VB_Cliff_Ledges`` was a 0-polygon mesh.
-    Three shelves give the cliff readable traversable ledges at staggered
-    heights without crowding the strata bands.
+    Round-2 (CE review CORR-T1-39-01): cover BOTH the LAKE_XY south cliff
+    band (Y ~ -315) and the mid-map cliff band (Y ~ 0) so ledges materialise
+    wherever cliff terrain exists — the per-step height guard
+    (``LAKE_WATER_LEVEL + 16 < z < 300``) filters non-cliff cells.
     """
-    return (-4.5, 2.5, 9.0)
+    return (-316.5, -312.0, -4.5, 2.5, 9.0)
 
 
 def build_cliff_strata_and_talus(hm: Heightmap, talus_count: int = 165) -> int:
