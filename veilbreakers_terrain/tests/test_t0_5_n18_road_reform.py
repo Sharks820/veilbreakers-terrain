@@ -30,6 +30,7 @@ miss-flagged.
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import numpy as np
 
@@ -44,8 +45,8 @@ def _make_state_with_offset(
     cell_size: float = 1.0,
     world_origin_x: float = 0.0,
     world_origin_y: float = 0.0,
-    waypoints=None,
-):
+    waypoints: list[tuple[float, float, float]] | None = None,
+) -> Any:
     """TerrainPipelineState with non-zero world origin to expose tile_offset bugs."""
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
@@ -122,7 +123,16 @@ class TestSubDefect1ParameterShadowingRetracted:
         captured: dict[str, object] = {}
         original_astar = rn._astar_24dir
 
-        def _capture_astar(hmap, bounds, start, end, *, road_type, max_grade_pct, cost_map):
+        def _capture_astar(
+            hmap: Any,
+            bounds: Any,
+            start: Any,
+            end: Any,
+            *,
+            road_type: str,
+            max_grade_pct: float,
+            cost_map: Any,
+        ) -> list[Any]:
             captured["cost_map"] = cost_map
             return original_astar(
                 hmap, bounds, start, end,
@@ -188,7 +198,7 @@ class TestSubDefect2BridgeBoundsTileOffset:
         captured: dict[str, object] = {}
         original_detect = rn._detect_bridges
 
-        def _capture_detect(segments, **kwargs):
+        def _capture_detect(segments: list[Any], **kwargs: Any) -> list[dict[str, Any]]:
             captured["terrain_bounds"] = kwargs.get("terrain_bounds")
             return original_detect(segments, **kwargs)
 
@@ -209,6 +219,7 @@ class TestSubDefect2BridgeBoundsTileOffset:
 
         bounds = captured.get("terrain_bounds")
         assert bounds is not None, "_detect_bridges must receive non-None bounds"
+        assert isinstance(bounds, tuple)
         min_x, min_y, max_x, max_y = bounds
         # OLD bug surface: bounds containing only (0..cols, 0..rows) — pixel-space.
         # NEW contract: bounds must overlap the waypoint extent (world-space).
@@ -228,7 +239,7 @@ class TestSubDefect2BridgeBoundsTileOffset:
         captured: dict[str, object] = {}
         original_detect = rn._detect_bridges
 
-        def _capture_detect(segments, **kwargs):
+        def _capture_detect(segments: list[Any], **kwargs: Any) -> list[dict[str, Any]]:
             captured["terrain_bounds"] = kwargs.get("terrain_bounds")
             return original_detect(segments, **kwargs)
 
@@ -268,7 +279,7 @@ class TestSubDefect2BridgeBoundsTileOffset:
         captured: dict[str, object] = {}
         original_detect = rn._detect_bridges
 
-        def _capture_detect(segments, **kwargs):
+        def _capture_detect(segments: list[Any], **kwargs: Any) -> list[dict[str, Any]]:
             captured["terrain_bounds"] = kwargs.get("terrain_bounds")
             return original_detect(segments, **kwargs)
 
@@ -302,6 +313,7 @@ class TestSubDefect2BridgeBoundsTileOffset:
 
         bounds = captured.get("terrain_bounds")
         assert bounds is not None
+        assert isinstance(bounds, tuple)
         min_x, min_y, max_x, max_y = bounds
         assert min_x <= 3000.0 <= max_x and min_y <= 4000.0 <= max_y, (
             f"list-form hmap path bounds {bounds} do not enclose waypoint "
