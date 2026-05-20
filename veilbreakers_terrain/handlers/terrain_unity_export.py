@@ -1658,6 +1658,58 @@ def _write_unity_mesh_attributes(
     return sorted(attrs)
 
 
+_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M: float = 400.0
+"""Legacy LOD max-distance fallback when no profile is supplied.
+
+Mirrors the literal C# defaults in ``unity_plugin/VbTerrainTileMetadata.cs``
+(``Lod0DistanceM=50f``, ``Lod1DistanceM=150f``, ``Lod2DistanceM=400f``) so a
+descriptor emitted without a profile still produces the historic per-LOD
+distances (50/150/400 m) via the 0.25 / 0.75 / 1.0 fan-out below.
+
+T1-8 (Y04 v2-ord 25 / Cert-YES B.4.14): the descriptor builder used to
+emit NO ``lod{0,1,2}_distance_m`` keys at all, so Unity's
+``VbTerrainImporter`` always fell back to the literal C# defaults. The
+``aaa_open_world`` profile's ``lod_max_distance_m=2000.0`` was silently
+discarded — terrain detail vanished at 400 m instead of 2000 m (5x undersize).
+"""
+
+
+def _resolve_lod_max_distance_m(profile_name: Optional[str]) -> float:
+    """Resolve ``lod_max_distance_m`` for ``profile_name`` (T1-8).
+
+    Returns the profile's configured LOD-ring outer radius in metres so the
+    descriptor builder can fan out per-LOD distances via 0.25 / 0.75 / 1.0.
+
+    - ``None`` / empty / ``"default"`` / unknown name → legacy 400 m fallback
+      (matches the C# literal default in ``VbTerrainTileMetadata.cs:38``).
+    - Known profile name (e.g. ``"aaa_open_world"`` → 2000 m,
+      ``"high_fidelity"`` → 1000 m, ``"standard"`` → 500 m, ``"mobile"`` → 200 m)
+      → that profile's ``lod_max_distance_m`` after inheritance merge.
+
+    Imported lazily to avoid a hard import-time cycle between
+    ``terrain_unity_export`` (Bundle J) and ``terrain_quality_profiles``
+    (Bundle D supplement); the profile module is heavy and only needed at
+    export time.
+    """
+    if not profile_name or profile_name == "default":
+        return _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
+    try:
+        # Lazy import — see docstring.
+        from .terrain_quality_profiles import load_quality_profile
+
+        profile = load_quality_profile(profile_name)
+    except Exception:
+        # Unknown profile name, locked preset, deprecation, etc. — fall back
+        # to the legacy literal rather than fail the entire Unity export
+        # over a profile lookup. The C# importer will see the legacy
+        # 50/150/400 m fan-out (identical to its hard-coded fallback).
+        return _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
+    lod_max = getattr(profile, "lod_max_distance_m", None)
+    if lod_max is None or not isinstance(lod_max, (int, float)) or lod_max <= 0.0:
+        return _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
+    return float(lod_max)
+
+
 def _build_unity_import_descriptor(
     stack: TerrainMaskStack,
     manifest: Dict[str, Any],
@@ -1666,11 +1718,25 @@ def _build_unity_import_descriptor(
     splatmap_files: List[str],
     detail_files: Dict[str, str],
     tree_prototype_list: List[Dict[str, Any]],
+    *,
+    profile_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     height_meta = files["heightmap.raw"]
     height_shape = list(height_meta.get("shape", []))
     height_rows = int(height_shape[0]) if len(height_shape) >= 1 else 0
     height_cols = int(height_shape[1]) if len(height_shape) >= 2 else 0
+
+    # T1-8 (Y04 v2-ord 25): pull ``lod_max_distance_m`` from the active
+    # quality profile and fan it out to 3 per-LOD distance descriptor keys.
+    # ``profile_name`` may be passed explicitly by the caller or read from
+    # the manifest (which is the same value ``export_unity_manifest`` set).
+    _profile_name = profile_name or manifest.get("profile")
+    _lod_max = _resolve_lod_max_distance_m(
+        _profile_name if isinstance(_profile_name, str) else None
+    )
+    _lod0_distance_m = _lod_max * 0.25
+    _lod1_distance_m = _lod_max * 0.75
+    _lod2_distance_m = _lod_max * 1.0
 
     splatmaps: List[Dict[str, Any]] = []
     for filename in splatmap_files:
@@ -1777,6 +1843,18 @@ def _build_unity_import_descriptor(
         "water_level_unity_units": manifest.get("water_level_unity_units"),
         "has_water_surface": bool(manifest.get("has_water_surface", False)),
         "scatter_count": int(manifest.get("scatter_count", 0) or 0),
+        # T1-8 (Y04 v2-ord 25 / Cert-YES B.4.14): emit per-LOD distance
+        # descriptor keys from the resolved profile's lod_max_distance_m so
+        # Unity's VbTerrainImporter binds the configured outer radius (e.g.
+        # aaa_open_world -> 2000 m -> lod0=500/lod1=1500/lod2=2000) instead
+        # of falling through to the literal 50/150/400 m defaults in
+        # VbTerrainTileMetadata.cs. C# read path:
+        #   unity_plugin/Editor/VbTerrainImporter.cs:389-391
+        # AAA anchor: Decima and Snowdrop both ship per-LOD distance
+        # descriptors; never default-only.
+        "lod0_distance_m": float(_lod0_distance_m),
+        "lod1_distance_m": float(_lod1_distance_m),
+        "lod2_distance_m": float(_lod2_distance_m),
         "snow_line_factor": float(manifest.get("snow_line_factor", 0.0) or 0.0),
         "light_placements_file": (
             "light_placements.json"
@@ -2826,6 +2904,10 @@ def export_unity_manifest(
         splatmap_files,
         detail_files,
         tree_prototype_list,
+        # T1-8 (Y04 v2-ord 25): plumb profile through so the descriptor
+        # builder can resolve ``lod_max_distance_m`` from the active
+        # ``TerrainQualityProfile`` and fan it out to lod0/1/2_distance_m.
+        profile_name=profile,
     )
     # Record descriptor in files index before final manifest serialisation.
     # T0.5-8 (ZZ4-A6 R3): allow_nan=False on the two remaining json.dumps

@@ -33,6 +33,16 @@ namespace VeilBreakers.TerrainImport
         public bool WaterPresent;
         public float WaterSurfaceElevationM;
         public int ScatterCount;
+        // T1-8 (Y04 v2-ord 25): Python now emits per-LOD distance keys in
+        // unity_import_descriptor.json from the active TerrainQualityProfile's
+        // lod_max_distance_m (fan-out 0.25 / 0.75 / 1.0). VbTerrainImporter
+        // binds them at import time
+        // (unity_plugin/Editor/VbTerrainImporter.cs:389-391). These literal
+        // 50/150/400f defaults are kept as defense-in-depth: if the JSON keys
+        // ever go missing (legacy bundle, partial migration, third-party
+        // re-export), the runtime still picks up the historic distances
+        // instead of zero-radius LOD rings. The Python legacy fallback in
+        // terrain_unity_export._resolve_lod_max_distance_m mirrors these.
         public float Lod0DistanceM = 50f;
         public float Lod1DistanceM = 150f;
         public float Lod2DistanceM = 400f;
