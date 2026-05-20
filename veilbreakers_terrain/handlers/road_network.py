@@ -1452,12 +1452,22 @@ def compute_road_network(
 
     # Auto-apply water cost penalty when water_level is supplied.
     # Routes around open water; adds 1e6 cost so A* bridges or bypasses.
+    #
+    # T0-5 round-2 (CE review PR103-C-01): the prior code unconditionally
+    # rebound the local ``water_mask`` from ``hmap < water_level``, silently
+    # overwriting any caller-supplied ``water_mask`` parameter (the exact
+    # 'parameter shadowing' bug the audit flagged at MASTER_FINAL.md:826).
+    # Renamed the local to ``auto_water_mask`` and gated the named-param
+    # rebind behind ``water_mask is None`` so callers can pass an explicit
+    # water mask without losing it.
     if water_level is not None and hmap is not None and hasattr(hmap, 'shape'):
         import numpy as np
-        water_mask = hmap < float(water_level)
-        if water_mask.any():
+        auto_water_mask = hmap < float(water_level)
+        if water_mask is None:
+            water_mask = auto_water_mask
+        if auto_water_mask.any():
             water_cost = np.zeros(hmap.shape, dtype=np.float32)
-            water_cost[water_mask] = 1e6
+            water_cost[auto_water_mask] = 1e6
             if cost_map is not None and hasattr(cost_map, 'shape') and cost_map.shape == water_cost.shape:
                 cost_map = cost_map + water_cost
             else:
