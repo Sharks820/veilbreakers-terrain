@@ -30,22 +30,57 @@ When this test fails:
 This test deliberately uses AST inspection rather than running Blender so it
 stays in the headless local 4-gate (pyright + callable_census + guardrail +
 pytest) where the rest of the regression net lives.
+
+Sentinel design (CHECKPOINT-OPUS-ULTRA V6, 2026-05-20)
+------------------------------------------------------
+
+The "site-count" sentinel is intentionally a **floor**, not an
+exact-equality assertion: legitimate new ``bmesh.new()`` sites added in
+later work would silently break an ``== N`` test even though the per-site
+try/finally guard above continues to hold. Instead:
+
+* :func:`test_total_bmesh_new_site_count_meets_floor` asserts
+  ``actual >= _EXPECTED_SITE_COUNT`` so silent **removal** of sites still
+  fails loudly (regression floor).
+* :func:`test_total_bmesh_new_site_count_drift_warning` issues a
+  ``UserWarning`` (non-failing) when growth exceeds ``+5`` so unusual
+  spikes still surface in CI logs without breaking the build. Bumping the
+  expected floor when intentional new sites land is a trivial single-line
+  literal edit.
 """
 
 from __future__ import annotations
 
 import ast
+import warnings
 from pathlib import Path
 
 import pytest
 
-HANDLERS_DIR = Path(__file__).resolve().parent.parent / "handlers"
+from veilbreakers_terrain.tests._ast_helpers import (
+    HANDLER_DIR,
+    iter_handler_files,
+)
+
+# Module-level alias retained so existing references resolve without a
+# search-and-replace sweep — canonical source is ``_ast_helpers.HANDLER_DIR``.
+HANDLERS_DIR = HANDLER_DIR
 
 # Sites where ``bm`` is intentionally returned to the caller (ownership
 # transfer) so no ``finally: bm.free()`` is expected at the construction site.
 # Format: (relative_file_path, lineno, variable_name). Add new entries here
 # with a 1-line justification when you add a new ownership-transfer site.
 RETURN_OWNERSHIP_TRANSFER_SITES: set[tuple[str, int, str]] = set()
+
+# Floor for the total ``bmesh.new()`` site count across handlers. Set by
+# Wave-ZZ-3 inventory (28 sites across 6 files). Bump if intentional new
+# sites are added — but never decrement: silent removal is a regression
+# the floor exists to catch.
+_EXPECTED_SITE_COUNT = 28
+
+# How many sites above the floor should fire a soft (warning-only) drift
+# notice. Keeps unexpected spikes visible in CI without breaking the build.
+_SITE_COUNT_DRIFT_THRESHOLD = 5
 
 
 def _is_bmesh_new(node: ast.AST) -> bool:
@@ -107,9 +142,12 @@ def _collect_sites(path: Path) -> list[tuple[int, str, bool]]:
 
 
 # Discover handler modules at collection time so each gets its own test ID.
-_HANDLER_FILES = sorted(
-    p for p in HANDLERS_DIR.rglob("*.py") if p.name != "__init__.py"
-)
+# Uses the shared ``iter_handler_files()`` helper for the canonical handlers
+# inventory (top-level ``*.py`` minus ``__init__.py``). ``handlers/`` has no
+# subpackages today, so the previous ``rglob`` reduces to the same set —
+# verified at PR time. If subpackages are added later, switch back to an
+# explicit recursive walk here.
+_HANDLER_FILES = iter_handler_files()
 
 
 @pytest.mark.parametrize(
@@ -148,16 +186,70 @@ def test_every_bmesh_new_has_try_finally_free(handler_path: Path) -> None:
         pytest.fail(msg)
 
 
-def test_total_bmesh_new_site_count_is_known() -> None:
-    """Headline count drift sentinel — fails loudly when sites are added/removed.
+def test_total_bmesh_new_site_count_meets_floor() -> None:
+    """Headline site-count floor — fails loudly when sites are silently removed.
 
-    If this number changes, the Y04 anchor and any related audit references
-    should be updated alongside the new value so the audit trail stays honest.
+    CHECKPOINT-OPUS-ULTRA V6 (2026-05-20) replaced the previous exact-equality
+    sentinel (``actual == 28``) with a one-sided floor. Rationale: an
+    exact-equality test breaks every time a *legitimate* new ``bmesh.new()``
+    site is added even though the per-site try/finally guard above continues
+    to hold, conflating "deliberate growth" with "discipline regression".
+
+    A floor (``actual >= _EXPECTED_SITE_COUNT``) still catches the dangerous
+    direction — silent **removal** of a site that the per-site test relied
+    on — while letting deliberate additions land without spurious churn.
+    Unexpected growth is still surfaced via the drift-warning companion test
+    below.
+
+    Bumping the floor: edit ``_EXPECTED_SITE_COUNT`` AND update the Y04 /
+    FIX_PATTERN_v1 audit references in the module docstring so the trail
+    stays honest.
     """
-    expected = 28
     actual = sum(len(_collect_sites(p)) for p in _HANDLER_FILES)
-    assert actual == expected, (
-        f"bmesh.new() site count changed: expected {expected}, found {actual}. "
-        f"If this drift is intentional, update the `expected` literal in this "
-        f"test and the Y04/FIX_PATTERN audit references."
+    assert actual >= _EXPECTED_SITE_COUNT, (
+        f"bmesh.new() site count regressed: expected at least "
+        f"{_EXPECTED_SITE_COUNT}, found {actual}. Silent removal of a "
+        f"bmesh.new() site is suspicious — verify the site was intentionally "
+        f"deleted (not refactored into a missing-coverage shape) and, if so, "
+        f"lower `_EXPECTED_SITE_COUNT` in this test plus update the Y04 / "
+        f"FIX_PATTERN_v1 audit references."
     )
+
+
+def test_total_bmesh_new_site_count_drift_warning() -> None:
+    """Soft drift notice — warns (does not fail) on unexpected site-count growth.
+
+    Companion to :func:`test_total_bmesh_new_site_count_meets_floor`. Issues
+    a ``UserWarning`` (which pytest surfaces in the run summary) when
+    ``actual > _EXPECTED_SITE_COUNT + _SITE_COUNT_DRIFT_THRESHOLD``. This
+    keeps unexpected growth visible without breaking the build, so a
+    contributor adding (say) 6 new sites in one PR gets a CI-visible nudge
+    to:
+
+    1. Verify each new site has the canonical ``try: ... finally:
+       <var>.free()`` wrapper (the per-site parametrized test enforces this
+       anyway, but the nudge surfaces the count change at a glance).
+    2. Bump ``_EXPECTED_SITE_COUNT`` to the new total so the warning quiets
+       and the floor moves up.
+
+    Designed to never fail — the assertion is a no-op. The visible side
+    effect is the emitted warning, which CI logs preserve.
+    """
+    actual = sum(len(_collect_sites(p)) for p in _HANDLER_FILES)
+    drift = actual - _EXPECTED_SITE_COUNT
+    if drift > _SITE_COUNT_DRIFT_THRESHOLD:
+        warnings.warn(
+            f"bmesh.new() site count drifted {drift:+d} above the recorded "
+            f"floor ({_EXPECTED_SITE_COUNT} -> {actual}). This is a "
+            f"non-failing notice; bump `_EXPECTED_SITE_COUNT` in "
+            f"test_bmesh_release_discipline.py once the growth is verified "
+            f"to be intentional (and confirm each new site has its "
+            f"try/finally(free) wrapper — the per-site test above already "
+            f"checks this).",
+            UserWarning,
+            stacklevel=2,
+        )
+    # Intentional no-op assertion: this test exists to emit (or skip) a
+    # warning, never to fail. Asserting True keeps pytest reporting it as a
+    # green test with the warning attached to the run summary.
+    assert True
