@@ -800,7 +800,9 @@ if __name__ == "__main__":
         suffix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
         tmp = out_path.with_name(f".{out_path.name}.{suffix}.tmp")
         with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(manifest, fh, indent=2, sort_keys=True)
+            # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — loud-at-source for
+            # procedural-grass scatter manifest writer (Unity-consumed).
+            json.dump(manifest, fh, indent=2, sort_keys=True, allow_nan=False)
         os.replace(tmp, out_path)
         return out_path
 
