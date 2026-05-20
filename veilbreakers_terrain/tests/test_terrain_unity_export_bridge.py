@@ -703,7 +703,12 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         "CreateSidecarReferences",
         "VbTerrainSidecarReference",
         "AssetDatabase.LoadAssetAtPath<TerrainData>",
-        "Shader.Find(\"HDRP/TerrainLit\")",
+        # T1-1 fix (Y04 v3, PR #101): HDRP shader fallbacks were silently
+        # substituted for URP terrain shaders, producing gray-flat terrain in
+        # URP-only builds (project committed to URP 17.3 per memory
+        # `project_urp_commitment_2026_05_07`). The canonical resolution
+        # target is now `Universal Render Pipeline/Lit`.
+        "Shader.Find(\"Universal Render Pipeline/Lit\")",
         "TryAppendSupplementalFaceTriangles",
         "TryEarClipSupplementalPolygon",
         "mesh.SetUVs(1, dripMask)",
