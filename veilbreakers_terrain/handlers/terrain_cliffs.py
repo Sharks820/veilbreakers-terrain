@@ -2448,17 +2448,20 @@ def insert_hero_cliff_meshes(
             if mesh_to_build is not None and mesh_to_build.get("vertices"):
                 mesh_name = f"HeroCliff_{cliff.cliff_id}"
                 bmesh_data = _bpy.data.meshes.new(mesh_name)
+                # T0-3.5: try/finally guarantees bm.free() on every exit path.
                 bm = _bmesh.new()
-                for vert_data in mesh_to_build["vertices"]:
-                    bm.verts.new(vert_data)
-                bm.verts.ensure_lookup_table()
-                for face_data in mesh_to_build.get("faces", []):
-                    try:
-                        bm.faces.new([bm.verts[vi] for vi in face_data])
-                    except (ValueError, IndexError):
-                        pass
-                bm.to_mesh(bmesh_data)
-                bm.free()
+                try:
+                    for vert_data in mesh_to_build["vertices"]:
+                        bm.verts.new(vert_data)
+                    bm.verts.ensure_lookup_table()
+                    for face_data in mesh_to_build.get("faces", []):
+                        try:
+                            bm.faces.new([bm.verts[vi] for vi in face_data])
+                        except (ValueError, IndexError):
+                            pass
+                    bm.to_mesh(bmesh_data)
+                finally:
+                    bm.free()
                 bmesh_data.update()
 
                 cliff_obj = _bpy.data.objects.new(mesh_name, bmesh_data)
