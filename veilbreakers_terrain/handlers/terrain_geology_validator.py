@@ -657,9 +657,12 @@ def register_bundle_i_passes() -> None:
     from .terrain_pipeline import TerrainPassController
     from .terrain_semantics import PassDefinition
 
+    # T1-3 (Y04 v2-ord 22): terrain_glacial dropped from this bundle's
+    # PassDefinition tuple — canonical scheduler-bound entry is registered
+    # via terrain_glacial.register_glacial_pass (Bundle I-glacial in
+    # terrain_master_registrar.py). Re-import here would dual-register.
     from . import (
         coastline as _coastline,
-        terrain_glacial as _glacial,
         terrain_karst as _karst,
         terrain_stratigraphy as _strat,
         terrain_wind_erosion as _wind,
