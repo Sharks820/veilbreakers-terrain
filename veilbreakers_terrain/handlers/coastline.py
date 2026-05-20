@@ -1174,12 +1174,16 @@ def apply_coastal_erosion(
     fetch_scale_reference = max(1.0, float(max(h.shape)) * 0.25)
     global_fetch_factor = float(np.log1p(max_fetch / fetch_scale_reference))
     base_erosion = base_retreat_m * wave_energy_factor * global_fetch_factor
-    # Cap absolute single-step retreat at 12 m so a freak storm cannot
-    # blow geometry away in one pass, but allow it to be reached only by
-    # genuine extremes (wave_energy >> 4 and full fetch) — every coast
-    # is no longer pinned to the cap.
-    base_erosion = float(np.clip(base_erosion, 0.0, 12.0))
     erosion_rate = base_erosion * fetch_energy * exposure * tidal_amp
+    # T1-16 round-2 (CodeRabbit Major): cap absolute single-step retreat
+    # at 12 m AFTER the per-cell amplifiers (fetch_energy * exposure *
+    # tidal_amp) are applied. The round-1 cap was applied to
+    # ``base_erosion`` BEFORE multiplication, which let the four
+    # amplifiers compound past the 12 m ceiling on storm-cells with
+    # high fetch_energy + exposure + tidal_amp. The intent of T1-16
+    # (cap freak-storm retreat at 12 m / step) requires capping the
+    # final per-cell value.
+    erosion_rate = np.clip(erosion_rate, 0.0, 12.0)
 
     delta = -erosion_rate * above * dt
 

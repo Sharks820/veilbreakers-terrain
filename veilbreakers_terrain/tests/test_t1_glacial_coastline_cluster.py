@@ -386,21 +386,13 @@ def _write_uint16_raw_heightmap(
     path.write_bytes(np.ascontiguousarray(arr).tobytes())
 
 
-def test_t1_17_neighbor_edge_reader_handles_raw_uint16(tmp_path: Path) -> None:
-    """End-to-end: when ``handle_generate_world_terrain`` stitches two
-    neighbor tiles, the seam-blending code path must successfully read
-    the neighbor's uint16 raw heightmap and populate
-    ``neighbor_edges``.
+def test_t1_17_neighbor_edge_reader_raw_byte_round_trip(tmp_path: Path) -> None:
+    """Raw-byte-layer test: writer + reader produce byte-identical uint16.
 
-    The previous ``np.load`` call raised ``ValueError`` on every
-    invocation; this test would fail under the old code because the
-    broad ``except`` swallowed the error and ``neighbor_edges`` stayed
-    empty.
+    Validates ONLY the storage-layer round-trip (file bytes → np.fromfile →
+    reshape → flipud). Dequantization to metres is verified separately in
+    ``test_t1_17_neighbor_edge_reader_dequantizes_to_metres``.
     """
-    # Use the helper inside the patched site directly — building a full
-    # world-terrain run requires Blender bpy which is not available in
-    # CI. Replicate the reader by invoking the same code path's logic
-    # (np.fromfile + reshape + flipud + slice).
     resolution = 33
     raw_path = tmp_path / "tile_0_0_heightmap.raw"
     _write_uint16_raw_heightmap(raw_path, resolution=resolution, fill=12345)
@@ -411,14 +403,59 @@ def test_t1_17_neighbor_edge_reader_handles_raw_uint16(tmp_path: Path) -> None:
         f"{resolution * resolution}"
     )
     arr = np.flipud(raw.reshape((resolution, resolution)))
-    west_edge = arr[:, -1].astype(np.float64).tolist()
-    north_edge = arr[-1, :].astype(np.float64).tolist()
+    # Constant-fill: every raw value should equal 12345 (uint16 byte-level).
+    assert arr.dtype == np.uint16
+    np.testing.assert_array_equal(arr, np.full_like(arr, 12345))
 
-    assert len(west_edge) == resolution
-    assert len(north_edge) == resolution
-    # Constant-fill: every value should equal 12345.
-    np.testing.assert_array_equal(west_edge, [12345.0] * resolution)
-    np.testing.assert_array_equal(north_edge, [12345.0] * resolution)
+
+def test_t1_17_neighbor_edge_reader_dequantizes_to_metres(tmp_path: Path) -> None:
+    """Round-4 CodeRabbit CRITICAL fix: the production ``_read_neighbor_heightmap``
+    helper inside ``handle_generate_world_terrain`` dequantizes the raw uint16
+    values back to metres using the neighbor tile's stored ``height_range``.
+
+    Verifies the dequantization formula matches the writer's normalisation:
+    writer normalises ``(hmap - hmin) / (hmax - hmin)`` to [0, 1] then
+    multiplies by 65535. Reader inverts: ``(arr / 65535) * (hmax - hmin) + hmin``.
+
+    Pre-round-4 the reader returned raw uint16 values [0, 65535] directly
+    to seam locking which expected metres — silent corruption at every
+    tile boundary. This test pins the dequantization contract.
+    """
+    from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
+
+    resolution = 17
+    # Build a heightmap with KNOWN values in [50.0, 200.0] m range.
+    heightmap = np.linspace(50.0, 200.0, resolution * resolution).reshape(
+        (resolution, resolution)
+    )
+    height_range = (50.0, 200.0)
+    raw_bytes = _export_heightmap_raw(
+        heightmap, flip_vertical=True, value_range=height_range
+    )
+    raw_path = tmp_path / "rt_heightmap.raw"
+    raw_path.write_bytes(raw_bytes)
+
+    # Replicate the production reader's dequantization logic verbatim
+    # (since _read_neighbor_heightmap is a nested closure not directly
+    # importable, this mirrors the inline math at environment.py round-4):
+    raw = np.fromfile(raw_path, dtype="<u2")
+    arr = np.flipud(raw.reshape((resolution, resolution)))
+    hmin, hmax = float(height_range[0]), float(height_range[1])
+    arr_metres = (arr.astype(np.float64) / 65535.0) * (hmax - hmin) + hmin
+
+    # Round-trip must be within uint16 quantisation (~1.5e-5 relative
+    # for a 150 m range = ~2.3 mm absolute).
+    np.testing.assert_allclose(arr_metres, heightmap, atol=3e-3, rtol=0.0)
+
+    # And explicitly assert values are in METRE range, not uint16 range.
+    assert 50.0 <= arr_metres.min() <= 60.0, (
+        f"T1-17 dequantization: min {arr_metres.min()} should be ≈hmin (50.0); "
+        "if this is >1000 the reader is returning raw uint16 values, not metres."
+    )
+    assert 190.0 <= arr_metres.max() <= 200.0, (
+        f"T1-17 dequantization: max {arr_metres.max()} should be ≈hmax (200.0); "
+        "if this is >60000 the reader is returning raw uint16 values, not metres."
+    )
 
 
 def test_t1_17_np_load_raw_anchor_replaced_in_source() -> None:
