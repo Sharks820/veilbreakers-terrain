@@ -48,10 +48,13 @@ All functions are pure Python with math-only dependencies (no bpy/bmesh).
 
 from __future__ import annotations
 
+import logging
 import math
 from functools import lru_cache, wraps
 from collections.abc import Callable, Iterable
 from typing import Any, Protocol, TypeAlias
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Mesh result type alias
@@ -17552,8 +17555,30 @@ def generate_rope_bridge_mesh(
         def _sag_at(z: float, multiplier: float = 1.0) -> float:
             return float(_np.interp(z, _curve_z, _curve_y)) * multiplier
 
-    except Exception:  # pragma: no cover - fallback for stripped sim deps
+    except ImportError:  # pragma: no cover - fallback for stripped sim deps
         sag_solver = "fallback_sine"
+
+        def _sag_at(z: float, multiplier: float = 1.0) -> float:
+            t = (z + span / 2.0) / span
+            return -math.sin(t * math.pi) * span * sag_factor * multiplier
+    except (ValueError, RuntimeError) as exc:
+        # REL-PR97-CASCADE-01 (CHECKPOINT-OPUS-ULTRA hotfix): PR #97's catenary
+        # fix (T1-41) replaced the silent ``a = h * 50`` fallback with a loud
+        # ``raise RuntimeError(...)`` so brentq solver failures stop hiding
+        # behind impossibly-large sag values. Catching bare ``Exception`` here
+        # quietly swallowed that raise and degraded back to the sine fallback
+        # with no observability — defeating the loud-fail intent. Narrow to
+        # the catenary solver's documented raises (ValueError = rope too short,
+        # RuntimeError = brentq bracket failure) AND surface the failure via
+        # a logger warning. We still fall back to the sine sag because the
+        # bridge-mesh API must produce *some* curve, but the failure is now
+        # named and traceable instead of invisible.
+        logger.warning(
+            "catenary solve failed (%s): falling back to sine approximation "
+            "for span=%s sag_factor=%s",
+            exc, span, sag_factor,
+        )
+        sag_solver = "fallback_sine_after_solver_error"
 
         def _sag_at(z: float, multiplier: float = 1.0) -> float:
             t = (z + span / 2.0) / span

@@ -1415,6 +1415,67 @@ def mesh_from_spec(
     else:
         num_slots = 1
 
+    # ADV-01 (CHECKPOINT-OPUS-ULTRA hotfix): if the caller supplies
+    # ``material_ids`` we MUST guarantee a 1:1 face↔id mapping at the time
+    # we attempt ``poly.material_index = mid``. The Blender path runs
+    # ``bm.faces.new(...)`` per face, which silently drops degenerate /
+    # duplicate-vertex faces (line ~1456 below). When that drop count is
+    # non-zero the post-``bm.to_mesh`` polygon count diverges from the
+    # caller's id-array length, and the previous fix at PR #104 would
+    # SILENTLY SKIP the entire ``poly.material_index`` assignment loop —
+    # leaving every face on slot 0 and reproducing the original
+    # multi-material-as-single-material bug PR #104 was supposed to close.
+    # Detect the divergence here (using the same dedup/degeneracy logic
+    # the bm path uses) and raise loudly BEFORE the Blender split, so
+    # both headless tests and the live Blender pipeline see the failure.
+    if material_ids:
+        _vert_dedup_pre: dict[tuple[int, int, int], int] = {}
+        _remap_pre: list[int] = []
+        for v in verts:
+            try:
+                key = (
+                    round(v[0] / weld_tolerance),
+                    round(v[1] / weld_tolerance),
+                    round(v[2] / weld_tolerance),
+                )
+            except (TypeError, IndexError):
+                # Malformed vertex — assign a unique key so it doesn't
+                # accidentally dedup against a well-formed one.
+                key = (-len(_vert_dedup_pre) - 1, 0, 0)
+            if key in _vert_dedup_pre:
+                _remap_pre.append(_vert_dedup_pre[key])
+            else:
+                idx = len(_vert_dedup_pre)
+                _vert_dedup_pre[key] = idx
+                _remap_pre.append(idx)
+        degenerate_face_count = 0
+        for face_indices in faces:
+            try:
+                remapped = [_remap_pre[i] for i in face_indices]
+            except (IndexError, TypeError):
+                degenerate_face_count += 1
+                continue
+            if len(set(remapped)) < 3:
+                degenerate_face_count += 1
+        surviving_face_count = len(faces) - degenerate_face_count
+        if len(material_ids) != surviving_face_count:
+            raise RuntimeError(
+                f"mesh_from_spec: material_id count ({len(material_ids)}) "
+                f"does not match polygon count ({surviving_face_count}) "
+                f"after vertex weld / degenerate-face dedup. Count-changing "
+                f"causes inside the bridge: (1) degenerate faces dropped "
+                f"during vertex weld (fewer than 3 unique remapped indices "
+                f"per face); (2) BMesh duplicate-face elimination when two "
+                f"faces collapse to the same vertex set after weld; "
+                f"(3) bm.faces.new() returning ``None`` when fed a face "
+                f"that BMesh refuses (also counted as degenerate). NB: "
+                f"``bm.to_mesh()`` reorders polygons but does NOT change "
+                f"the count — count mismatch is always a drop, not a "
+                f"reorder. (input_faces={len(faces)}, degenerate_dropped="
+                f"{degenerate_face_count}). Per-face material_index "
+                f"assignment would silently corrupt material slots."
+            )
+
     # -- Fallback for non-Blender environments (testing) --
     if not _HAS_BPY or not hasattr(bpy, "data"):
         return {
@@ -1530,7 +1591,29 @@ def mesh_from_spec(
         # so the slot count is actually load-bearing.
         for _ in range(num_slots):
             mesh_data.materials.append(None)
-        if material_ids and len(material_ids) == len(mesh_data.polygons):
+        # ADV-01 (CHECKPOINT-OPUS-ULTRA hotfix): the pre-bm degenerate-face
+        # gate above already raises when ``len(material_ids)`` would not
+        # match the surviving polygon count. Keep a defense-in-depth check
+        # here in case bm dedups in a way the pre-check missed (e.g. duplicate
+        # face-vertex sets producing a single polygon after to_mesh). Either
+        # way the silent-skip bug from PR #104 is closed.
+        if material_ids:
+            if len(material_ids) != len(mesh_data.polygons):
+                raise RuntimeError(
+                    f"mesh_from_spec: material_id count ({len(material_ids)}) "
+                    f"does not match polygon count ({len(mesh_data.polygons)}). "
+                    "Count-changing causes inside the bridge: "
+                    "(1) degenerate faces dropped by bm.faces.new() "
+                    "(face has fewer than 3 unique vertices after weld); "
+                    "(2) BMesh duplicate-face elimination at bm.to_mesh() "
+                    "(two faces with the same vertex set collapse into one); "
+                    "(3) BMesh dedup of faces sharing identical vertex "
+                    "loops (different winding, same indices). NB: "
+                    "bm.to_mesh() reorders polygons but does NOT change "
+                    "count — count mismatch is always a drop, not a "
+                    "reorder. Per-face material_index assignment would "
+                    "silently corrupt material slots."
+                )
             for poly, mid in zip(mesh_data.polygons, material_ids):
                 poly.material_index = int(mid)
     finally:

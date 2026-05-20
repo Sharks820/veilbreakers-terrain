@@ -594,7 +594,13 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     # at the Unity boundary per T0-4.5 / T0.5-4).
     "slope": "rad",
     "rotation_y_rad": "rad",
-    "strata_orientation": "rad",
+    # UT-C1 (CHECKPOINT-OPUS-ULTRA hotfix, T0.5-1b): the strata_orientation
+    # channel is a (H, W, 3) direction-cosine field (nx, ny, nz in [-1, 1])
+    # emitted by compute_strata_orientation, NOT radians. The previous "rad"
+    # tag was a Shape-A bug class (same shape as the flow_direction tag bug
+    # Codex caught earlier). The new tag "unit_normal_xyz" matches the
+    # ChannelInfo in _channels.py.
+    "strata_orientation": "unit_normal_xyz",
     # NB: flow_direction is D8 int8 indices (-1..7) emitted by
     # priority_flood_d8 in _water_network.pass_hydrology — NOT radians.
     # The angular form (LipCandidate.flow_direction_rad) is a derived

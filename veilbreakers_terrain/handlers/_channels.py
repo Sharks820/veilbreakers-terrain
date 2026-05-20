@@ -43,7 +43,7 @@ from typing import Final, FrozenSet
 class ChannelInfo:
     """Per-channel metadata bound to a ``Channel`` enum member."""
 
-    unit: str  # canonical unit: 'm' | 'rad' | 'deg' | 'dimensionless' | 'count' | 'id'
+    unit: str  # canonical unit: 'm' | 'rad' | 'deg' | 'dimensionless' | 'count' | 'id' | 'unit_normal_xyz'
     description: str
 
 
@@ -67,7 +67,15 @@ class Channel(Enum):
 
     # --- Rotation / angular (radians) ---
     SLOPE_RAD = "slope"
-    STRATA_ORIENTATION_RAD = "strata_orientation"
+    # UT-C1 (CHECKPOINT-OPUS-ULTRA hotfix, T0.5-1b): the producer at
+    # ``terrain_stratigraphy.compute_strata_orientation`` writes (H, W, 3)
+    # direction-cosine vectors ``(nx, ny, nz)`` in ``[-1, 1]`` — NOT
+    # radians. The enum name (``STRATA_ORIENTATION_XYZ``) and its
+    # ``ChannelInfo.unit`` now match the producer; the string value
+    # ``"strata_orientation"`` is unchanged so the mask-stack accessor
+    # remains backwards-compatible (consumers already expect direction
+    # cosines).
+    STRATA_ORIENTATION_XYZ = "strata_orientation"
     ROTATION_Y_RAD = "rotation_y_rad"
 
     # --- D8 direction indices (int8 -1..7, NOT radians) ---
@@ -160,8 +168,9 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
     ),
     # Rotation / angular
     Channel.SLOPE_RAD: ChannelInfo("rad", "Slope angle, radians"),
-    Channel.STRATA_ORIENTATION_RAD: ChannelInfo(
-        "rad", "Strata dip direction, radians"
+    Channel.STRATA_ORIENTATION_XYZ: ChannelInfo(
+        "unit_normal_xyz",
+        "Strata dip direction, 3D unit-normal vector (nx, ny, nz) in [-1, 1]",
     ),
     Channel.ROTATION_Y_RAD: ChannelInfo(
         "rad", "Per-instance Y-axis rotation, radians (Python-side)"
@@ -247,10 +256,26 @@ _BY_NAME: Final[dict[str, Channel]] = {ch.value: ch for ch in Channel}
 # Convenience frozensets per unit class — useful for callers that need to
 # enumerate all meters-channels, all radians-channels, etc. at boundary
 # validation time.
+#
+# UT-C1 round-2 (codex P1 + copilot threads on PR #113): derive the
+# unit-key set from the actual ``_CHANNEL_INFO`` values rather than a
+# hand-listed allow-list. The previous hard-coded set
+# ``{"m", "rad", "deg", "dimensionless", "id", "count"}`` silently
+# excluded any new unit a ``ChannelInfo`` introduced — e.g. the
+# ``"unit_normal_xyz"`` unit added for ``Channel.STRATA_ORIENTATION_XYZ``
+# (3D unit-normal vectors, NOT radians). A consumer asking
+# ``CHANNELS_BY_UNIT.get("unit_normal_xyz")`` would have received
+# ``None`` instead of the singleton ``{Channel.STRATA_ORIENTATION_XYZ}``,
+# defeating the per-unit boundary validation that this table exists to
+# enable. Deriving from ``_CHANNEL_INFO`` makes future unit additions
+# automatically participate without a paired allow-list edit.
+#
+# Currently registered units (sorted for stable iteration): ``count``,
+# ``deg``, ``dimensionless``, ``m``, ``rad``, ``unit_normal_xyz``.
 
 CHANNELS_BY_UNIT: Final[dict[str, FrozenSet[Channel]]] = {
     unit: frozenset(ch for ch, info in _CHANNEL_INFO.items() if info.unit == unit)
-    for unit in {"m", "rad", "deg", "dimensionless", "id", "count"}
+    for unit in sorted({info.unit for info in _CHANNEL_INFO.values()})
 }
 
 # Sanity: every enum member must have a corresponding ChannelInfo entry.

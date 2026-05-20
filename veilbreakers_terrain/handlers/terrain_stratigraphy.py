@@ -949,7 +949,18 @@ def _default_strat_stack_from_hints(
             spacing = 30.0
         layers: list[StratigraphyLayer] = []
         for i, mat in enumerate(strata_materials):
-            strike = float(rng.uniform(0.0, np.pi))
+            # ADV-02 (CHECKPOINT-OPUS-ULTRA hotfix): consume the legacy
+            # ``rng.uniform(0.0, np.pi)`` draw to preserve RNG state /
+            # downstream determinism, but DO NOT use it as the strike.
+            # The old code stored this uniform draw in ``strike`` and then
+            # passed it nowhere (Mapping branch overwrote it; str branch
+            # never threaded it). Either way the value flowed into the
+            # void. Reset ``strike`` to the NaN sentinel so the canonical
+            # derived value (azimuth+pi/2) is used unless the user mapping
+            # explicitly supplies ``strike_angle_rad``.
+            _legacy_strike_rng_consume = float(rng.uniform(0.0, np.pi))
+            _ = _legacy_strike_rng_consume  # silence unused warnings
+            strike = float("nan")
             if isinstance(mat, str):
                 name = mat
                 entry = _MATERIAL_TABLE.get(name.lower())
@@ -972,21 +983,39 @@ def _default_strat_stack_from_hints(
                                     entry[3] if entry else (0.5, 0.5, 0.5))
                 color_rgb = _rgb_triplet(raw_rgb)
                 thickness = _to_float(mat_mapping.get("thickness_m", spacing))
-                strike    = _to_float(mat_mapping.get("strike_angle_rad", 0.0))
+                # ADV-02 (CHECKPOINT-OPUS-ULTRA hotfix, mirrors T1-26 fix in
+                # ``_layer_from_mapping``): preserve the user-supplied
+                # ``strike_angle_rad`` via the NaN sentinel — a finite value
+                # flows into ``StratigraphyLayer`` so ``__post_init__`` either
+                # validates it against the derived (azimuth+pi/2) value or
+                # raises on contradiction. Missing key means "derive from
+                # azimuth" (sentinel = NaN). The previous code captured
+                # ``strike`` into a local variable but never threaded it into
+                # the layer constructor — the user's strike was silently
+                # discarded, exactly mirroring the bug T1-26 closed in the
+                # sibling ``_layer_from_mapping`` branch.
+                if "strike_angle_rad" in mat_mapping:
+                    strike = _to_float(mat_mapping["strike_angle_rad"])
+                else:
+                    strike = float("nan")
             else:
                 continue
 
             # ±5° dip noise per layer (geologically plausible)
             dip_noise = float(rng.uniform(-dip_variation, dip_variation))
 
-            # T1-26: strike_angle_rad omitted — __post_init__ derives it from
-            # azimuth_rad (strike = azimuth + pi/2 mod 2pi). The ``strike``
-            # local above is intentionally NOT threaded into the layer: the
-            # old code supplied an independently-drawn value that was silently
-            # overwritten by __post_init__, so geological intent never reached
-            # the layer. Keep ``strike`` bound for any downstream debug hooks
-            # but route the canonical value through the derivation path.
-            _ = strike  # silence unused warnings; canonical strike via azimuth
+            # ADV-02 (CHECKPOINT-OPUS-ULTRA hotfix): thread ``strike`` into
+            # the constructor. If the caller passed a finite strike via the
+            # mat_mapping path, __post_init__ enforces the contradiction
+            # check against azimuth+pi/2. If strike is NaN (default), the
+            # canonical derived value is used. Either way, no silent
+            # discard. Note: in the str-branch (where ``mat`` is a string
+            # name), ``strike`` was assigned ``rng.uniform(0, pi)`` above —
+            # which is NOT user-supplied geological intent but rather a
+            # legacy RNG draw with no source. We carry the NaN-sentinel
+            # discipline forward by re-deriving from azimuth for that
+            # branch (i.e. only thread an explicit ``strike`` when the
+            # user mapping included a ``strike_angle_rad`` key).
             layers.append(
                 StratigraphyLayer(
                     layer_id=name,
@@ -997,6 +1026,7 @@ def _default_strat_stack_from_hints(
                     rock_type=rock_type,
                     age_ma=age_ma,
                     color_rgb=color_rgb,
+                    strike_angle_rad=strike,
                 )
             )
         if layers:

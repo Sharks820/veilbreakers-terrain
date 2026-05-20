@@ -84,12 +84,20 @@ def test_every_channel_has_channel_info() -> None:
 
 def test_canonical_unit_set_is_closed() -> None:
     """The unit string must be one of the closed set {m, rad, deg,
-    dimensionless, id, count}. Any other unit is a typo or a new unit
-    class that needs explicit consideration.
+    dimensionless, id, count, unit_normal_xyz}. Any other unit is a typo
+    or a new unit class that needs explicit consideration.
+
+    UT-C1 (CHECKPOINT-OPUS-ULTRA hotfix): added ``unit_normal_xyz`` for
+    the strata_orientation channel which is a (H, W, 3) direction-cosine
+    field, not radians. Adding the unit explicitly here keeps the
+    closed-set invariant intact while welcoming the new class.
     """
     from veilbreakers_terrain.handlers._channels import Channel
 
-    allowed = {"m", "rad", "deg", "dimensionless", "id", "count"}
+    allowed = {
+        "m", "rad", "deg", "dimensionless", "id", "count",
+        "unit_normal_xyz",
+    }
     for ch in Channel:
         assert ch.info.unit in allowed, (
             f"Channel.{ch.name}.info.unit = {ch.info.unit!r} is not in the "
