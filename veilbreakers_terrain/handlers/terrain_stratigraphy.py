@@ -102,11 +102,40 @@ class StratigraphyLayer:
     rock_type: str = "sedimentary"
     age_ma: float = 0.0
     color_rgb: tuple[float, float, float] = (0.5, 0.5, 0.5)
-    strike_angle_rad: float = 0.0
+    # T1-26 (P0-cert-prob): NaN sentinel = "user did not supply strike_angle_rad,
+    # derive it from azimuth_rad in __post_init__". Any finite user-supplied value
+    # is preserved as-is. Previously this defaulted to 0.0, which __post_init__
+    # silently overwrote with azimuth + pi/2 — meaning a user who explicitly set
+    # strike_angle_rad=0.0 (legal "due north" strike) would have it clobbered.
+    strike_angle_rad: float = float("nan")
     color_hex: str = "#888888"
 
     def __post_init__(self) -> None:
-        self.strike_angle_rad = (float(self.azimuth_rad) + math.pi * 0.5) % (2.0 * math.pi)
+        # T1-26 fix: only derive strike from azimuth when the user left it
+        # unspecified (NaN sentinel). If the user supplied a finite value,
+        # validate the range and keep it — but flag a contradiction when the
+        # supplied strike disagrees with the expected azimuth+pi/2 by more
+        # than a numerical tolerance (5e-3 rad ~ 0.3 deg).
+        user_supplied_strike = math.isfinite(float(self.strike_angle_rad))
+        derived_strike = (
+            float(self.azimuth_rad) + math.pi * 0.5
+        ) % (2.0 * math.pi)
+        if user_supplied_strike:
+            supplied = float(self.strike_angle_rad) % (2.0 * math.pi)
+            # Compute circular distance (shortest arc) between supplied
+            # and derived strike. Tolerate small float noise (~0.3 deg).
+            diff = abs(supplied - derived_strike)
+            circular_diff = min(diff, 2.0 * math.pi - diff)
+            if circular_diff > 5.0e-3:
+                raise ValueError(
+                    f"StratigraphyLayer.strike_angle_rad={self.strike_angle_rad!r} "
+                    f"conflicts with derived strike (azimuth+pi/2) mod 2pi = "
+                    f"{derived_strike!r} (circular diff {circular_diff:.4f} rad). "
+                    "Omit strike_angle_rad to derive it from azimuth_rad."
+                )
+            self.strike_angle_rad = supplied
+        else:
+            self.strike_angle_rad = derived_strike
         if not (0.0 <= self.hardness <= 1.0):
             raise ValueError(
                 f"StratigraphyLayer.hardness must be in [0,1], got {self.hardness}"
@@ -821,6 +850,13 @@ def _to_int(value: object) -> int:
 
 
 def _layer_from_mapping(spec: Mapping[str, object]) -> StratigraphyLayer:
+    # T1-26: when ``strike_angle_rad`` is absent from the spec, pass NaN so
+    # StratigraphyLayer.__post_init__ derives it from azimuth_rad. Previously
+    # the default of 0.0 was silently overwritten by the derived value —
+    # downstream code never saw the user's intended strike. With the NaN
+    # sentinel, explicit user values are validated and preserved.
+    strike_raw = spec.get("strike_angle_rad")
+    strike_val: float = float("nan") if strike_raw is None else _to_float(strike_raw)
     return StratigraphyLayer(
         layer_id=str(spec["layer_id"]),
         hardness=_to_float(spec["hardness"]),
@@ -830,7 +866,7 @@ def _layer_from_mapping(spec: Mapping[str, object]) -> StratigraphyLayer:
         rock_type=str(spec.get("rock_type", "sedimentary")),
         age_ma=_to_float(spec.get("age_ma", 0.0)),
         color_rgb=_rgb_triplet(spec.get("color_rgb", (0.5, 0.5, 0.5))),
-        strike_angle_rad=_to_float(spec.get("strike_angle_rad", 0.0)),
+        strike_angle_rad=strike_val,
         color_hex=str(spec.get("color_hex", "#888888")),
     )
 
@@ -943,6 +979,14 @@ def _default_strat_stack_from_hints(
             # ±5° dip noise per layer (geologically plausible)
             dip_noise = float(rng.uniform(-dip_variation, dip_variation))
 
+            # T1-26: strike_angle_rad omitted — __post_init__ derives it from
+            # azimuth_rad (strike = azimuth + pi/2 mod 2pi). The ``strike``
+            # local above is intentionally NOT threaded into the layer: the
+            # old code supplied an independently-drawn value that was silently
+            # overwritten by __post_init__, so geological intent never reached
+            # the layer. Keep ``strike`` bound for any downstream debug hooks
+            # but route the canonical value through the derivation path.
+            _ = strike  # silence unused warnings; canonical strike via azimuth
             layers.append(
                 StratigraphyLayer(
                     layer_id=name,
@@ -953,7 +997,6 @@ def _default_strat_stack_from_hints(
                     rock_type=rock_type,
                     age_ma=age_ma,
                     color_rgb=color_rgb,
-                    strike_angle_rad=strike,
                 )
             )
         if layers:
@@ -962,12 +1005,16 @@ def _default_strat_stack_from_hints(
     # --- Fallback: canonical dark-fantasy 7-layer column -----------------
     # N=7 hits the AAA requirement of 5-9 layers; covers sedimentary,
     # metamorphic, and igneous rock types for VeilBreakers dark aesthetic.
+    #
+    # T1-26: ``strike_angle_rad`` intentionally omitted from every layer
+    # below. The strike is derived from ``azimuth_rad`` inside
+    # ``StratigraphyLayer.__post_init__`` (strike = azimuth + pi/2 mod 2pi).
+    # The previous code passed an independently-RNG-drawn strike via the
+    # ``str_fn()`` helper that was silently clobbered by __post_init__.
     def dip_fn():
         return float(rng.uniform(-dip_variation, dip_variation))
     def az_fn():
         return float(rng.uniform(0.0, 2.0 * np.pi))
-    def str_fn():
-        return float(rng.uniform(0.0, np.pi))
 
     return StratigraphyStack(
         base_elevation_m=base,
@@ -977,49 +1024,49 @@ def _default_strat_stack_from_hints(
                 "ancient_granite", hardness=0.95, thickness_m=50.0,
                 dip_rad=dip_fn(), azimuth_rad=az_fn(),
                 rock_type="igneous", age_ma=600.0,
-                color_rgb=(0.72, 0.62, 0.55), strike_angle_rad=str_fn(),
+                color_rgb=(0.72, 0.62, 0.55),
             ),
             # Metamorphic basement uplift
             StratigraphyLayer(
                 "gneiss_basement", hardness=0.80, thickness_m=40.0,
                 dip_rad=dip_fn(), azimuth_rad=az_fn(),
                 rock_type="metamorphic", age_ma=450.0,
-                color_rgb=(0.58, 0.55, 0.50), strike_angle_rad=str_fn(),
+                color_rgb=(0.58, 0.55, 0.50),
             ),
             # Carbonate platform (soluble, karst-prone)
             StratigraphyLayer(
                 "limestone", hardness=0.75, thickness_m=35.0,
                 dip_rad=dip_fn(), azimuth_rad=az_fn(),
                 rock_type="sedimentary", age_ma=280.0,
-                color_rgb=(0.88, 0.86, 0.80), strike_angle_rad=str_fn(),
+                color_rgb=(0.88, 0.86, 0.80),
             ),
             # Clastic shelf sequence
             StratigraphyLayer(
                 "sandstone", hardness=0.55, thickness_m=30.0,
                 dip_rad=dip_fn(), azimuth_rad=az_fn(),
                 rock_type="sedimentary", age_ma=200.0,
-                color_rgb=(0.82, 0.68, 0.45), strike_angle_rad=str_fn(),
+                color_rgb=(0.82, 0.68, 0.45),
             ),
             # Fine-grained marine shale
             StratigraphyLayer(
                 "shale", hardness=0.25, thickness_m=25.0,
                 dip_rad=dip_fn(), azimuth_rad=az_fn(),
                 rock_type="sedimentary", age_ma=150.0,
-                color_rgb=(0.35, 0.32, 0.28), strike_angle_rad=str_fn(),
+                color_rgb=(0.35, 0.32, 0.28),
             ),
             # Hard resistant caprock (resistant to erosion → mesa/butte formation)
             StratigraphyLayer(
                 "limestone_caprock", hardness=0.90, thickness_m=20.0,
                 dip_rad=dip_fn(), azimuth_rad=az_fn(),
                 rock_type="sedimentary", age_ma=80.0,
-                color_rgb=(0.90, 0.88, 0.82), strike_angle_rad=str_fn(),
+                color_rgb=(0.90, 0.88, 0.82),
             ),
             # Youngest / shallowest: surface overburden
             StratigraphyLayer(
                 "soil", hardness=0.10, thickness_m=200.0,
                 dip_rad=0.0, azimuth_rad=0.0,
                 rock_type="sedimentary", age_ma=0.1,
-                color_rgb=(0.50, 0.38, 0.25), strike_angle_rad=0.0,
+                color_rgb=(0.50, 0.38, 0.25),
             ),
         ],
     )

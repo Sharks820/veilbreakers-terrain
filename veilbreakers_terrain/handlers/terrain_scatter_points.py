@@ -61,10 +61,22 @@ class ScatterPoint:
 
 @dataclass(frozen=True)
 class ScatterPointTable:
+    # T1-27 (P0-internal): canonical storage is a tuple. The annotation
+    # accepts a list at construction time for ergonomics (callers commonly
+    # build ``ScatterPointTable(points=[...])``), but ``__post_init__``
+    # freezes the input into a tuple so downstream code cannot mutate the
+    # table by calling ``.points.append(...)`` on what is supposed to be a
+    # frozen dataclass. Previously the mixed Tuple|list typing silently
+    # tolerated mutation through aliased list references, breaking the
+    # frozen invariant.
     points: Tuple[ScatterPoint, ...] | list[ScatterPoint]
     format: str = "ScatterPointTable"
     coordinate_space: str = "world_m"
     source: str = "canonical"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.points, tuple):
+            object.__setattr__(self, "points", tuple(self.points))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -133,6 +145,15 @@ class ScatterCandidateTable:
     format: str = "ScatterCandidateTable"
     coordinate_space: str = "world_m"
     source: str = "canonical"
+
+    def __post_init__(self) -> None:
+        # T1-27 (P0-internal): same fix as ScatterPointTable — freeze input
+        # lists into tuples so the frozen dataclass invariant survives
+        # mixed Tuple|list construction patterns.
+        if not isinstance(self.accepted, tuple):
+            object.__setattr__(self, "accepted", tuple(self.accepted))
+        if not isinstance(self.rejected, tuple):
+            object.__setattr__(self, "rejected", tuple(self.rejected))
 
     def to_dict(self) -> dict[str, Any]:
         return {
