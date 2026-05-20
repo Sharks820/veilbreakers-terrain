@@ -1146,8 +1146,18 @@ def handle_sculpt_terrain(params: dict[str, object]) -> dict[str, object]:
     bmesh_module = cast(Any, bmesh)
 
     terrain_name = params.get("terrain_name")
+    # T1-31 (P0-cert-prob): explicit None guard. Previously the truthiness
+    # check ``if not obj`` correctly caught None, but it also short-circuits
+    # on objects whose __bool__ returns False (e.g. empty collection-like
+    # proxies in test doubles). Be explicit so the error message identifies
+    # the missing-object case cleanly and TypeError on ``.type`` access on
+    # None is impossible.
+    if terrain_name is None:
+        raise ValueError("Terrain mesh object not found: <terrain_name not supplied>")
     obj = bpy_module.data.objects.get(terrain_name)
-    if not obj or obj.type != "MESH":
+    if obj is None:
+        raise ValueError(f"Terrain mesh object not found: {terrain_name}")
+    if obj.type != "MESH":
         raise ValueError(f"Terrain mesh object not found: {terrain_name}")
 
     world_pos_x, world_pos_y, world_pos_z = _position_xyz(params.get("position"))
@@ -1185,9 +1195,19 @@ def handle_sculpt_terrain(params: dict[str, object]) -> dict[str, object]:
     world_pt = mathutils.Vector((world_pos_x, world_pos_y, world_pos_z))
     local_pt = mw_inv @ world_pt
 
-    # Approximate local-space radius: divide by the average absolute scale.
-    scale_x = abs(mw[0][0])
-    scale_y = abs(mw[1][1])
+    # T1-31 (P0-cert-prob): rotation-broken scale fix.
+    # Previously we read ``mw[0][0]`` and ``mw[1][1]`` directly as scale_x/y,
+    # but the 4x4 world matrix is ``T * R * S`` — the upper-left 3x3 is
+    # ``R * diag(sx, sy, sz)``, so e.g. with a 90-deg Z-rotation
+    # mw[0][0] == 0.0 and the avg_scale_xy collapses to abs(scale_y) / 2,
+    # halving the local_radius incorrectly. Use Blender's canonical TRS
+    # decomposition (mathutils.Matrix.to_scale) which extracts the scale
+    # vector invariant of rotation by computing the column-norms of the
+    # upper-left 3x3. Canonical TRS order: scale -> rotation -> translation
+    # (Blender / Maya / Unity all agree).
+    mw_scale = mw.to_scale()
+    scale_x = abs(float(mw_scale[0]))
+    scale_y = abs(float(mw_scale[1]))
     # Use the XY mean for the horizontal radius conversion.
     avg_scale_xy = (scale_x + scale_y) / 2.0 if (scale_x + scale_y) > 0 else 1.0
     local_radius = radius / avg_scale_xy if avg_scale_xy > 1e-8 else radius

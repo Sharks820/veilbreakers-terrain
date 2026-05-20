@@ -689,7 +689,14 @@ def pass_saliency_refine(
 
     # Compute vantage silhouette mask if vantages are present
     if vantages:
-        ray_count = max(32, min(128, 64 // max(len(vantages), 1) * max(len(vantages), 1)))
+        # T1-25 (P1, X01-DEMOTED): Round 64 down to nearest multiple of len(vantages)
+        # so per-vantage ray budget is integer. For len_v == 1 the expression reduces
+        # to 64 // 1 * 1 == 64 (no change); for len_v >= 2 it preserves the
+        # multiple-of-len property required by `compute_vantage_silhouettes`.
+        # Parenthesise the floor-div to document the intent (Python precedence
+        # already evaluates left-to-right, so behaviour is unchanged).
+        len_v = max(len(vantages), 1)
+        ray_count = max(32, min(128, (64 // len_v) * len_v))
         silhouettes = compute_vantage_silhouettes(stack, vantages, ray_count=ray_count)
         vantage_mask = _rasterize_vantage_silhouettes_onto_grid(
             stack, vantages, silhouettes
