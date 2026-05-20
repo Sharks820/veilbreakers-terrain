@@ -72,10 +72,12 @@ HANDLERS_DIR = HANDLER_DIR
 # with a 1-line justification when you add a new ownership-transfer site.
 RETURN_OWNERSHIP_TRANSFER_SITES: set[tuple[str, int, str]] = set()
 
-# Floor for the total ``bmesh.new()`` site count across handlers. Set by
-# Wave-ZZ-3 inventory (28 sites across 6 files). Bump if intentional new
-# sites are added — but never decrement: silent removal is a regression
-# the floor exists to catch.
+# Regression floor — ``_EXPECTED_SITE_COUNT`` is the minimum allowed
+# ``bmesh.new()`` site count across handlers. Set by Wave-ZZ-3 inventory
+# (28 sites across 6 files). Bump if intentional new sites are added.
+# Intentional removal of a site requires updating this floor AND the Y04
+# audit reference together (see module docstring). Never silently lower:
+# silent removal is the regression the floor exists to catch.
 _EXPECTED_SITE_COUNT = 28
 
 # How many sites above the floor should fire a soft (warning-only) drift
@@ -207,12 +209,13 @@ def test_total_bmesh_new_site_count_meets_floor() -> None:
     """
     actual = sum(len(_collect_sites(p)) for p in _HANDLER_FILES)
     assert actual >= _EXPECTED_SITE_COUNT, (
-        f"bmesh.new() site count regressed: expected at least "
-        f"{_EXPECTED_SITE_COUNT}, found {actual}. Silent removal of a "
-        f"bmesh.new() site is suspicious — verify the site was intentionally "
-        f"deleted (not refactored into a missing-coverage shape) and, if so, "
-        f"lower `_EXPECTED_SITE_COUNT` in this test plus update the Y04 / "
-        f"FIX_PATTERN_v1 audit references."
+        f"bmesh.new() site count dropped below floor: expected >= "
+        f"{_EXPECTED_SITE_COUNT}, found {actual}. If the removal is "
+        f"intentional and audit-approved (Y04 / FIX_PATTERN_v1 reference), "
+        f"lower `_EXPECTED_SITE_COUNT` in this file as part of the same PR "
+        f"and update the matching audit reference in the module docstring "
+        f"so the trail stays honest. The floor is regression-only — never "
+        f"silently decrement."
     )
 
 

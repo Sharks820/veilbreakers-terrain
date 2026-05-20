@@ -7,6 +7,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+# CHECKPOINT-OPUS-ULTRA V8 (2026-05-20): migrated to the shared AST helper.
+# The prior local ``_call_name`` was bit-identical to ``dotted_call_name`` in
+# ``_ast_helpers`` — verified semantically equivalent on 7 AST shapes during
+# PR #116 verifier review (foo(), a.b(), a.b.c(), np.random.choice(),
+# self.method(), getattr(...)(), arr[0]()). Aliased import preserves
+# call-site line numbers and eliminates the 14-line local duplicate.
+from veilbreakers_terrain.tests._ast_helpers import (
+    dotted_call_name as _call_name,
+)
+
 
 _FORBIDDEN_RNG_CALLS = {
     "np.random.RandomState",
@@ -16,22 +26,6 @@ _FORBIDDEN_RNG_CALLS = {
     "np.random.uniform",
     "random.random",
 }
-
-
-def _call_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if not isinstance(node, ast.Attribute):
-        return ""
-
-    parts: list[str] = []
-    current: ast.AST = node
-    while isinstance(current, ast.Attribute):
-        parts.append(current.attr)
-        current = current.value
-    if isinstance(current, ast.Name):
-        parts.append(current.id)
-    return ".".join(reversed(parts))
 
 
 def test_production_handlers_do_not_use_legacy_or_bare_rng_calls():

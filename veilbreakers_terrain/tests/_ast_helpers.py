@@ -15,9 +15,11 @@ common shape, not every shape.
 
 Public API:
 
-* :func:`iter_handler_files` — sorted iterator of ``handlers/*.py`` files
+* :func:`iter_handler_files` — sorted list of ``handlers/*.py`` files
   (top-level only, ``__init__.py`` excluded). Mirrors what
-  ``test_bmesh_release_discipline.py`` discovers today.
+  ``test_bmesh_release_discipline.py`` discovers today. Raises
+  ``RuntimeError`` if a subpackage is added under ``handlers/`` — see
+  thread T116-1 / PR #116.
 * :func:`collect_call_sites` — return every ``ast.Call`` node in *path*
   whose function is either a bare ``Name(func_name)`` or an
   ``Attribute(.attr_name)`` access. Used to count e.g. ``bmesh.new()``
@@ -41,7 +43,7 @@ HANDLER_DIR: Path = Path(__file__).resolve().parents[1] / "handlers"
 
 
 def iter_handler_files() -> list[Path]:
-    """All top-level ``.py`` files under ``veilbreakers_terrain/handlers/``.
+    """Return sorted list of all top-level ``.py`` handler files (excludes ``__init__.py``).
 
     Returned sorted, with ``__init__.py`` excluded so importable namespace
     re-exports don't pollute regression sweeps.
@@ -50,12 +52,25 @@ def iter_handler_files() -> list[Path]:
     ``len(...)`` and pytest parametrize over the result without exhausting
     the iterator.
 
-    Note: this is intentionally non-recursive — ``handlers/`` has no
-    subpackages today. If subdirectories are added later, individual tests
-    can switch to a per-test recursive walk; do not silently change this
-    helper's semantics, since other tests rely on the current inclusion
-    set.
+    Fails loudly if a subpackage is added under ``handlers/`` — see
+    ``_ast_helpers.py`` discussion thread T116-1 (PR #116). When a
+    subpackage IS added, this helper must be migrated to ``rglob`` with
+    explicit ``__pycache__`` / ``__init__.py`` filtering. Until then, the
+    bmesh discipline and other AST audits would silently skip your
+    subpackage code, so we raise rather than silently narrow coverage.
     """
+    subpkgs = [
+        p for p in HANDLER_DIR.iterdir()
+        if p.is_dir() and not p.name.startswith(("_", "."))
+    ]
+    if subpkgs:
+        names = ", ".join(p.name for p in subpkgs)
+        raise RuntimeError(
+            f"handlers/ now contains subpackages ({names}). "
+            f"iter_handler_files() must be migrated to rglob + filter, "
+            f"see thread T116-1 in PR #116. Until then, the bmesh discipline "
+            f"and other AST audits silently skip your subpackage code."
+        )
     return sorted(p for p in HANDLER_DIR.glob("*.py") if p.name != "__init__.py")
 
 
