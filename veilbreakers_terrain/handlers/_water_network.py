@@ -1819,7 +1819,17 @@ class WaterNetwork:
             Populated :class:`WaterNetwork` instance.
         """
         hmap = np.asarray(heightmap, dtype=np.float64)
-        rng = np.random.default_rng(seed)
+        # T1-12: namespace the caller seed via derive_pass_seed so two callers
+        # passing the same raw `seed` do not produce identical RNG streams
+        # across different passes/regions. The wrapper at `terrain_rng.py:73`
+        # is the canonical thin-shim onto `terrain_pipeline.derive_pass_seed`
+        # (Bug-A landed Phase B D17-18; SHA-256 JSON payload).
+        from .terrain_rng import derive_pass_seed as _derive_pass_seed
+        rng = np.random.default_rng(
+            _derive_pass_seed(
+                int(seed), "water_network.from_heightmap", 0, 0, None
+            )
+        )
 
         net = cls()
         net._tile_size = tile_size
@@ -3581,7 +3591,16 @@ def build_braided_polylines(
     if n < 4:
         return []
 
-    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    # T1-12: namespace the caller seed via derive_pass_seed so that callers
+    # passing the same `seed` to e.g. `from_heightmap` and
+    # `build_braided_polylines` do not share an RNG stream. See twin fix at
+    # `from_heightmap` above.
+    from .terrain_rng import derive_pass_seed as _derive_pass_seed
+    rng = np.random.default_rng(
+        _derive_pass_seed(
+            int(seed), "water_network.build_braided_polylines", 0, 0, None
+        )
+    )
     # Two or three branches alternating sides
     n_branches = max(2, min(int(max_branches), 3))
     offset = float(divergence_ratio) * float(channel_width)

@@ -285,7 +285,16 @@ DEFAULT_TEMPLATES: Tuple[MorphologyTemplate, ...] = (
 
 
 def _rng_from_seed(seed: int) -> np.random.Generator:
-    return np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    """1-arg adapter onto the canonical `_terrain_noise._rng_from_seed` (γ3 D-17).
+
+    Y04 v3 §B.4.3 collapses the 4 duplicate `_rng_from_seed` definitions onto
+    `_terrain_noise._rng_from_seed` (2-arg). This module's 1-arg variant is
+    retained for source compatibility with `apply_morphology_template`; it
+    fills in a constant namespace so the resulting RNG stream is independent
+    of any other site that happens to pass the same raw seed.
+    """
+    from ._terrain_noise import _rng_from_seed as _canonical_rng_from_seed
+    return _canonical_rng_from_seed(int(seed), "morphology_template")
 
 
 def apply_morphology_template(

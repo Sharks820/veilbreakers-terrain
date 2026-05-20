@@ -992,8 +992,21 @@ def pass_macro_world(
                 # Affine remap: [min, max] → [0, _height_scale]
                 hmap = ((hmap - float(hmap.min())) / h_range_raw * _height_scale).astype(np.float32)
             else:
-                # Degenerate flat output — generate minimal relief via seed-based offset
-                rng_fb = np.random.default_rng(seed ^ 0xDEAD)
+                # Degenerate flat output — generate minimal relief via seed-based offset.
+                # T1-11: namespace the caller seed via derive_pass_seed so two
+                # different tiles/regions hitting the degenerate fallback do
+                # not collapse to the same relief. The 0xDEAD subkey separates
+                # this stream from any other macro_world use of the same seed.
+                from .terrain_rng import derive_pass_seed as _derive_pass_seed
+                rng_fb = np.random.default_rng(
+                    _derive_pass_seed(
+                        int(seed) ^ 0xDEAD,
+                        "terrain_world.pass_macro_world.degenerate_fallback",
+                        0,
+                        0,
+                        None,
+                    )
+                )
                 hmap = rng_fb.uniform(0.0, _height_scale, hmap.shape).astype(np.float32)
 
             stack.set("height", hmap, "macro_world")

@@ -33,13 +33,17 @@ import numpy as np  # noqa: E402
 
 
 def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
+    """Re-export of the canonical `_terrain_noise._rng_from_seed` (γ3 D-17).
+
+    Y04 v3 §B.4.3 collapses the 4 duplicate `_rng_from_seed` definitions onto
+    `_terrain_noise._rng_from_seed`. This module's helper now forwards to the
+    canonical so all callers share one seed-derivation path.
+    """
     # Lazy import: terrain_pipeline transitively imports terrain_advanced;
-    # a module-level `from .terrain_pipeline import` would create a
-    # CodeQL py/cyclic-import alert.
-    from .terrain_pipeline import derive_pass_seed
-    return np.random.default_rng(
-        derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
-    )
+    # a module-level `from ._terrain_noise import` is safe (leaf helper), but
+    # we keep the indirection lazy to mirror the canonical implementation.
+    from ._terrain_noise import _rng_from_seed as _canonical_rng_from_seed
+    return _canonical_rng_from_seed(int(seed), seed_namespace)
 
 
 def _detect_grid_dims(bm: Any) -> tuple[int, int]:

@@ -81,7 +81,12 @@ def poisson_disk_sample(
     if min_distance <= 0:
         return []
 
-    # Use numpy RNG when available for better statistical quality
+    # Use numpy RNG when available for better statistical quality.
+    # T1-24 (DEMOTED per X01 / Y04 v3 §H.1): `default_rng(seed)` IS the
+    # canonical modern numpy RNG API — `numpy.random.default_rng` is
+    # explicitly "preferred over the legacy `numpy.random` functions"
+    # (Context7 `/numpy/numpy` "Random sampling"). This is NOT a seed
+    # bypass; the caller is responsible for upstream seed namespacing.
     if _np_engine is not None:
         np_engine = _np_engine
         np_rng = np_engine.random.default_rng(seed)
@@ -1212,6 +1217,8 @@ def cluster_density_map(
         raise RuntimeError("cluster_density_map requires numpy")
 
     np_engine = _np_engine
+    # T1-24 (DEMOTED): `default_rng(seed)` is canonical numpy modern API,
+    # not a bypass. See twin comment at `poisson_disk_sample` site above.
     rng = np_engine.random.default_rng(seed)
 
     # Build a non-periodic cluster density map using successive downsampled
