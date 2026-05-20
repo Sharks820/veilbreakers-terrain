@@ -1,5 +1,9 @@
 name: Python Package
 
+# T0-6 (Y04 v2-ord 3 / FIX_PATTERN_v1 §C1): minimal-privilege default.
+permissions:
+  contents: read
+
 on:
   push:
     branches: ["**"]
@@ -21,12 +25,14 @@ jobs:
       # them as 130-byte pointer text. Without this, tests depending on
       # LFS fixtures (PNG goldens, .npz baselines, .blend files) silently
       # see pointer-text content and pass against false-signal data.
-      - uses: actions/checkout@v4
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           lfs: true
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        # v5.6.0
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -92,8 +98,61 @@ jobs:
 
       - name: Upload coverage report
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@v4
+        # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: coverage-report
           path: .coverage
           if-no-files-found: warn
+
+  # T0-6 (Y04 v2-ord 3 / FIX_PATTERN_v1 §C1): pip-audit gate to detect
+  # known-vulnerable wheels in the resolved dep tree before merge. ``--strict``
+  # fails on any advisory. Cert-blocking per Xbox GDK XR-064.
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      # v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install project + pip-audit
+        # T0-6 round-5: pip-audit 2.10.0 still exits 1 on editable distributions
+        # EVEN with --skip-editable (known behavior — the flag changes audit
+        # behavior, not exit code). Round-5 generates a non-editable
+        # requirements file from `pip freeze --exclude-editable` and audits
+        # that file directly. This bypasses the editable-distribution check
+        # while still auditing every 3rd-party dependency installed from
+        # pyproject.toml [project.dependencies] / [project.optional-dependencies].
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pip-audit
+          # Generate requirements from installed env, excluding editable
+          # installs (i.e., veilbreakers-terrain itself).
+          pip freeze --exclude-editable > /tmp/audit-requirements.txt
+          echo "=== Audit requirements (first 20 lines) ==="
+          head -20 /tmp/audit-requirements.txt
+      - name: Run pip-audit
+        # --strict: fails on any advisory (cert-blocking per Xbox GDK XR-064).
+        # --requirement: audit only the dep tree from the requirements file
+        # generated in the previous step. This audits every 3rd-party install
+        # (numpy, scipy, etc.) but skips the editable veilbreakers-terrain
+        # without needing --skip-editable's broken exit-code behavior.
+        run: pip-audit --strict --requirement /tmp/audit-requirements.txt
+
+  # T0-6 round-2: pre-commit-on-CI deferred to a follow-up PR.
+  # CE deployment verification (NO-GO finding on first attempt) confirmed
+  # that the existing .pre-commit-config.yaml has hooks that REGENERATE
+  # tracked binary fixtures (output/test_artifacts/**/*.npz +
+  # output/water_test/*.png). The first CI run with pre-commit/action@v3.0.1
+  # detected this drift correctly and failed — i.e. pre-commit was working,
+  # but the underlying hook hygiene is a separate project-level cleanup task.
+  # Restoring the pre-commit job here without first either (a) gitignoring
+  # the regenerated artifacts or (b) excluding them from the offending
+  # hooks would block every PR's CI on a known-pre-existing drift.
+  # Tracking issue: file as T0-6b in next session.
