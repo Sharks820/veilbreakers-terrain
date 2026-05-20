@@ -43,7 +43,7 @@ class TestT1_12_FromHeightmapDeterminism:
     not collapse with other callers passing the same raw seed value."""
 
     @pytest.fixture
-    def heightmap(self):
+    def heightmap(self) -> np.ndarray:
         # Bowl-with-central-valley heightmap that produces hundreds of river
         # segments under priority-flood D8 — enough surface area for the
         # seeded jitter to differ visibly across seeds.
@@ -51,37 +51,61 @@ class TestT1_12_FromHeightmapDeterminism:
         ys, xs = np.mgrid[0:N, 0:N].astype(np.float64)
         center_x, center_y = N / 2, N / 2
         r = np.sqrt((xs - center_x) ** 2 + (ys - center_y) ** 2)
-        h = (
+        h: np.ndarray = (
             200.0
             + 0.5 * r
             - 100.0 * np.exp(-((xs - center_x) ** 2) / (2.0 * 5.0 ** 2))
         )
         return h
 
-    def test_same_seed_same_network(self, heightmap):
+    def test_same_seed_same_network(self, heightmap: np.ndarray) -> None:
         from veilbreakers_terrain.handlers._water_network import WaterNetwork
 
-        kwargs = dict(
-            cell_size=1.0, tile_size=heightmap.shape[0],
-            min_drainage_area=50.0, river_threshold=200.0,
+        tile_size: int = int(heightmap.shape[0])
+        net_a = WaterNetwork.from_heightmap(
+            heightmap,
+            cell_size=1.0,
+            tile_size=tile_size,
+            min_drainage_area=50.0,
+            river_threshold=200.0,
             compute_velocity=False,
+            seed=42,
         )
-        net_a = WaterNetwork.from_heightmap(heightmap, seed=42, **kwargs)
-        net_b = WaterNetwork.from_heightmap(heightmap, seed=42, **kwargs)
+        net_b = WaterNetwork.from_heightmap(
+            heightmap,
+            cell_size=1.0,
+            tile_size=tile_size,
+            min_drainage_area=50.0,
+            river_threshold=200.0,
+            compute_velocity=False,
+            seed=42,
+        )
         # Segment counts and the round-tripped dict view must agree.
         assert len(net_a.segments) == len(net_b.segments)
         assert net_a.to_dict() == net_b.to_dict()
 
-    def test_different_seed_different_network(self, heightmap):
+    def test_different_seed_different_network(self, heightmap: np.ndarray) -> None:
         from veilbreakers_terrain.handlers._water_network import WaterNetwork
 
-        kwargs = dict(
-            cell_size=1.0, tile_size=heightmap.shape[0],
-            min_drainage_area=50.0, river_threshold=200.0,
+        tile_size: int = int(heightmap.shape[0])
+        net_a = WaterNetwork.from_heightmap(
+            heightmap,
+            cell_size=1.0,
+            tile_size=tile_size,
+            min_drainage_area=50.0,
+            river_threshold=200.0,
             compute_velocity=False,
+            seed=1,
         )
-        net_a = WaterNetwork.from_heightmap(heightmap, seed=1, **kwargs)
-        net_b = WaterNetwork.from_heightmap(heightmap, seed=999, **kwargs)
+        net_b = WaterNetwork.from_heightmap(
+            heightmap,
+            cell_size=1.0,
+            tile_size=tile_size,
+            min_drainage_area=50.0,
+            river_threshold=200.0,
+            compute_velocity=False,
+            seed=999,
+        )
         # If two different seeds produce the bit-identical to_dict view, the
         # seed has been ignored entirely. The RNG inside `from_heightmap` is
         # used to perturb braided polyline jitter and similar — distinct seeds
@@ -100,11 +124,13 @@ class TestT1_12_BuildBraidedPolylinesDeterminism:
     distinct results across seeds."""
 
     @pytest.fixture
-    def waypoints(self):
+    def waypoints(self) -> list[tuple[float, float, float]]:
         # Straight x-axis polyline 30 m long
         return [(float(x), 0.0, 0.0) for x in range(30)]
 
-    def test_same_seed_same_branches(self, waypoints):
+    def test_same_seed_same_branches(
+        self, waypoints: list[tuple[float, float, float]]
+    ) -> None:
         from veilbreakers_terrain.handlers._water_network import (
             build_braided_polylines,
         )
@@ -119,7 +145,9 @@ class TestT1_12_BuildBraidedPolylinesDeterminism:
         assert a == b, "build_braided_polylines is non-deterministic"
         assert len(a) >= 1, "expected at least one braided polyline at width=30 > 20"
 
-    def test_different_seed_different_branches(self, waypoints):
+    def test_different_seed_different_branches(
+        self, waypoints: list[tuple[float, float, float]]
+    ) -> None:
         from veilbreakers_terrain.handlers._water_network import (
             build_braided_polylines,
         )
