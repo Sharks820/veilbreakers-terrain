@@ -49,15 +49,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # T0-6 (Y04 v2-ord 3): csharp added for Unity/MonoBehaviour coverage —
-        # required check ``Analyze (csharp)`` is consumed by branch protection
-        # alongside ``Analyze (python)`` and ``Analyze (actions)``.
+        # T0-6 (Y04 v2-ord 3): csharp DROPPED from matrix here — this repo
+        # contains 0 .cs source files (Unity workspace lives in a separate
+        # repo per project_urp_commitment_2026_05_07 memory). Adding csharp
+        # to the matrix while no source exists produces a "no source code
+        # seen" failure that gives a false-signal red on every PR. When the
+        # Unity workspace is consolidated into this repo, restore the
+        # ``- language: csharp`` line and update branch protection to require
+        # ``Analyze (csharp)``.
         include:
         - language: actions
           build-mode: none
         - language: python
-          build-mode: none
-        - language: csharp
           build-mode: none
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
         # Use `c-cpp` to analyze code written in C, C++ or both
@@ -80,8 +83,8 @@ jobs:
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
-      # codeql-bundle-v2.25.4 (codeql-action v4 tip SHA)
-      uses: github/codeql-action/init@7c1e4cf0b20d7c1872b26569c00ba908797a59bf
+      # v4.35.5 commit SHA (NOT tag-object SHA) — github/codeql-action
+      uses: github/codeql-action/init@9e0d7b8d25671d64c341c19c0152d693099fb5ba
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
@@ -111,7 +114,7 @@ jobs:
         exit 1
 
     - name: Perform CodeQL Analysis
-      # codeql-bundle-v2.25.4 (codeql-action v4 tip SHA)
-      uses: github/codeql-action/analyze@7c1e4cf0b20d7c1872b26569c00ba908797a59bf
+      # v4.35.5 commit SHA (NOT tag-object SHA) — github/codeql-action
+      uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba
       with:
         category: "/language:${{matrix.language}}"

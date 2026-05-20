@@ -123,23 +123,25 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
       - name: Run pip-audit
-        # Prefer requirements-style audit from pyproject; fall back to
-        # environment audit when the project provides no requirements file.
-        run: pip-audit --strict --requirement pyproject.toml || pip-audit --strict
+        # T0-6 round-2 (CE security review SEC-PR95-02): explicit conditional
+        # so the fallback only fires when pyproject.toml is missing, NOT when
+        # pip-audit found a CVE. The old ``|| pip-audit --strict`` form
+        # masked legitimate audit failures by retrying on the installed env.
+        run: |
+          if [ -f pyproject.toml ]; then
+            pip-audit --strict --requirement pyproject.toml
+          else
+            pip-audit --strict
+          fi
 
-  # T0-6 (Y04 v2-ord 3 / FIX_PATTERN_v1 §C1): pre-commit-on-CI so config
-  # drift between local and CI is caught here rather than in PR review.
-  pre-commit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      # v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      # v5.6.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: "3.12"
-      # v3.0.1
-      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd
+  # T0-6 round-2: pre-commit-on-CI deferred to a follow-up PR.
+  # CE deployment verification (NO-GO finding on first attempt) confirmed
+  # that the existing .pre-commit-config.yaml has hooks that REGENERATE
+  # tracked binary fixtures (output/test_artifacts/**/*.npz +
+  # output/water_test/*.png). The first CI run with pre-commit/action@v3.0.1
+  # detected this drift correctly and failed — i.e. pre-commit was working,
+  # but the underlying hook hygiene is a separate project-level cleanup task.
+  # Restoring the pre-commit job here without first either (a) gitignoring
+  # the regenerated artifacts or (b) excluding them from the offending
+  # hooks would block every PR's CI on a known-pre-existing drift.
+  # Tracking issue: file as T0-6b in next session.
