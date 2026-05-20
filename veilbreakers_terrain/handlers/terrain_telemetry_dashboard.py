@@ -87,7 +87,11 @@ def record_telemetry(
         content_hash=state.mask_stack.compute_hash(),
         extra=dict(extra or {}),
     )
-    _line = json.dumps(record.to_dict(), sort_keys=True) + "\n"
+    # T1-4 (Y04 v3 ord 13): allow_nan=False — telemetry NDJSON feeds the
+    # dashboard / regression-baseline parser; a NaN literal would either
+    # break strict JSON parsers or silently coerce to 0 and corrupt the
+    # tile-perf baseline used for regression detection.
+    _line = json.dumps(record.to_dict(), sort_keys=True, allow_nan=False) + "\n"
     _line_bytes = _line.encode("utf-8")
 
     import sys

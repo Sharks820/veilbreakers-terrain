@@ -1201,7 +1201,13 @@ def handle_terrain_layers(params: dict[str, Any]) -> dict[str, Any]:
     # ------------------------------------------------------------------
     def _bump_version_and_serialize(obj: Any, layers: list["TerrainLayer"]) -> None:
         """Serialize layers to JSON and increment the dirty version counter."""
-        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
+        # T1-4 (Y04 v3 ord 13): allow_nan=False — the Blender custom prop
+        # is round-tripped via json.loads later; a NaN literal would parse
+        # back as a float, but the layer payload includes opacity/blend
+        # floats that should never be NaN. Loud-at-source per FIX_PATTERN_v1 §C5.
+        obj["terrain_layers"] = json.dumps(
+            [L.to_dict() for L in layers], allow_nan=False
+        )
         obj["terrain_layers_version"] = int(obj.get("terrain_layers_version", 0)) + 1
 
     if action == "add_layer":

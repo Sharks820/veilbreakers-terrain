@@ -140,11 +140,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.runs < 2:
         print(
+            # T1-4 (Y04 v3 ord 13): allow_nan=False — determinism harness
+            # reports go to CI; NaN literals would break strict JSON parsers
+            # on the consumer side.
             json.dumps(
                 {
                     "error": "--runs must be >= 2 to compare bakes",
                     "deterministic": False,
-                }
+                },
+                allow_nan=False,
             ),
             file=sys.stderr,
         )
@@ -188,6 +192,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             stderr_text[:2000] + "...[truncated]"
         )
         print(
+            # T1-4 (Y04 v3 ord 13): allow_nan=False — CI-consumed report.
             json.dumps(
                 {
                     "kind": "bake_subprocess_failed",
@@ -202,6 +207,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 },
                 sort_keys=True,
                 indent=2,
+                allow_nan=False,
             ),
             file=sys.stderr,
         )
@@ -210,6 +216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Genuine config / I/O errors: malformed args, unreadable paths,
         # etc.  Exit 2 so CI fails the cell with "fix your flags" semantics.
         print(
+            # T1-4 (Y04 v3 ord 13): allow_nan=False — CI-consumed report.
             json.dumps(
                 {
                     "kind": "config_error",
@@ -222,6 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 },
                 sort_keys=True,
                 indent=2,
+                allow_nan=False,
             ),
             file=sys.stderr,
         )
@@ -236,7 +244,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "platform": platform.system().lower(),
         "python_version": platform.python_version(),
     }
-    print(json.dumps(payload, sort_keys=True, indent=2))
+    # T1-4 (Y04 v3 ord 13): allow_nan=False — determinism harness report
+    # is consumed by CI summary check; NaN literals would break strict
+    # JSON parsers downstream.
+    print(json.dumps(payload, sort_keys=True, indent=2, allow_nan=False))
 
     return _EXIT_OK if payload["deterministic"] else _EXIT_NONDETERMINISTIC
 

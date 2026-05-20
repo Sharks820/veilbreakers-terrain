@@ -1274,6 +1274,10 @@ class TerrainMaskStack:
                 if getattr(self, name, None) is not None
             },
         }
+        # T1-4 (Y04 v3 ord 13): allow_nan=False — npz ``__meta__`` round-
+        # trips via from_npz into Unity-export-scalar fields (height_min_m,
+        # height_max_m, cell_size, world_origin_x/y). NaN in any of these
+        # would silently corrupt the Unity export at the next bake.
         arrays["__meta__"] = np.array(
             json.dumps(
                 meta,
@@ -1284,6 +1288,7 @@ class TerrainMaskStack:
                     if isinstance(obj, np.generic)
                     else str(obj)
                 ),
+                allow_nan=False,
             ),
             dtype=object,
         )

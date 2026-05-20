@@ -2247,6 +2247,9 @@ def rasterize_channel_to_atlas(
         # Fallback: raw numpy + sidecar JSON
         npy_path = target.with_suffix(".npy")
         np.save(str(npy_path), np.clip(arr_np, 0.0, 1.0))
+        # T1-4 (Y04 v3 ord 13 / γ1 ZZ3-NEW-P1-04): allow_nan=False — the
+        # sidecar JSON describes a waterfall-atlas .npy that Unity loads;
+        # NaN in shape / bit_depth would silently break the importer.
         npy_path.with_suffix(".json").write_text(
             json.dumps({
                 "source": atlas_path,
@@ -2254,7 +2257,7 @@ def rasterize_channel_to_atlas(
                 "shape": list(arr_np.shape),
                 "dtype": "float32_npy",
                 "flip_vertical": flip_vertical,
-            })
+            }, allow_nan=False)
         )
         return False
     except Exception:

@@ -114,8 +114,11 @@ def _generate_tile(args: argparse.Namespace) -> int:
         },
     }
     manifest_path = out_dir / "manifest.json"
+    # T1-4 (Y04 v3 ord 13 / γ1 ZZ3-NEW-P1-04): allow_nan=False — tile-bake
+    # manifest is Unity-consumed; NaN/Inf in seed/size/scale/origin would
+    # silently corrupt the artefact registry and produce mis-aligned tiles.
     manifest_path.write_text(
-        json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+        json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
     return 0
