@@ -134,11 +134,16 @@ jobs:
           pip install pip-audit
       - name: Run pip-audit
         # --strict: fails on any advisory (cert-blocking per Xbox GDK XR-064).
+        # --skip-editable: skips veilbreakers-terrain itself (the project being
+        # audited is installed editable; pip-audit would try to look it up on
+        # PyPI and fail with "Dependency not found on PyPI"). This excludes
+        # ONLY editable installs (i.e., the project itself); all 3rd-party
+        # deps from pyproject.toml remain audited.
         # No --requirement flag: pip-audit defaults to auditing the installed
         # environment from the previous step. The fallback masking concern
         # from SEC-PR95-02 (round-1) is fully resolved because there is only
         # one audit path now.
-        run: pip-audit --strict
+        run: pip-audit --strict --skip-editable
 
   # T0-6 round-2: pre-commit-on-CI deferred to a follow-up PR.
   # CE deployment verification (NO-GO finding on first attempt) confirmed
