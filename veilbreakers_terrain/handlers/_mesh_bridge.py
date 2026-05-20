@@ -1391,14 +1391,27 @@ def mesh_from_spec(
     material_ids: list[int] = list(spec.get("material_ids", []))
 
     # Validate material_ids: must be in range [0, num_slots-1]
+    # T1-15 fix (FIX_PATTERN_v1 §C5 numerical/unit conversion):
+    # Use `max(material_ids) + 1` instead of `len(set(material_ids))`.
+    # The previous unique-count formula reported the WRONG slot count for
+    # non-contiguous id sets:
+    #   - `[0, 2, 2, 2]` -> len(set)=2 (false positive; should be 3 so Unity
+    #     allocates a real slot for index 2 without paint-shifting to slot 1)
+    #   - `[0, 0, 0, 5]` -> len(set)=2 (false negative; should be 6 so id=5
+    #     is in range and paints the intended slot)
+    # Maya/Blender/Houdini all use max+1 because Unity-side material arrays
+    # are dense indexed by face.material_index — a gap in the upstream id
+    # set is still a real slot in the downstream importer's eyes.
     if material_ids:
-        num_slots = len(set(material_ids))  # count of distinct slots declared
+        # Negative ids must reject before the max+1 computation (so an
+        # invalid id can't synthesise a smaller slot count and silently pass).
         for fi, mid in enumerate(material_ids):
-            if mid < 0 or mid >= num_slots:
+            if mid < 0:
                 raise ValueError(
-                    f"mesh_from_spec: material_id {mid} at face {fi} is out of range "
-                    f"[0, {num_slots - 1}] for {num_slots} slot(s) in material_ids"
+                    f"mesh_from_spec: material_id {mid} at face {fi} is negative; "
+                    f"material slot indices must be non-negative"
                 )
+        num_slots = max(material_ids) + 1  # correct slot count incl. gaps
     else:
         num_slots = 1
 
