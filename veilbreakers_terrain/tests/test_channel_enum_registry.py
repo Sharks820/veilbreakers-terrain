@@ -138,7 +138,10 @@ def test_channels_by_unit_lookup() -> None:
     assert Channel.SLOPE_RAD in CHANNELS_BY_UNIT["rad"]
     assert Channel.YAW_DEG in CHANNELS_BY_UNIT["deg"]
     assert Channel.WETNESS in CHANNELS_BY_UNIT["dimensionless"]
-    assert Channel.BIOME_ID in CHANNELS_BY_UNIT["id"]
+    # Categorical IDs (BIOME_ID, NAVMESH_AREA_ID, TIDAL_ZONE_LABEL) are
+    # tagged "dimensionless" to match T0.5-5 — they live in the
+    # "dimensionless" bucket, not a separate "id" bucket.
+    assert Channel.BIOME_ID in CHANNELS_BY_UNIT["dimensionless"]
     assert Channel.FLOW_ACCUMULATION in CHANNELS_BY_UNIT["count"]
 
     # Sets must be disjoint — a channel can only have one canonical unit.
@@ -167,13 +170,20 @@ def test_flow_direction_is_indexed_not_radians() -> None:
     from veilbreakers_terrain.handlers._channels import Channel
 
     assert Channel.FLOW_DIRECTION.value == "flow_direction"
-    assert Channel.FLOW_DIRECTION.info.unit == "id", (
-        f"Channel.FLOW_DIRECTION.info.unit = {Channel.FLOW_DIRECTION.info.unit!r}; "
-        f"must be 'id' because pass_hydrology emits D8 int8 indices, "
-        f"not radians. See _water_network.py:705."
-    )
+    # MUST NOT be 'rad' — that was the Codex-P1 bug. The unit is tagged
+    # 'dimensionless' to match T0.5-5 _CHANNEL_CANONICAL_UNITS; the
+    # int8 D8 index-set semantics are documented inline at the registry
+    # row in _channels.py and at the registry row in
+    # terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS.
     assert Channel.FLOW_DIRECTION.info.unit != "rad", (
-        "Codex-P1 regression guard: flow_direction MUST NOT be tagged 'rad'."
+        "Codex-P1 regression guard: flow_direction MUST NOT be tagged 'rad' — "
+        "pass_hydrology emits D8 int8 indices (-1..7), not radians. "
+        "See _water_network.py:705."
+    )
+    assert Channel.FLOW_DIRECTION.info.unit == "dimensionless", (
+        f"Channel.FLOW_DIRECTION.info.unit = {Channel.FLOW_DIRECTION.info.unit!r}; "
+        f"must be 'dimensionless' to match T0.5-5 "
+        f"terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS."
     )
     # The legacy misleading name must not be present on the enum.
     assert not hasattr(Channel, "FLOW_DIRECTION_RAD"), (

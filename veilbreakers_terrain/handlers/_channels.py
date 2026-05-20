@@ -169,8 +169,11 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
     # D8 direction index (int8 -1..7) — NOT radians. The per-lip radians
     # form is LipCandidate.flow_direction_rad in terrain_waterfalls; the
     # mask-stack channel is integer index emitted by priority_flood_d8.
+    # Tagged "dimensionless" to match terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS
+    # (T0.5-5 ships first; the index-set semantics are documented inline).
     Channel.FLOW_DIRECTION: ChannelInfo(
-        "id", "D8 flow direction, int8 indices (-1=pit/border, 0..7=neighbour)"
+        "dimensionless",
+        "D8 flow direction, int8 indices (-1=pit/border, 0..7=neighbour) — NOT radians",
     ),
     # Degrees-native (export hop)
     Channel.YAW_DEG: ChannelInfo(
@@ -219,13 +222,18 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
     Channel.CAVE_CANDIDATE: ChannelInfo(
         "dimensionless", "Binary cave candidate mask (0/1)"
     ),
-    # Categorical IDs
-    Channel.BIOME_ID: ChannelInfo("id", "Biome label per cell (uint8/16)"),
+    # Categorical IDs — tagged "dimensionless" to match
+    # terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS (T0.5-5 ships first;
+    # the categorical-label semantics are documented inline).
+    Channel.BIOME_ID: ChannelInfo(
+        "dimensionless", "Biome label per cell (uint8/16) — categorical ID"
+    ),
     Channel.NAVMESH_AREA_ID: ChannelInfo(
-        "id", "Unity navmesh area id per cell (uint8)"
+        "dimensionless", "Unity navmesh area id per cell (uint8) — categorical ID"
     ),
     Channel.TIDAL_ZONE_LABEL: ChannelInfo(
-        "id", "Tidal zone classification (subtidal=0, intertidal=1, ...)"
+        "dimensionless",
+        "Tidal zone classification (subtidal=0, intertidal=1, ...) — categorical ID",
     ),
     # Counts / accumulators
     Channel.FLOW_ACCUMULATION: ChannelInfo(
