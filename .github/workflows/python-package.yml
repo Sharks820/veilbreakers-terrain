@@ -121,29 +121,29 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install project + pip-audit
-        # T0-6 round-3 (CI red on round-2): pip-audit --requirement expects
-        # a requirements.txt-format file (one PEP-440 spec per line), not
-        # pyproject.toml's TOML [project] section. Round-2 used --requirement
-        # pyproject.toml which fails immediately with "Invalid requirement".
-        # Round-3: install the project (which resolves its declared deps),
-        # then audit the installed environment via pip-audit --strict
-        # without --requirement. This audits the exact dep tree CI will run.
+        # T0-6 round-5: pip-audit 2.10.0 still exits 1 on editable distributions
+        # EVEN with --skip-editable (known behavior — the flag changes audit
+        # behavior, not exit code). Round-5 generates a non-editable
+        # requirements file from `pip freeze --exclude-editable` and audits
+        # that file directly. This bypasses the editable-distribution check
+        # while still auditing every 3rd-party dependency installed from
+        # pyproject.toml [project.dependencies] / [project.optional-dependencies].
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install pip-audit
+          # Generate requirements from installed env, excluding editable
+          # installs (i.e., veilbreakers-terrain itself).
+          pip freeze --exclude-editable > /tmp/audit-requirements.txt
+          echo "=== Audit requirements (first 20 lines) ==="
+          head -20 /tmp/audit-requirements.txt
       - name: Run pip-audit
         # --strict: fails on any advisory (cert-blocking per Xbox GDK XR-064).
-        # --skip-editable: skips veilbreakers-terrain itself (the project being
-        # audited is installed editable; pip-audit would try to look it up on
-        # PyPI and fail with "Dependency not found on PyPI"). This excludes
-        # ONLY editable installs (i.e., the project itself); all 3rd-party
-        # deps from pyproject.toml remain audited.
-        # No --requirement flag: pip-audit defaults to auditing the installed
-        # environment from the previous step. The fallback masking concern
-        # from SEC-PR95-02 (round-1) is fully resolved because there is only
-        # one audit path now.
-        run: pip-audit --strict --skip-editable
+        # --requirement: audit only the dep tree from the requirements file
+        # generated in the previous step. This audits every 3rd-party install
+        # (numpy, scipy, etc.) but skips the editable veilbreakers-terrain
+        # without needing --skip-editable's broken exit-code behavior.
+        run: pip-audit --strict --requirement /tmp/audit-requirements.txt
 
   # T0-6 round-2: pre-commit-on-CI deferred to a follow-up PR.
   # CE deployment verification (NO-GO finding on first attempt) confirmed
