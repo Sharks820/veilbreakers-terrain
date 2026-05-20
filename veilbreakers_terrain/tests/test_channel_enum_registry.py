@@ -152,6 +152,37 @@ def test_channels_by_unit_lookup() -> None:
             seen.add(ch)
 
 
+def test_flow_direction_is_indexed_not_radians() -> None:
+    """``flow_direction`` is D8 int8 indices (-1..7) per the producer
+    contract in ``_water_network.pass_hydrology`` (which calls
+    ``priority_flood_d8`` — see ``_water_network.py:705`` and the
+    docstring at ``_water_network.py:296``).
+
+    Pinning this prevents reintroducing the original Codex-P1 regression
+    where the channel was misregistered as ``unit="rad"``. The angular
+    representation (``flow_direction_rad``) only exists at per-lip
+    granularity inside ``terrain_waterfalls.LipCandidate``; it is NOT
+    a mask-stack channel.
+    """
+    from veilbreakers_terrain.handlers._channels import Channel
+
+    assert Channel.FLOW_DIRECTION.value == "flow_direction"
+    assert Channel.FLOW_DIRECTION.info.unit == "id", (
+        f"Channel.FLOW_DIRECTION.info.unit = {Channel.FLOW_DIRECTION.info.unit!r}; "
+        f"must be 'id' because pass_hydrology emits D8 int8 indices, "
+        f"not radians. See _water_network.py:705."
+    )
+    assert Channel.FLOW_DIRECTION.info.unit != "rad", (
+        "Codex-P1 regression guard: flow_direction MUST NOT be tagged 'rad'."
+    )
+    # The legacy misleading name must not be present on the enum.
+    assert not hasattr(Channel, "FLOW_DIRECTION_RAD"), (
+        "Channel.FLOW_DIRECTION_RAD is the misleading legacy name — it must "
+        "stay removed. The mask-stack channel is integer-indexed; only "
+        "LipCandidate.flow_direction_rad (a derived per-lip scalar) uses radians."
+    )
+
+
 def test_cross_registry_consistency_with_golden_snapshots() -> None:
     """The unit assigned to each channel in this enum must match the
     unit assigned in ``terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS``

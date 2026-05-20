@@ -68,8 +68,14 @@ class Channel(Enum):
     # --- Rotation / angular (radians) ---
     SLOPE_RAD = "slope"
     STRATA_ORIENTATION_RAD = "strata_orientation"
-    FLOW_DIRECTION_RAD = "flow_direction"
     ROTATION_Y_RAD = "rotation_y_rad"
+
+    # --- D8 direction indices (int8 -1..7, NOT radians) ---
+    # NB: pass_hydrology emits this as priority_flood_d8 integer indices
+    # (-1 = pit/border, 0..7 = neighbour index). The angular form
+    # ``flow_direction_rad`` only exists at per-lip granularity inside
+    # terrain_waterfalls.LipCandidate — it is NOT the mask-stack channel.
+    FLOW_DIRECTION = "flow_direction"
 
     # --- Degrees (export-side / Unity-bound) ---
     YAW_DEG = "yaw_degrees"
@@ -157,11 +163,14 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
     Channel.STRATA_ORIENTATION_RAD: ChannelInfo(
         "rad", "Strata dip direction, radians"
     ),
-    Channel.FLOW_DIRECTION_RAD: ChannelInfo(
-        "rad", "D8 flow direction, radians"
-    ),
     Channel.ROTATION_Y_RAD: ChannelInfo(
         "rad", "Per-instance Y-axis rotation, radians (Python-side)"
+    ),
+    # D8 direction index (int8 -1..7) — NOT radians. The per-lip radians
+    # form is LipCandidate.flow_direction_rad in terrain_waterfalls; the
+    # mask-stack channel is integer index emitted by priority_flood_d8.
+    Channel.FLOW_DIRECTION: ChannelInfo(
+        "id", "D8 flow direction, int8 indices (-1=pit/border, 0..7=neighbour)"
     ),
     # Degrees-native (export hop)
     Channel.YAW_DEG: ChannelInfo(
