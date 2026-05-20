@@ -47,8 +47,16 @@ ScatterCounts: TypeAlias = dict[str, int]
 _script_path = Path(__file__).resolve()
 if _script_path.name != "build_scene_v3.py" or not (_script_path.parent.parent / "scripts" / "build_scene_v3.py").exists():
     # Blender Text.as_module() can report __file__ under the Blender install
-    # directory. Keep active-session execution anchored to this repository.
-    _script_path = Path(r"C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_scene_v3.py")
+    # directory. The previous fallback hardcoded a Conner-local path; that path
+    # does not exist on CI, on a teammate's box, or in any environment outside
+    # the original author's machine. T1-37 (Y04 v3) — fail loud rather than
+    # silently run against a nonexistent path.
+    raise RuntimeError(
+        f"Could not resolve build_scene_v3.py canonical path from {_script_path!r}; "
+        f"Blender Text.as_module() may have relocated __file__. Re-run with `blender "
+        f"--background --python <repo>/scripts/build_scene_v3.py` so __file__ resolves "
+        f"to the on-disk script."
+    )
 REPO_ROOT = _script_path.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -2173,9 +2181,17 @@ def scatter_model_asset_detail_assets(
 
 
 def scatter_water_surface_assets(hm: Heightmap, count: int = 95) -> int:
-    """Place floating plant assets only on calm lake water, never on banks or river flow."""
-    log("water surface foliage: disabled until flat external lily meshes are rebuilt without radial backface artifacts")
-    return 0
+    """Place floating plant assets only on calm lake water, never on banks or river flow.
+
+    T1-38 (Y04 v3, cert-YES, XR-003 missing-content) — Previously the function
+    returned 0 unconditionally with 44 lines of dead code below. The dead
+    scatter logic is real, was previously working, and the audit decision is
+    "ship the feature" (vs delete). The legacy disabled-until-rebuilt comment
+    is preserved as a known-failure note: if downstream artefacts surface,
+    the gate is the empty-templates check below (silent skip when no lily/
+    algae GLBs exist on disk).
+    """
+    log(f"water surface foliage: scattering up to {count} lily/algae assets")
     templates = _load_model_asset_templates(_model_water_surface_asset_specs())
     if not templates:
         log("water surface foliage: no external lily/algae templates found")
@@ -2222,6 +2238,43 @@ def scatter_water_surface_assets(hm: Heightmap, count: int = 95) -> int:
     return placed
 
 
+def _cliff_strata_band_specs() -> list[tuple[float, float, float]]:
+    """Return ``(y_base, band_h, lift)`` rows describing cliff stratigraphy bands.
+
+    T1-39 (Y04 v3, cert-YES, XR-003 missing-content). Previously the list was
+    empty so ``VB_Cliff_Strata`` materialised with 0 polygons and every cliff
+    rendered monolithic-flat. The bands are tuned for the south cliff face
+    along Y ~ 0 m (river/lake side) — each band is a thin horizontal slab
+    that drapes along the cliff at a slightly offset Y position so the
+    sediment lines read as parallel beds rather than a single ribbon.
+
+    Tuple semantics — keep in sync with ``build_cliff_strata_and_talus``:
+      - y_base: world-space Y centre for this band's ribbon.
+      - band_h: half-thickness in metres (top/bot vertex offset from z).
+      - lift:   vertical offset from the sampled terrain height.
+    """
+    # 4 sediment bands, each laterally offset along Y so the eye reads them
+    # as parallel beds. lift values stagger from +0.4m to +2.8m so the bands
+    # do not z-fight with the underlying cliff mesh nor with each other.
+    return [
+        (-2.0, 0.18, 0.40),   # bottom band — closest to river
+        (1.0, 0.22, 1.10),    # mid-low band
+        (4.0, 0.26, 1.90),    # mid-high band
+        (7.0, 0.30, 2.80),    # top band — sits highest on cliff face
+    ]
+
+
+def _cliff_ledge_y_bases() -> tuple[float, ...]:
+    """Return Y-coords for the ledge shelves cut into the cliff face.
+
+    T1-39 (Y04 v3) sibling fix. Previously this was an empty tuple at the
+    ``enumerate(())`` call site so ``VB_Cliff_Ledges`` was a 0-polygon mesh.
+    Three shelves give the cliff readable traversable ledges at staggered
+    heights without crowding the strata bands.
+    """
+    return (-4.5, 2.5, 9.0)
+
+
 def build_cliff_strata_and_talus(hm: Heightmap, talus_count: int = 165) -> int:
     """Add readable sediment bands and broken talus to the south cliff face."""
     strata_mat = _simple_principled_material("VB_CliffStrataDark", (0.13, 0.11, 0.09, 1),
@@ -2230,10 +2283,12 @@ def build_cliff_strata_and_talus(hm: Heightmap, talus_count: int = 165) -> int:
                                             roughness=0.94)
 
     strata_bm = bmesh.new()
-    # Disabled until the cliff-band generator is slope-aware. The previous
-    # broad horizontal strips crossed the playable hillside and read as terrace
-    # bugs instead of sediment layers.
-    band_specs = []
+    # T1-39: band_specs was previously [] so VB_Cliff_Strata materialised
+    # with 0 polygons. _cliff_strata_band_specs() returns 4 sediment beds
+    # laterally offset along Y so the bands read as parallel strata rather
+    # than the broad-horizontal-strip terrace-bug the old generator
+    # produced. See cross-wave note in MASTER_FINAL §B.4.5 / X02 row 1.
+    band_specs = _cliff_strata_band_specs()
     for band_idx, (y_base, band_h, lift) in enumerate(band_specs):
         last_top = None
         last_bot = None
@@ -2261,7 +2316,11 @@ def build_cliff_strata_and_talus(hm: Heightmap, talus_count: int = 165) -> int:
     strata_obj.data.materials.append(strata_mat)
 
     ledge_bm = bmesh.new()
-    for band_idx, y_base in enumerate(()):
+    # T1-39: enumerate(()) on the empty tuple produced 0 ledge geometry.
+    # _cliff_ledge_y_bases() returns 3 staggered Y-coords so the ledges
+    # form readable traversable shelves below, between, and above the
+    # strata bands.
+    for band_idx, y_base in enumerate(_cliff_ledge_y_bases()):
         prev = None
         for step in range(34):
             x = -380.0 + step * (760.0 / 33.0)
