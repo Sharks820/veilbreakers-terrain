@@ -1,0 +1,18 @@
+# T0-6 (Y04 v2-ord 3 / FIX_PATTERN_v1 §C1): supply-chain hardening.
+# Dependabot keeps GitHub Actions SHA pins and pip dependencies fresh so
+# the project does not drift onto unpatched vulnerabilities. Cert-blocking
+# per Xbox GDK XR-064. PR cap = 5 per ecosystem to keep review load bounded.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
