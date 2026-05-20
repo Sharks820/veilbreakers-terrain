@@ -114,12 +114,18 @@ def test_t1_41_catenary_solver_produces_finite_natural_sag() -> None:
 
     midpoint_z = float(pts[n_points // 2, 2])
     sag = 5.0 - midpoint_z
-    # Real natural sag for 10m span / 12% excess is ~0.7-1.0 m; the
-    # ``a = h*50`` fallback would give cosh(0.1) - 1 == 0.005 m of sag, two
-    # orders of magnitude smaller.
-    assert 0.3 <= sag <= 1.5, (
+    # Real natural sag for 10 m span / 12% length excess (1.2 m of slack
+    # over straight-line distance) is ~2.2 m via the parabolic-approximation
+    # formula  sag ≈ sqrt(3 * h * (L - h) / 8) = sqrt(3 * 10 * 1.2 / 8) ≈
+    # 2.12 m. The exact catenary solver lands at 2.21 m (verified by CI).
+    # The pre-fix `a = h*50` fallback would give cosh(0.1) - 1 ≈ 0.005 m
+    # of sag, two orders of magnitude smaller — which the lower bound
+    # 0.3 m catches.  Upper bound 3.0 m comfortably covers the physically
+    # correct catenary range while still flagging any pathological
+    # divergence (e.g. unbounded brentq output).
+    assert 0.3 <= sag <= 3.0, (
         f"midpoint sag {sag:.4f} m outside natural catenary range "
-        "[0.3, 1.5] -- silent fallback regressed (T1-41)"
+        "[0.3, 3.0] -- silent fallback regressed (T1-41)"
     )
 
 
