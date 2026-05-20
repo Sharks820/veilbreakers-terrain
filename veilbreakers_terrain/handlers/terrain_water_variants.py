@@ -1073,13 +1073,27 @@ def pass_seasonal_water_state(
     try:
         seasonal_state = SeasonalState(str(raw_season).lower())
     except ValueError:
+        # T1-10 fix (γ3 D-07 absorbs G-59 unreachable raise + F-ZZ3b9-02):
+        # ValidationIssue constructor was triple-broken — wrong severity
+        # ("warning" not in ("hard","soft","info")), missing required `code`,
+        # and `channel=` is not a ValidationIssue field (closest is
+        # `affected_feature`). Each of those would raise inside
+        # ValidationIssue.__post_init__ if this branch ever fired in production
+        # — silently latent because the default seasonal_state="normal" was
+        # always valid. Fix aligns with the canonical ValidationIssue dataclass
+        # in terrain_semantics.py:1556-1578.
         issues.append(ValidationIssue(
-            severity="warning",
+            code="SEASONAL_STATE_UNKNOWN",
+            severity="soft",
+            affected_feature="seasonal_water_state",
             message=(
                 f"pass_seasonal_water_state: unknown seasonal_state={raw_season!r}; "
                 "falling back to NORMAL (no-op)."
             ),
-            channel="wetness",
+            remediation=(
+                "Set composition_hints['seasonal_state'] to one of "
+                "'dry', 'normal', 'wet', 'frozen'."
+            ),
         ))
         seasonal_state = SeasonalState.NORMAL
 

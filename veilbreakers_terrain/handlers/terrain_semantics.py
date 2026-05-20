@@ -1562,16 +1562,18 @@ class ValidationIssue:
     message: str = ""
     remediation: Optional[str] = None
 
-    _VALID_SEVERITIES: "Tuple[str, ...]" = field(
-        init=False, repr=False, compare=False,
-        default=("hard", "soft", "info"),
-    )
+    # T1-47 fix: ClassVar[frozenset[str]] is the canonical pyright-strict
+    # form for class-level constant sets on a @dataclass. The prior
+    # `field(init=False, repr=False, compare=False, default=...)` form was
+    # working at runtime but pyright strict mode flagged it as a regular
+    # dataclass field. frozenset gives O(1) membership and is immutable.
+    _VALID_SEVERITIES: ClassVar[frozenset[str]] = frozenset({"hard", "soft", "info"})
 
     def __post_init__(self) -> None:
         if self.severity not in self._VALID_SEVERITIES:
             raise ValueError(
                 f"ValidationIssue severity {self.severity!r} is not one of "
-                f"{self._VALID_SEVERITIES}. Use 'hard' (blocks pipeline), "
+                f"{sorted(self._VALID_SEVERITIES)}. Use 'hard' (blocks pipeline), "
                 f"'soft' (warning), or 'info' (informational)."
             )
         if not self.code:
@@ -1611,16 +1613,22 @@ class PassResult:
     content_hash_after: Optional[str] = None
     checkpoint_path: Optional[str] = None
 
-    _VALID_STATUSES: "Tuple[str, ...]" = field(
-        init=False, repr=False, compare=False,
-        default=("ok", "warning", "failed", "skipped", "dry_run"),
+    # T1-47 fix: ClassVar[frozenset[str]] is the canonical pyright-strict
+    # form for class-level constant sets on a @dataclass. See sibling
+    # ValidationIssue._VALID_SEVERITIES above for the same migration.
+    # Note: per Y04 v3 the "warning" status remains in the valid set —
+    # T0-4 (already landed in PR #91) closed the warning-bypass code path
+    # in run_pass but did NOT remove "warning" from the value enumeration;
+    # passes legitimately emit status="warning" when issues are present.
+    _VALID_STATUSES: ClassVar[frozenset[str]] = frozenset(
+        {"ok", "warning", "failed", "skipped", "dry_run"}
     )
 
     def __post_init__(self) -> None:
         if self.status not in self._VALID_STATUSES:
             raise ValueError(
                 f"PassResult status {self.status!r} must be one of "
-                f"{self._VALID_STATUSES}."
+                f"{sorted(self._VALID_STATUSES)}."
             )
         if not self.pass_name:
             raise ValueError("PassResult.pass_name must be a non-empty string.")
