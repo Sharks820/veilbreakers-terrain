@@ -88,15 +88,20 @@ def _spec(material_ids: list[int]) -> dict[str, Any]:
     ],
 )
 def test_t1_15_material_slot_count_uses_max_plus_one(
-    material_ids: list[int], expected_slots: int
+    material_ids: list[int], expected_slots: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """material_slot_count is max(material_ids)+1, not len(set(material_ids))."""
+    # T1-15 round-3: the CI conftest installs a bpy stub which makes
+    # `_HAS_BPY = True` (the module-level try/import succeeds against
+    # the stub). Force the headless fallback path explicitly so the
+    # dict-return contract is what we exercise.
+    from veilbreakers_terrain.handlers import _mesh_bridge as _mb
+    monkeypatch.setattr(_mb, "_HAS_BPY", False)
+
     result = mesh_from_spec(_spec(material_ids))
-    # Fallback path (no bpy) returns a dict — we run in CI without Blender.
     assert isinstance(result, dict), (
-        "Test must run on the headless fallback path; got Blender object instead. "
-        "If bpy is available, this test still validates the slot count via the "
-        "dict-return fallback only when bpy.data is unavailable."
+        "Test must run on the headless fallback path; got Blender object instead."
     )
     assert result["material_slot_count"] == expected_slots, (
         f"For material_ids={material_ids}, expected {expected_slots} slots "
@@ -118,12 +123,16 @@ def test_t1_15_negative_material_id_rejected() -> None:
         mesh_from_spec(spec)
 
 
-def test_t1_15_empty_material_ids_defaults_to_one_slot() -> None:
+def test_t1_15_empty_material_ids_defaults_to_one_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Empty material_ids list yields num_slots == 1 (single default material).
 
     Regression: ensures the `else: num_slots = 1` branch survived the
     T1-15 refactor that removed the now-unreachable range-check loop.
     """
+    from veilbreakers_terrain.handlers import _mesh_bridge as _mb
+    monkeypatch.setattr(_mb, "_HAS_BPY", False)
     spec = _spec([])
     # _spec([]) builds zero faces — give it one face manually.
     spec["faces"] = [[0, 1, 2]]
