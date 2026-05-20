@@ -56,6 +56,131 @@ def _artifact_sha256(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# T0-2 (Y04 v3 / S01-P0-RT-02 / γ3 D-01): CLI pipeline rewire
+# ---------------------------------------------------------------------------
+# Prior CLI called ``generate_heightmap`` + ``compute_slope_map_degrees``
+# directly. This bypassed the entire ``TerrainPassController.run_pipeline()``
+# orchestrator — biome channels, structural masks, validation, provenance,
+# and the populated_by_pass ledger were never produced when invoking
+# ``python -m veilbreakers_terrain.cli generate_tile``. Tests against the
+# CLI therefore only asserted determinism of the stub path, never of the
+# real pipeline.
+#
+# Per FIX_PATTERN_v1 §C7 small, we now route every CLI bake through the
+# real controller using a minimal scene-read-free pass sequence (the same
+# 6-pass default selected by ``_execute_terrain_pipeline`` when no
+# scene_read is attached, see ``handlers/environment.py:2852-2859``). The
+# heightmap that was previously written verbatim becomes the input to the
+# pipeline's ``TerrainMaskStack.height`` channel; the final stack's
+# ``compute_hash()`` is recorded in the manifest as
+# ``final_mask_stack_hash`` so callers can verify the orchestrator
+# actually ran (a stub bypass would either fail to produce the hash or
+# emit one whose constituent channels are missing).
+def _run_real_pipeline_for_cli(
+    *,
+    height: np.ndarray,
+    seed: int,
+    tile_size: int,
+    cell_size: float,
+    world_origin_x: float,
+    world_origin_y: float,
+    tile_x: int,
+    tile_y: int,
+) -> dict[str, object]:
+    """Execute the real ``TerrainPassController.run_pipeline()`` for the CLI.
+
+    Returns a dict with:
+
+    - ``final_mask_stack_hash`` -- ``stack.compute_hash()`` after the
+      pipeline finishes. Deterministic for fixed inputs.
+    - ``pass_sequence`` -- ordered list of pass names that were actually
+      executed by the orchestrator (proof the controller ran, not a stub).
+    - ``populated_channels`` -- sorted channel names that any pass wrote
+      to ``populated_by_pass`` (further proof channels exist beyond the
+      caller-provided height).
+    - ``pipeline_status`` -- terminal status of the last pass.
+    """
+    # Local imports to keep ``argparse`` startup cheap and to avoid hard
+    # dependencies on the handlers package at module import time (the CLI
+    # is also imported by tests that monkey-patch handler internals).
+    from .handlers.terrain_master_registrar import register_all_terrain_passes
+    from .handlers.terrain_pipeline import TerrainPassController
+    from .handlers.terrain_semantics import (
+        BBox,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+    # Ensure the canonical pass registry is loaded.  ``strict=False`` so
+    # repeat CLI invocations in the same Python session do not crash on
+    # duplicate registration.
+    register_all_terrain_passes(strict=False)
+
+    region_bounds = BBox(
+        min_x=float(world_origin_x),
+        min_y=float(world_origin_y),
+        max_x=float(world_origin_x) + float(tile_size) * float(cell_size),
+        max_y=float(world_origin_y) + float(tile_size) * float(cell_size),
+    )
+
+    mask_stack = TerrainMaskStack(
+        tile_size=int(tile_size),
+        cell_size=float(cell_size),
+        world_origin_x=float(world_origin_x),
+        world_origin_y=float(world_origin_y),
+        tile_x=int(tile_x),
+        tile_y=int(tile_y),
+        height=np.ascontiguousarray(np.asarray(height, dtype=np.float64)),
+    )
+
+    intent = TerrainIntentState(
+        seed=int(seed),
+        region_bounds=region_bounds,
+        tile_size=int(tile_size),
+        cell_size=float(cell_size),
+        quality_profile="preview",  # CLI bakes don't have scene_read; use preview profile.
+        noise_profile="mountains",
+        erosion_profile="temperate",
+    )
+
+    state = TerrainPipelineState(intent=intent, mask_stack=mask_stack)
+    controller = TerrainPassController(state)
+
+    # Minimal scene-read-free pass sequence (mirrors the default selected
+    # by environment.py:_execute_terrain_pipeline when scene_read is None).
+    pass_sequence = [
+        "pass_generate_low_freq_hmap",
+        "terrain_labels",
+        "structural_masks",
+        "pass_generate_high_freq_detail",
+        "pass_composite_hmap",
+        "validation_minimal",
+    ]
+
+    # checkpoint=False: do not write filesystem-side checkpoints from the
+    # CLI bake (the manifest+heightmap+splatmap are the only artifacts the
+    # CLI contract owns).
+    results = controller.run_pipeline(
+        intent=intent,
+        pass_sequence=pass_sequence,
+        checkpoint=False,
+    )
+
+    final_hash = controller.state.mask_stack.compute_hash()
+    populated_channels = sorted(controller.state.mask_stack.populated_by_pass.keys())
+    executed = [r.pass_name for r in results]
+    terminal_status = results[-1].status if results else "no_passes_executed"
+
+    return {
+        "final_mask_stack_hash": final_hash,
+        "pass_sequence": executed,
+        "populated_channels": populated_channels,
+        "pipeline_status": str(terminal_status),
+    }
+
+
 def _generate_tile(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +224,24 @@ def _generate_tile(args: argparse.Namespace) -> int:
     splat_path = out_dir / "splatmap_0.png"
     _write_rgba_png(splat_path, rgba)
 
+    # T0-2: route through the REAL TerrainPassController.run_pipeline()
+    # so the CLI is no longer a noise-only stub.  Failure to load the
+    # pass registry or execute the pipeline now hard-fails the CLI
+    # (rather than silently producing artifacts that bypass every pass).
+    # ``cell_size=1.0`` matches the default used by
+    # ``handlers/environment.py:_execute_terrain_pipeline`` when callers
+    # do not override it.
+    pipeline_summary = _run_real_pipeline_for_cli(
+        height=height.astype(np.float64),
+        seed=int(args.seed),
+        tile_size=int(args.size),
+        cell_size=1.0,
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
+        tile_x=tile_x,
+        tile_y=tile_y,
+    )
+
     manifest = {
         "seed": int(args.seed),
         "size": int(args.size),
@@ -112,6 +255,14 @@ def _generate_tile(args: argparse.Namespace) -> int:
             "heightmap.bin": _artifact_sha256(height_path),
             "splatmap_0.png": _artifact_sha256(splat_path),
         },
+        # T0-2: orchestrator-coverage proof.  Stub-bypass CLIs cannot
+        # populate these fields, so a non-empty ``final_mask_stack_hash``
+        # plus a non-empty ``pass_sequence`` is the regression-test
+        # discriminator that the real pipeline executed.
+        "final_mask_stack_hash": pipeline_summary["final_mask_stack_hash"],
+        "pipeline_pass_sequence": pipeline_summary["pass_sequence"],
+        "pipeline_populated_channels": pipeline_summary["populated_channels"],
+        "pipeline_status": pipeline_summary["pipeline_status"],
     }
     manifest_path = out_dir / "manifest.json"
     # T1-4 (Y04 v3 ord 13 / γ1 ZZ3-NEW-P1-04): allow_nan=False — tile-bake
