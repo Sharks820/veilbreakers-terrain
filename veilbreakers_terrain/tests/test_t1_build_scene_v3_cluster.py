@@ -208,7 +208,7 @@ def test_t1_39_cliff_ledge_y_bases_non_empty(
 ) -> None:
     """The ledge Y-coord tuple was previously `()` so `enumerate(())` produced
     0 ledge geometry. Like the strata-band fix, we now assert ≥1 ledge."""
-    bases = build_scene_v3_module._cliff_ledge_y_bases()
+    bases: tuple[float, ...] = build_scene_v3_module._cliff_ledge_y_bases()
     assert isinstance(bases, tuple), (
         "T1-39 contract: _cliff_ledge_y_bases() must return a tuple "
         "(matches the original `enumerate(())` call-site type)."
