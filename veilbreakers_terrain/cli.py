@@ -272,6 +272,16 @@ def _generate_tile(args: argparse.Namespace) -> int:
         json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+    # REL-PR102-USERVIS-01 (CHECKPOINT-OPUS-ULTRA hotfix): the CLI previously
+    # returned 0 unconditionally even when the orchestrator reported
+    # ``pipeline_status == "failed"`` or ``"no_passes_executed"``. Manifest
+    # is written for forensic purposes regardless (so downstream debuggers
+    # can see what was attempted), but the exit code MUST surface the
+    # failure to the calling shell / CI / make harness. Without this, a
+    # broken pipeline pass appears to ship a green tile.
+    failure_statuses = {"failed", "no_passes_executed"}
+    if pipeline_summary.get("pipeline_status") in failure_statuses:
+        return 1
     return 0
 
 

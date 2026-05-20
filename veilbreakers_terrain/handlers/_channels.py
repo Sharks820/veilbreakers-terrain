@@ -67,7 +67,15 @@ class Channel(Enum):
 
     # --- Rotation / angular (radians) ---
     SLOPE_RAD = "slope"
-    STRATA_ORIENTATION_RAD = "strata_orientation"
+    # UT-C1 (CHECKPOINT-OPUS-ULTRA hotfix, T0.5-1b): the producer at
+    # ``terrain_stratigraphy.compute_strata_orientation`` writes (H, W, 3)
+    # direction-cosine vectors ``(nx, ny, nz)`` in ``[-1, 1]`` — NOT
+    # radians. The enum name (``STRATA_ORIENTATION_XYZ``) and its
+    # ``ChannelInfo.unit`` now match the producer; the string value
+    # ``"strata_orientation"`` is unchanged so the mask-stack accessor
+    # remains backwards-compatible (consumers already expect direction
+    # cosines).
+    STRATA_ORIENTATION_XYZ = "strata_orientation"
     ROTATION_Y_RAD = "rotation_y_rad"
 
     # --- D8 direction indices (int8 -1..7, NOT radians) ---
@@ -160,8 +168,9 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
     ),
     # Rotation / angular
     Channel.SLOPE_RAD: ChannelInfo("rad", "Slope angle, radians"),
-    Channel.STRATA_ORIENTATION_RAD: ChannelInfo(
-        "rad", "Strata dip direction, radians"
+    Channel.STRATA_ORIENTATION_XYZ: ChannelInfo(
+        "unit_normal_xyz",
+        "Strata dip direction, 3D unit-normal vector (nx, ny, nz) in [-1, 1]",
     ),
     Channel.ROTATION_Y_RAD: ChannelInfo(
         "rad", "Per-instance Y-axis rotation, radians (Python-side)"
