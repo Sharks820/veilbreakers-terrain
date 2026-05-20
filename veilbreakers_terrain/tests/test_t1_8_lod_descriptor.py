@@ -141,6 +141,62 @@ class TestResolveLodMaxDistance:
         Drift here would cause silent visual regression vs. pre-T1-8 builds."""
         assert _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M == 400.0
 
+    # ------------------------------------------------------------------
+    # PR #117 round-2 — legacy alias pins
+    #
+    # The ``_BUILTIN_PROFILES`` registry in ``terrain_quality_profiles``
+    # exposes four legacy alias names that callers still hard-code in
+    # configs / tests:
+    #
+    #     preview     -> mobile data  (extends=None directly)         -> 200 m
+    #     low         -> mobile data  (extends=None directly)         -> 200 m
+    #     production  -> standard data, extends="preview"             -> 500 m
+    #     hero_shot   -> high_fidelity data, extends="production"     -> 1000 m
+    #
+    # These pins lock the alias-to-radius mapping that ``_resolve_lod_max
+    # _distance_m`` depends on. If a future refactor of the alias chain
+    # silently changes any of these values, the Unity LOD ring radius
+    # changes underneath every legacy caller without breaking any other
+    # test — exactly the silent-default regression class T1-8 was filed
+    # to eliminate.
+    #
+    # Note ``production`` triggers ``DeprecationWarning`` in
+    # ``load_quality_profile``. PR #117 round-2 narrowed the helper's
+    # ``except`` to ``(ValueError, PresetLocked)`` so the warning is no
+    # longer silently swallowed; under ``python -W error`` the alias
+    # would now raise and propagate.
+    # ------------------------------------------------------------------
+
+    def test_legacy_alias_preview_resolves_to_200m(self) -> None:
+        """Legacy alias ``preview`` shares mobile's data -> 200 m."""
+        assert _resolve_lod_max_distance_m("preview") == 200.0
+
+    def test_legacy_alias_low_resolves_to_200m(self) -> None:
+        """Legacy alias ``low`` shares mobile's data -> 200 m."""
+        assert _resolve_lod_max_distance_m("low") == 200.0
+
+    def test_legacy_alias_production_resolves_to_500m(self) -> None:
+        """Legacy alias ``production`` extends preview; inheritance merge
+        keeps standard's 500 m (max of standard 500 and preview 200)."""
+        # Filter the DeprecationWarning that load_quality_profile emits
+        # for "production" so this assertion stays clean. The narrowed
+        # except in the helper means the warning would otherwise propagate
+        # under ``python -W error::DeprecationWarning``.
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            assert _resolve_lod_max_distance_m("production") == 500.0
+
+    def test_legacy_alias_hero_shot_resolves_to_1000m(self) -> None:
+        """Legacy alias ``hero_shot`` extends production; inheritance merge
+        keeps high_fidelity's 1000 m (max of hf 1000 and production 500)."""
+        import warnings
+        with warnings.catch_warnings():
+            # hero_shot recurses through production which triggers the
+            # DeprecationWarning; filter only that warning, not real ones.
+            warnings.simplefilter("ignore", DeprecationWarning)
+            assert _resolve_lod_max_distance_m("hero_shot") == 1000.0
+
 
 # ---------------------------------------------------------------------------
 # End-to-end descriptor emission

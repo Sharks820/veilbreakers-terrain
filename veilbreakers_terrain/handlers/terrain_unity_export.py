@@ -1693,16 +1693,32 @@ def _resolve_lod_max_distance_m(profile_name: Optional[str]) -> float:
     """
     if not profile_name or profile_name == "default":
         return _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
-    try:
-        # Lazy import — see docstring.
-        from .terrain_quality_profiles import load_quality_profile
+    # Lazy import — see docstring. Hoisted out of the try/except so
+    # ``PresetLocked`` is statically bound before the except clause names
+    # it (pyright reportPossiblyUnboundVariable). The import itself is
+    # still deferred to first-call (i.e. Unity export time) rather than
+    # module-import time, which is what "lazy" means here — Bundle J does
+    # not pay the Bundle D supplement import cost just to load this module.
+    from .terrain_quality_profiles import (
+        PresetLocked,
+        load_quality_profile,
+    )
 
+    try:
         profile = load_quality_profile(profile_name)
-    except Exception:
-        # Unknown profile name, locked preset, deprecation, etc. — fall back
-        # to the legacy literal rather than fail the entire Unity export
-        # over a profile lookup. The C# importer will see the legacy
-        # 50/150/400 m fan-out (identical to its hard-coded fallback).
+    except (ValueError, PresetLocked):
+        # PR #117 round-2 (CE verifier): narrowed from `except Exception`
+        # so DeprecationWarning under ``python -W error::DeprecationWarning``
+        # escapes rather than being silently downgraded to the 400 m
+        # legacy fallback.  ``load_quality_profile`` declares exactly two
+        # exception families:
+        #   - ValueError (unknown name) and ProfileValidationError
+        #     (cycle in extends chain — subclass of ValueError)
+        #   - PresetLocked (lock_preset=True on resolved profile)
+        # Both indicate "no usable profile" and degrade safely to the
+        # historical literal-C# behaviour rather than fail the entire
+        # Unity export. The C# importer will see the legacy 50/150/400 m
+        # fan-out (identical to its hard-coded fallback).
         return _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
     lod_max = getattr(profile, "lod_max_distance_m", None)
     if lod_max is None or not isinstance(lod_max, (int, float)) or lod_max <= 0.0:
