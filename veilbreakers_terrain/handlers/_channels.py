@@ -86,7 +86,52 @@ class Channel(Enum):
     FLOW_DIRECTION = "flow_direction"
 
     # --- Degrees (export-side / Unity-bound) ---
+    # NB: YAW_DEG and VB_ASPECT_DEG are TWO distinct degree-native
+    # CONTRACTS. They represent different physical axes and live on
+    # different surfaces. The registry pins the CONTRACT, not the
+    # current implementation state.
+    #
+    #   - YAW_DEG ("yaw_degrees")     — per-instance scatter/tree/animation
+    #     rotation around the world-up axis, written into the
+    #     tree_instance_points export at the Unity boundary by
+    #     terrain_assets._build_tree_instance_array (PR #90 rad->deg
+    #     anchor; PR #87 T0.5-4 boundary round-trip test pins the
+    #     post-fix degrees contract at the JSON hop). Lives on
+    #     EXPORT-side; NOT a TerrainMaskStack field — see
+    #     test_channel_value_matches_terrain_mask_stack_field's
+    #     _EXPORT_SIDE_CHANNELS exemption set.
+    #
+    #     KNOWN PRODUCER MISMATCH (copilot threads T114-1/T114-2 on
+    #     PR #114): the producer at terrain_assets.py:811 still writes
+    #     ``rng.uniform(0.0, 2.0 * math.pi)`` (RADIANS) into column 3
+    #     of tree_instance_points; the downstream
+    #     terrain_unity_export._tree_instances_json passes that value
+    #     through under the JSON field name "yaw_degrees". The producer
+    #     is what is wrong, not the registry — Unity's
+    #     TreeInstanceEntry.yaw_degrees field is degrees by contract
+    #     (Quaternion.Euler(0, yaw_degrees, 0)). The "deg" tag here
+    #     pins the contract that T0-4.5b will enforce by converting
+    #     the producer (Y04 v3 T0-4.5b — see Y04_v2_FIX_ORDER_2026_05_18.md
+    #     line ~12570: "terrain_assets.py:811 _build_tree_instance_array
+    #     writes RADIANS into column labelled yaw_degrees. Producer fix
+    #     + round-trip test"). PR #114's scope is the registry symmetry
+    #     surface; the producer fix is intentionally a separate PR.
+    #     test_unity_export_boundary_roundtrip already pins the
+    #     post-T0-4.5b degrees-at-JSON-hop contract.
+    #
+    #   - VB_ASPECT_DEG ("vb_aspect_deg") — topographic aspect (compass
+    #     direction the slope faces) at each terrain cell in [0, 360),
+    #     emitted by handlers.terrain_topographic_indices.pass_topographic_indices
+    #     for foliage/scatter placement rules. Lives as a real
+    #     TerrainMaskStack field. Producer genuinely emits degrees
+    #     today via ``np.degrees(...)``; the "deg" tag is honest at
+    #     both contract and implementation.
+    #
+    # These two MUST NOT be unified — they represent different concepts
+    # (rotation vs orientation, per-instance vs per-cell). Any future
+    # consolidation proposal should be rejected.
     YAW_DEG = "yaw_degrees"
+    VB_ASPECT_DEG = "vb_aspect_deg"
 
     # --- Dimensionless [0, 1] continuous masks ---
     WETNESS = "wetness"
@@ -102,6 +147,13 @@ class Channel(Enum):
     DEPOSITION_AMOUNT = "deposition_amount"
     CURVATURE = "curvature"
     BANK_INSTABILITY = "bank_instability"
+    # --- Categorical-derived RGB mask (multi-channel float32) ---
+    # macro_color is (H, W, 3) float32 RGB on TerrainMaskStack — produced by
+    # terrain_macro_color.compute_macro_color from biome palette + altitude
+    # + wetness. Pinned "dimensionless" to match the assertion-site registry
+    # in terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS (no physical unit,
+    # but not in [0, 1] per-channel; the RGB triple carries no metric).
+    MACRO_COLOR = "macro_color"
 
     # --- Binary masks (dimensionless 0/1) ---
     CLIFF_CANDIDATE = "cliff_candidate"
@@ -184,9 +236,19 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
         "dimensionless",
         "D8 flow direction, int8 indices (-1=pit/border, 0..7=neighbour) — NOT radians",
     ),
-    # Degrees-native (export hop)
+    # Degrees-native — TWO distinct axes (see comment above the enum
+    # entries near YAW_DEG / VB_ASPECT_DEG for why these must stay separate).
     Channel.YAW_DEG: ChannelInfo(
-        "deg", "Tree yaw in tree_instance_points export, degrees (Unity-facing)"
+        "deg",
+        "Per-instance yaw in tree_instance_points export, degrees "
+        "(Unity-facing rotation around world-up axis) — distinct from "
+        "vb_aspect_deg",
+    ),
+    Channel.VB_ASPECT_DEG: ChannelInfo(
+        "deg",
+        "Topographic aspect (compass direction slope faces) per cell, "
+        "degrees in [0, 360); 0=N, 90=E, 180=S, 270=W — distinct from "
+        "yaw_degrees",
     ),
     # Dimensionless
     Channel.WETNESS: ChannelInfo("dimensionless", "Surface wetness [0, 1]"),
@@ -217,6 +279,12 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
     ),
     Channel.BANK_INSTABILITY: ChannelInfo(
         "dimensionless", "Bank instability factor [0, 1]"
+    ),
+    Channel.MACRO_COLOR: ChannelInfo(
+        "dimensionless",
+        "Per-cell macro-color RGB triple (H, W, 3) float32 — biome palette "
+        "blended with altitude + wetness modulations. Multi-channel; no "
+        "scalar unit",
     ),
     # Binary masks
     Channel.CLIFF_CANDIDATE: ChannelInfo(
