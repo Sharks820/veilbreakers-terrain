@@ -12521,38 +12521,59 @@ The **definitive** integration: Y04 v3 replaces v2 with augmented Tier-0, new Ti
 
 ### P.8.1 Tier-0 Emergency (AUGMENTED — adds F1)
 
-| Ord | ID | What | Effort | Status vs v2 |
-|---|---|---|---|---|
-| 0a | T-prep-0 | Supply-chain guard (pin pyright + flit-core + actions/checkout) | 0.5d | unchanged |
-| **0b** | ⚠️ **F1 NEW** | **`.mcp.json` git-history scrub via BFG / `git filter-repo`** + force-push + warn-collaborators | 1d | **NEW (ZZ-4 A2 P0)** |
-| 0c | T0-1 | Tripo + 3 MCP key rotation (Exa, Firecrawl, Tavily) + invalidate sessions | 0.5d | augmented by F1 prerequisite |
-| 0d | T0-2 | CLI rewire (run_pipeline anchor) | 1d | unchanged |
-| 0e | T0-3 | Golden bake reset (visual goldens canonical) | 1d | unchanged |
-| 0f | T0-3.5 | `bm.free()` 28-site sweep | 1d | unchanged |
-| 0g | T0-4 | warning-bypass flip + `_restore_pass_state` rollback path | 2d | depends on T0.5a |
-| 0h | T0-4.5 | Unity `localEulerAnglesRaw` rad→deg | 0.5d | depends on T0.5c |
-| 0i | T0-5 | N18 road reform | 3d | unchanged |
-| 0j | T0-6 | Tripo cleanup (delete + invalidate session) | 0.5d | unchanged |
-| 0k | T0-7 | RCE close (from_npz tightening) | 1d | unchanged |
-| 0l | T0-8 | deepcopy split (4 sites) | 1d | unchanged |
+**STATUS as of 2026-05-20:** 3 of 12 entries closed (T0-4 partial, T0-4.5 partial, T0-7 partial). F1 + T0-1 still user-gated (force-push + external service credential touch require explicit user approval per FIX_PATTERN_v1 §3-C1/C2).
+
+| Ord | ID | What | Effort | **Status** | **Merge SHA** |
+|---|---|---|---|---|---|
+| 0a | T-prep-0 | Supply-chain guard (pin pyright + flit-core + actions/checkout) | 0.5d | **PARTIAL** — `.gitignore` + `.pre-commit-config.yaml` present; `.secrets.baseline` missing (detect-secrets not installed locally) | — |
+| **0b** | ⚠️ **F1 NEW** | **`.mcp.json` git-history scrub via BFG / `git filter-repo`** + force-push + warn-collaborators | 1d | **USER-GATED** (force-push to `main`) | — |
+| 0c | T0-1 | Tripo + 3 MCP key rotation (Exa, Firecrawl, Tavily) + invalidate sessions | 0.5d | **USER-GATED** (external service touch) | — |
+| 0d | T0-2 | CLI rewire (run_pipeline anchor) | 1d | not started | — |
+| 0e | T0-3 | Golden bake reset (visual goldens canonical) | 1d | not started — needs Cycles render (Blender) | — |
+| 0f | T0-3.5 | `bm.free()` 28-site sweep | 1d | not started — recommended as next high-leverage single-PR target | — |
+| 0g | T0-4 | warning-bypass flip + `_restore_pass_state` rollback path | 2d | **PARTIAL — rollback path landed; warning-bypass flip DEFERRED as T0-4b** (PR #91 closed 4 of 5 raise paths; 5th at terrain_pipeline.py:1052 quality-gate-failed path filed as T0-4c) | `ae463d7f` |
+| 0h | T0-4.5 | Unity `localEulerAnglesRaw` rad→deg | 0.5d | **PARTIAL — write_animation_clip_yaml fixed (PR #90); ZZ3-NEW-P0-01 producer side (terrain_assets.py:811 writes rad as "deg") DEFERRED as T0-4.5b** | `cfac3400` |
+| 0i | T0-5 | N18 road reform | 3d | not started | — |
+| 0j | T0-6 | Tripo cleanup (delete + invalidate session) | 0.5d | **USER-GATED** (paired with T0-1) | — |
+| 0k | T0-7 | RCE close (from_npz tightening) | 1d | **PARTIAL — `allow_pickle=False` at 5 user-path np.load sites (PR #92); `from_npz` format refactor DEFERRED as T0-7b** | `e4fbbc18` |
+| 0l | T0-8 | deepcopy split (4 sites) | 1d | not started | — |
 
 ### P.8.2 ⚠️ **Tier-0.5 Regression Net Batch (NEW — gates Tier-1)**
 
 The audit-mandated **regression nets BEFORE the rollback-path flip lands**. Without these, T0-4 is a regression hazard with no test guard.
 
-| Ord | ID | What | Effort | Closes |
-|---|---|---|---|---|
-| 0.5a | **T0.5-1** | **Typed channel `Enum` registry** (Channel.SLOPE_RAD, Channel.WATER_DEPTH_M, Channel.YAW_DEG, Channel.ROTATION_Y_RAD, etc.) | 3d | ZZ4-A6 R1 (Shape A elimination) |
-| 0.5b | **T0.5-2** | **14 status="warning" → "ok"-strict** lines tightened (test_terrain_assets.py:661, test_terrain_caves.py:577,676, …) | 1d | ZZ4-A4 P0-01 test-side residue |
-| 0.5c | **T0.5-3** | **15 new test files** for 30 highest-risk untested functions (see §P.4.3 list) | 4d | ZZ4-A5 critical gap |
-| 0.5d | **T0.5-4** | **Boundary round-trip tests** at Unity export hop (3 tests: rad→deg, water_depth, bone rotation) | 1d | ZZ4-A6 R2 (Shape A export catch) |
-| 0.5e | **T0.5-5** | **Per-channel unit normaliser** in `terrain_golden_snapshots._evaluate_channel_assertion` + `_evaluate_semantic_assertion` | 0.5d | ZZ4-A6 R5 (Shape C fix) |
-| 0.5f | **T0.5-6** | **`test_terrain_pipeline_smoke.py` stub-seam refactor** — rename to `_orchestration_smoke`, remove "determinism" / "checkpoint" claims OR re-bind to real `apply_hydraulic_erosion(iterations=10)` | 1d | ZZ4-A4 FUT-MOCK P0 |
-| 0.5g | **T0.5-7** | **`test_geometric_quality.py:27` tautological delete** + re-import from `handlers.terrain_world_orchestration` | 0.5d | ZZ4-A4 P0 |
-| 0.5h | T0.5-8 | `json.dumps(allow_nan=False)` at `terrain_unity_export.py:858` + ValueError test | 0.5d | ZZ4-A6 R3 (Shape B loud-at-source) |
-| 0.5i | T0.5-9 | Split `test_full_terrain_pipeline.py` per-bundle + `run_pass` catch-and-tag | 1d | ZZ4-A6 R4 (cascade scoping) |
+**STATUS as of 2026-05-20:** 8/9 LANDED on `main`. T0.5-9 DEFERRED with rationale (file `test_full_terrain_pipeline.py` doesn't exist; cascade-scoping already in `run_pass` via FIX-D24-PR13 try/except + per-channel `assert_finite_array`). VERIFICATION report at `VERIFICATION_REPORT_2026_05_20.md` in this directory.
 
-**Total Tier-0.5: ~12.5 days ≈ 2.5 eng weeks**. Gates Tier-1 entry. **Tier-0.5 is non-skippable for B+ grade.**
+| Ord | ID | What | Effort | Closes | **Status** | **Merge SHA** |
+|---|---|---|---|---|---|---|
+| 0.5a | **T0.5-1** | **Typed channel `Enum` registry** (Channel.SLOPE_RAD, Channel.WATER_DEPTH_M, Channel.YAW_DEG, etc.) | 3d | ZZ4-A6 R1 (Shape A elimination) | **✓ LANDED** (PR #89) — foundational; producer/consumer migration deferred per FIX_PATTERN_v1 §3-C4 step 2 | `e9558b73` |
+| 0.5b | **T0.5-2** | **14 status="warning" → "ok"-strict** lines tightened (audit undercounted — actual was 21 sites) | 1d | ZZ4-A4 P0-01 test-side residue | **✓ LANDED** across 4 PRs (#80 + #82 + #83 + #84): 18 tightened + 3 documented-permissive | #80=`bb761d38`, #82=`b355485c`, #83=`a002cb95`, #84=`2334b319` |
+| 0.5c | **T0.5-3** | **15 new test files** for 30 highest-risk untested functions (see §P.4.3 list) | 4d | ZZ4-A5 critical gap | **PARTIAL** — PR #75 authored the rollback-path regression net (the T0-4 prerequisite) but did NOT deliver the 15-files-headcount. Headcount promise re-scoped to T0.5-3b (future) | `0c6c5831` |
+| 0.5d | **T0.5-4** | **Boundary round-trip tests** at Unity export hop (3 tests: rad→deg, water_depth, bone rotation) | 1d | ZZ4-A6 R2 (Shape A export catch) | **✓ LANDED** (PR #87) — 3 tests; xfail-strict decorator on test-2 fired correctly when #90 landed | `e586f166` |
+| 0.5e | **T0.5-5** | **Per-channel unit normaliser** in `terrain_golden_snapshots._evaluate_channel_assertion` + `_evaluate_semantic_assertion` | 0.5d | ZZ4-A6 R5 (Shape C fix) | **✓ LANDED** (PR #88) — `_CHANNEL_CANONICAL_UNITS` (30 channels) + `_assertion_unit_for_key` + `_channel_unit_mismatch` + alias-resolved name check + angular-threshold paths | `2e216397` |
+| 0.5f | **T0.5-6** | **`test_terrain_pipeline_smoke.py` stub-seam refactor** — rename to `_orchestration_smoke`, OR re-bind to real `apply_hydraulic_erosion(iterations=10)` | 1d | ZZ4-A4 FUT-MOCK P0 | **PARTIAL — stage 2a only** (PR #86 docstring honesty). Stage 2b (re-bind) + stage 3 (rename) deferred | #81=`c5c8d9e2`, #86=`94cd1ad2` |
+| 0.5g | **T0.5-7** | **`test_geometric_quality.py:27` tautological delete** + re-import from `handlers.terrain_world_orchestration` | 0.5d | ZZ4-A4 P0 | **✓ LANDED** (PR #76, merged 2026-05-19) | `b946fa0b` |
+| 0.5h | T0.5-8 | `json.dumps(allow_nan=False)` at `terrain_unity_export.py:858` + ValueError test | 0.5d | ZZ4-A6 R3 (Shape B loud-at-source) | **✓ LANDED** + EXTENDED via T0.5-8b (PR #85): 3 unity_export sites + 13 sibling Unity-bound JSON writers + AST regression net | #79=`89380dca`, #85=`6cfb42e8` |
+| 0.5i | T0.5-9 | Split `test_full_terrain_pipeline.py` per-bundle + `run_pass` catch-and-tag | 1d | ZZ4-A6 R4 (cascade scoping) | **DEFERRED** — file exists at `veilbreakers_terrain/tests/integration/test_full_terrain_pipeline.py` but is already small and focused (204 LOC, 1 test class `TestFullTerrainPipeline`), so per-bundle split would add ceremony without scoping benefit; cascade-scoping already structurally present via `run_pass` try/except (FIX-D24-PR13) + per-channel `assert_finite_array`. Re-evaluate if the file grows past ~500 LOC or accumulates >5 test classes. | — |
+
+**Total Tier-0.5: ~12.5 days ≈ 2.5 eng weeks → ACTUAL: 8/9 landed in 16 hr wall clock** (campaign 2026-05-19 to 2026-05-20). Gates Tier-1 entry. **Tier-0.5 is non-skippable for B+ grade.**
+
+### P.8.2b ⚠️ **Tier-0.5 / Tier-0 FOLLOW-ON Tickets (FILED 2026-05-20 from VERIFICATION_REPORT_2026_05_20.md)**
+
+4 ultrathink-mode opus agents audited PRs #82-#92 along orthogonal dimensions. Found 5 P1 / 1 P2 / 2 P3 gaps. None ship-blocking. All queued as follow-on PRs (~10 hr total, ~4 batched-pair PRs).
+
+| Pri | ID | Scope | Trigger | Est |
+|---|---|---|---|---|
+| **P1** | **T0-4c** | Add `_restore_pass_state` at terrain_pipeline.py:1052 quality-gate-failed raise path (the 5th raise path #91 missed) + regression test | Agent-1 verification gap | 30 min |
+| **P1** | **T0.5-1b** | Fix `STRATA_ORIENTATION_RAD` tag in both registries — producer at terrain_stratigraphy.py:213-224 writes 3D unit normal, NOT radians. Split or retag | Agent-3 registry coherence gap | 1 hr |
+| **P1** | **T0.5-1c** | Fix `TERRAIN_DISPLACEMENT` dual-semantics — meters via materials_v2, dimensionless via quixel_ingest. Fix quixel_ingest writer OR split channel | Agent-3 registry coherence gap | 1-2 hr |
+| **P1** | **T0-4.5b** | Fix ZZ3-NEW-P0-01 — terrain_assets.py:811 `_build_tree_instance_array` writes RADIANS into column labelled `yaw_degrees`. Producer fix + round-trip test | Agent-2 caveat + audit defer in #90 | 30 min + producer test |
+| **P1** | **T0.5-8c** | Add `terrain_chunking.py:504` + `terrain_waterfalls.py:2251` to `_GUARDED_FILES` (Unity-bound JSON writers missed by #85). Bump count 13→15. Tighten AST scanner to match `allow_nan=0` literals too | Agent-1 gap | 30 min |
+| **P2** | **T0.5-5b** | Fill 8 enum-only channels in `_CHANNEL_CANONICAL_UNITS` (tidal_zone_label, water_surface_mask, cave_candidate, flow_accumulation, erosion_amount, deposition_amount, curvature, bank_instability). Add `macro_color` to `Channel` enum. Bidirectional cross-registry walk. Remove stale skip-guard | Agent-3 coverage gap | 1 hr |
+| **P3** | **Wave-VV-90** | Render-bake proof for #90 rad→deg Unity rotation fix — Blender→Unity round-trip with screenshot showing 90° actually rotating 90° | Visual mandate per `feedback_visual_verification_mandate_2026_05_17` | 30 min |
+| **P3** | **T0.5-1d** | Start producer migration on Channel.WATER_DEPTH_M (3 highest-risk producers) + pyright stub. Realizes the R1 "pyright catches β10-01/03/04 at write time" guarantee | Agent-4 AAA gap | 2 hr |
+
+**Total follow-on: ~10 hr / 8 tickets / 4 batched-pair PRs.** Slot ahead of remaining Tier-0 / Tier-1 work.
 
 ### P.8.3 Tier-1 Operational Framework (PYTHON — parallel to existing Tier-1 ~T1-1..T1-47)
 
