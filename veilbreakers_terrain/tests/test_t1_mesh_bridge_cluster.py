@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -46,7 +47,7 @@ from veilbreakers_terrain.handlers._mesh_bridge import mesh_from_spec
 # ---------------------------------------------------------------------------
 
 
-def _spec(material_ids: list[int]) -> dict:
+def _spec(material_ids: list[int]) -> dict[str, Any]:
     """Build a minimal MeshSpec dict with `len(material_ids)` faces.
 
     Each face is a triangle on three fresh vertices, so face count == len(ids)
@@ -55,8 +56,8 @@ def _spec(material_ids: list[int]) -> dict:
     surface to test without spinning Blender.
     """
     n_faces = len(material_ids)
-    verts = []
-    faces = []
+    verts: list[tuple[float, float, float]] = []
+    faces: list[list[int]] = []
     for i in range(n_faces):
         base = i * 3
         # Spread vertices in x so dedup never collapses them.
@@ -187,9 +188,9 @@ def _bmesh_new_sites_with_try_finally_free(source: str) -> tuple[int, int]:
                 total += 1
                 var_name = stmt.targets[0].id
                 # Next stmt must be a Try whose finally calls var.free().
-                if i + 1 < len(body) and isinstance(body[i + 1], ast.Try):
-                    try_node = body[i + 1]
-                    for fstmt in try_node.finalbody:
+                next_stmt: ast.stmt | None = body[i + 1] if i + 1 < len(body) else None
+                if isinstance(next_stmt, ast.Try):
+                    for fstmt in next_stmt.finalbody:
                         if (
                             isinstance(fstmt, ast.Expr)
                             and isinstance(fstmt.value, ast.Call)
