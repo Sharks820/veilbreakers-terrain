@@ -419,16 +419,14 @@ T0_4_XFAIL_REASON_TEMPLATE = (
 
 
 class TestRollbackOnPassContractError:
-    """The 4 raise paths that currently bypass _restore_pass_state.
+    """The 4 raise paths that previously bypassed _restore_pass_state.
 
-    Today these tests demonstrate the BUG (state mutated, no rollback).
-    After T0-4 they will be the regression net that prevents the rollback
-    from regressing.
+    T0-4 (Y04 v3 §P.8.1 ord 0g) wired _restore_pass_state into all 4 raise
+    paths at terrain_pipeline.py:948 / :967 / NaN-finite-array loop. The
+    xfail decorators that gated these tests pre-T0-4 have been removed —
+    a regression in rollback semantics now fails this class loudly.
     """
 
-    @pytest.mark.xfail(
-        reason=T0_4_XFAIL_REASON_TEMPLATE.format(line=948), strict=True
-    )
     def test_rollback_on_wrong_return_type(self) -> None:
         """Line 948: PassContractError raised when func returns non-PassResult."""
         state = _build_state()
@@ -450,9 +448,6 @@ class TestRollbackOnPassContractError:
         # Today this fails — state is mutated. After T0-4 it should pass.
         np.testing.assert_array_equal(state.mask_stack.height, original_height)
 
-    @pytest.mark.xfail(
-        reason=T0_4_XFAIL_REASON_TEMPLATE.format(line=967), strict=True
-    )
     def test_rollback_on_missing_produced_channel(self) -> None:
         """Line 967: PassContractError raised when declared produces_channels not populated."""
         state = _build_state()
@@ -490,9 +485,6 @@ class TestRollbackOnPassContractError:
 
         np.testing.assert_array_equal(state.mask_stack.height, original_height)
 
-    @pytest.mark.xfail(
-        reason=T0_4_XFAIL_REASON_TEMPLATE.format(line=985), strict=True
-    )
     def test_rollback_on_nan_in_produced_channel(self) -> None:
         """Line 985: assert_finite_array raises on NaN in produces_channels."""
         state = _build_state()
@@ -531,9 +523,6 @@ class TestRollbackOnPassContractError:
 
         np.testing.assert_array_equal(state.mask_stack.height, original_height)
 
-    @pytest.mark.xfail(
-        reason=T0_4_XFAIL_REASON_TEMPLATE.format(line=995), strict=True
-    )
     def test_rollback_on_nan_in_override_channel(self) -> None:
         """Line 995: assert_finite_array raises on NaN in overrides channel."""
         state = _build_state()
