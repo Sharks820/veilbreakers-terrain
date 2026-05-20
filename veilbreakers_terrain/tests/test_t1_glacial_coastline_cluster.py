@@ -328,17 +328,40 @@ def test_t1_16_retreat_varies_with_fetch() -> None:
 
 def test_t1_16_no_saturating_clip_constant_in_source() -> None:
     """The literal ``np.clip(3.0 * wave_energy, 0.1, 12.0)`` constant
-    must not return.
+    must not return as production code.
 
     AST scan defends the structural fix from being reverted via a
-    refactor that re-introduces the saturating clip.
+    refactor that re-introduces the saturating clip. Comments + docstrings
+    that *reference* the pre-fix line for audit-trail purposes are
+    excluded by line-level filtering (skip lines starting with ``#`` or
+    inside docstring fences).
     """
-    src = Path(
+    src_lines = Path(
         "veilbreakers_terrain/handlers/coastline.py"
-    ).read_text(encoding="utf-8")
-    assert "np.clip(3.0 * wave_energy, 0.1, 12.0)" not in src, (
+    ).read_text(encoding="utf-8").splitlines()
+    # Filter to code lines only — skip comments, docstring blocks, and
+    # backtick-quoted in-line references.
+    in_docstring = False
+    code_lines: list[str] = []
+    for line in src_lines:
+        stripped = line.strip()
+        # Toggle docstring fence (matches """ at start of line).
+        if stripped.startswith('"""') or stripped.startswith("'''"):
+            in_docstring = not in_docstring
+            continue
+        if in_docstring:
+            continue
+        # Skip whole-line comments.
+        if stripped.startswith("#"):
+            continue
+        # Strip inline trailing comment (``...`` references are inline).
+        code_part = line.split("#", 1)[0]
+        code_lines.append(code_part)
+    code_src = "\n".join(code_lines)
+    assert "np.clip(3.0 * wave_energy, 0.1, 12.0)" not in code_src, (
         "T1-16 regression: the saturating clip "
-        "`np.clip(3.0 * wave_energy, 0.1, 12.0)` is back in coastline.py."
+        "`np.clip(3.0 * wave_energy, 0.1, 12.0)` is back in production "
+        "code of coastline.py."
     )
 
 
