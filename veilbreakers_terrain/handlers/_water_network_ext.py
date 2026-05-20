@@ -1013,7 +1013,16 @@ def _tileable_value_noise(
     native shape so the resulting caustic map can be laid seamlessly in a
     shader.  Purely numpy — no external noise library required.
     """
-    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    # T1-13: namespace the caller seed via derive_pass_seed so the two
+    # `_tileable_value_noise` calls in `compute_riverbed_caustics` (which pass
+    # `seed` and `seed + 1`) do not collide with any other call site that
+    # happens to pass the same raw seed value.
+    from .terrain_rng import derive_pass_seed as _derive_pass_seed
+    rng = np.random.default_rng(
+        _derive_pass_seed(
+            int(seed), "water_network_ext._tileable_value_noise", 0, 0, None
+        )
+    )
     rows, cols = int(shape[0]), int(shape[1])
     cell = max(int(round(max(rows, cols) / max(frequency, 1e-3))), 2)
     grid_rows = max(rows // cell, 1)

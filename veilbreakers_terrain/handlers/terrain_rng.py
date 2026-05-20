@@ -84,6 +84,18 @@ def derive_pass_seed(
     concat vs. JSON-encoded). All importers now share a single
     canonical hash via this thin wrapper.
 
+    T4-15 status (Y04 v3 §B.4.3): the dual-signature hazard the audit
+    flagged is already structurally closed by Bug-A. The shim signature
+    below accepts the historical defaults (`tile_x=0.0`, `tile_y=0.0`,
+    `region=""`) so existing callers (including
+    `tests/test_scatter_determinism.py`) keep working, but every call
+    routes through the canonical SHA-256 JSON path in
+    `terrain_pipeline.derive_pass_seed`. An AST sweep of the codebase
+    confirmed 89/96 sites already pass the full 5-arg signature; the 7
+    remaining (all in `test_scatter_determinism.py`) use the shim's
+    `region=""` default and are exercising the shim's documented
+    backward-compatible behaviour.
+
     Public signature is preserved (positional/keyword args identical to
     the historical terrain_rng definition) so existing callers do not
     need to change. ``region`` is forwarded as-is — terrain_pipeline's

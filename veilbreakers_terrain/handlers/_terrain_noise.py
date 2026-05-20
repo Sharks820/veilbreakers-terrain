@@ -68,6 +68,23 @@ _GRAD2 = np.array([
 
 
 def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
+    """Canonical 2-arg seeded RNG factory (γ3 D-17 consolidation target).
+
+    Per Y04 v3 §B.4.3 + γ3 dup-collapse, this is THE canonical implementation
+    of `_rng_from_seed(seed, seed_namespace)` for the codebase. Three sibling
+    files re-export from this one to eliminate the 4-way duplicate:
+
+      - `terrain_advanced._rng_from_seed`  -> re-exports from here
+      - `_biome_grammar._rng_from_seed`    -> re-exports from here
+      - `terrain_morphology._rng_from_seed` (1-arg variant) -> re-exports here
+
+    The seed derivation goes through `terrain_pipeline.derive_pass_seed` (Bug-A
+    canonical SHA-256 JSON helper) so callers passing the same raw `seed` to
+    different namespaces produce independent RNG streams.
+    """
+    # Lazy import: `terrain_pipeline` transitively imports `_terrain_noise`;
+    # a module-level `from .terrain_pipeline import` would create a
+    # CodeQL py/cyclic-import alert.
     from .terrain_pipeline import derive_pass_seed
 
     return np.random.default_rng(
@@ -2712,7 +2729,16 @@ def voronoi_biome_distribution(
     """
     import random as _rnd
 
-    rng = _rnd.Random(seed)
+    # T1-23: namespace the caller seed via derive_pass_seed so two callers
+    # passing the same `seed` to different voronoi-based passes do not
+    # produce identical jittered seed-point layouts. The Bug-A fix in
+    # `terrain_rng.derive_pass_seed` is the canonical SHA-256 JSON helper.
+    from .terrain_rng import derive_pass_seed as _derive_pass_seed
+    rng = _rnd.Random(
+        _derive_pass_seed(
+            int(seed), "terrain_noise.voronoi_biome_map", 0, 0, None
+        )
+    )
 
     # --- Place seed points using jittered grid for good spatial coverage ---
     # Compute grid dimensions for seed placement
@@ -2734,7 +2760,18 @@ def voronoi_biome_distribution(
     # X coords are independently shuffled for spatial variety.
     seed_ys_sorted = sorted(sy for _sx, sy in seed_points_raw)
     seed_xs_shuffled = [sx for sx, _sy in seed_points_raw]
-    _xs_rng = _rnd.Random(seed ^ 0xABCDEF)
+    # T1-23 (sibling site): same derive_pass_seed namespacing as the main rng
+    # above, with a distinct subkey so the X-shuffle stream is independent of
+    # the seed-point jitter stream while remaining caller-seed determined.
+    _xs_rng = _rnd.Random(
+        _derive_pass_seed(
+            int(seed) ^ 0xABCDEF,
+            "terrain_noise.voronoi_biome_map.xs_shuffle",
+            0,
+            0,
+            None,
+        )
+    )
     _xs_rng.shuffle(seed_xs_shuffled)
 
     # Altitude bias: when a heightmap is supplied, shift each seed's Y to fall

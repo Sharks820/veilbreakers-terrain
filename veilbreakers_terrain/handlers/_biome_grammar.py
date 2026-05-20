@@ -44,13 +44,16 @@ BIOME_ALIASES: dict[str, str] = {
 
 
 def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
+    """Re-export of the canonical `_terrain_noise._rng_from_seed` (γ3 D-17).
+
+    Y04 v3 §B.4.3 collapses the 4 duplicate `_rng_from_seed` definitions onto
+    `_terrain_noise._rng_from_seed`. This module's helper now forwards to the
+    canonical so all callers share one seed-derivation path.
+    """
     # Lazy import to avoid CodeQL py/cyclic-import on the
     # terrain_pipeline ↔ _biome_grammar edge.
-    from .terrain_pipeline import derive_pass_seed  # noqa: F401
-
-    return np.random.default_rng(
-        derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
-    )
+    from ._terrain_noise import _rng_from_seed as _canonical_rng_from_seed
+    return _canonical_rng_from_seed(int(seed), seed_namespace)
 
 
 def resolve_biome_name(name: str) -> str:
