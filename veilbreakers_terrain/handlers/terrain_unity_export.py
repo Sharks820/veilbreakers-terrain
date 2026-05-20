@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import math
 import time
 from pathlib import Path
 from collections.abc import Mapping, Sequence
@@ -147,6 +148,14 @@ def write_animation_clip_yaml(
         bone, channel, axis = key
         target = "  m_EulerCurves:" if channel == "rotation" else "  m_PositionCurves:" if channel == "location" else "  m_ScaleCurves:"
         if target == "  m_EulerCurves:":
+            # T0-4.5 (Y04 v3 §P.8.1 ord 0h / ZZ3-NEW-P0-02): Keyframe.value is
+            # documented as radians for channel="rotation" (animation_gaits.py:25-29)
+            # but Unity reads m_EulerCurves.value as DEGREES per Unity Animator
+            # spec. Convert rad→deg at this boundary so every animated rotation
+            # rotates at the authored magnitude instead of 57× less.
+            # Tangents (inSlope/outSlope) are rad/s → must also convert to deg/s.
+            # Regression net at test_unity_export_boundary_roundtrip.py
+            # (PR #87 T0.5-4) — flips xfail→xpass→strict-fail when this lands.
             curve_header = "  - curve:"
             lines.append(curve_header)
             lines.append("      serializedVersion: 2")
@@ -156,9 +165,18 @@ def write_animation_clip_yaml(
                     "      - serializedVersion: 3"
                 )
                 lines.append(f"        time: {_float_yaml(item['time']):.6f}")
-                lines.append(f"        value: {_float_yaml(item['value']):.9g}")
-                lines.append(f"        inSlope: {_float_yaml(item['in_tangent']):.9g}")
-                lines.append(f"        outSlope: {_float_yaml(item['out_tangent']):.9g}")
+                lines.append(
+                    f"        value: "
+                    f"{math.degrees(_float_yaml(item['value'])):.9g}"
+                )
+                lines.append(
+                    f"        inSlope: "
+                    f"{math.degrees(_float_yaml(item['in_tangent'])):.9g}"
+                )
+                lines.append(
+                    f"        outSlope: "
+                    f"{math.degrees(_float_yaml(item['out_tangent'])):.9g}"
+                )
                 lines.append("        tangentMode: 0")
                 lines.append("        weightedMode: 0")
                 lines.append("        inWeight: 0.33333334")
