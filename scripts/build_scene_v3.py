@@ -2238,7 +2238,7 @@ def scatter_water_surface_assets(hm: Heightmap, count: int = 95) -> int:
     return placed
 
 
-def _cliff_strata_band_specs() -> list[tuple[float, float, float]]:
+def _cliff_strata_band_specs() -> tuple[tuple[float, float, float], ...]:
     """Return ``(y_base, band_h, lift)`` rows describing cliff stratigraphy bands.
 
     T1-39 (Y04 v3, cert-YES, XR-003 missing-content). Previously the list was
@@ -2271,7 +2271,10 @@ def _cliff_strata_band_specs() -> list[tuple[float, float, float]]:
     #   3 bands at Y in [-2..7] for the mid-map cliff (if present)
     # The height guards in the consuming loop ensure bands only stamp on
     # actual cliff terrain regardless of which region exists.
-    return [
+    # Round-3 (per CE review Copilot threads on PR #100): return tuple
+    # instead of list so callers cannot accidentally mutate the
+    # configuration data.
+    return (
         (-320.0, 0.18, 0.40),  # south cliff — bottom band, closest to lake
         (-317.0, 0.22, 1.10),  # south cliff — mid-low
         (-314.0, 0.26, 1.90),  # south cliff — mid-high
@@ -2279,7 +2282,7 @@ def _cliff_strata_band_specs() -> list[tuple[float, float, float]]:
         (-2.0, 0.20, 0.70),    # mid-map cliff — lower (if present)
         (2.0, 0.24, 1.60),     # mid-map cliff — mid
         (6.0, 0.28, 2.50),     # mid-map cliff — upper
-    ]
+    )
 
 
 def _cliff_ledge_y_bases() -> tuple[float, ...]:
