@@ -25,7 +25,7 @@ dev = [
     # Pinned to match the CI lane in .github/workflows/type-check.yml so local
     # developer pyright matches what CI sees. Bump in a single PR that touches
     # both this line and the workflow.
-    "pyright==1.1.408",
+    "pyright==1.1.409",
     "ruff>=0.8.0",
     "pip-audit>=2.7",
 ]
