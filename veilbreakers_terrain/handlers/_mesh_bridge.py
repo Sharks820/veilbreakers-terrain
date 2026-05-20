@@ -1462,10 +1462,16 @@ def mesh_from_spec(
             raise RuntimeError(
                 f"mesh_from_spec: material_id count ({len(material_ids)}) "
                 f"does not match polygon count ({surviving_face_count}) "
-                f"after vertex weld / degenerate-face dedup; this likely "
-                f"indicates degenerate faces dropped by bm.faces.new() or "
-                f"polygon reorder by bm.to_mesh() "
-                f"(input_faces={len(faces)}, degenerate_dropped="
+                f"after vertex weld / degenerate-face dedup. Count-changing "
+                f"causes inside the bridge: (1) degenerate faces dropped "
+                f"during vertex weld (fewer than 3 unique remapped indices "
+                f"per face); (2) BMesh duplicate-face elimination when two "
+                f"faces collapse to the same vertex set after weld; "
+                f"(3) bm.faces.new() returning ``None`` when fed a face "
+                f"that BMesh refuses (also counted as degenerate). NB: "
+                f"``bm.to_mesh()`` reorders polygons but does NOT change "
+                f"the count — count mismatch is always a drop, not a "
+                f"reorder. (input_faces={len(faces)}, degenerate_dropped="
                 f"{degenerate_face_count}). Per-face material_index "
                 f"assignment would silently corrupt material slots."
             )
@@ -1595,11 +1601,18 @@ def mesh_from_spec(
             if len(material_ids) != len(mesh_data.polygons):
                 raise RuntimeError(
                     f"mesh_from_spec: material_id count ({len(material_ids)}) "
-                    f"does not match polygon count ({len(mesh_data.polygons)}); "
-                    "this likely indicates degenerate faces dropped by "
-                    "bm.faces.new() or polygon reorder by bm.to_mesh(). "
-                    "Per-face material_index assignment would silently "
-                    "corrupt material slots."
+                    f"does not match polygon count ({len(mesh_data.polygons)}). "
+                    "Count-changing causes inside the bridge: "
+                    "(1) degenerate faces dropped by bm.faces.new() "
+                    "(face has fewer than 3 unique vertices after weld); "
+                    "(2) BMesh duplicate-face elimination at bm.to_mesh() "
+                    "(two faces with the same vertex set collapse into one); "
+                    "(3) BMesh dedup of faces sharing identical vertex "
+                    "loops (different winding, same indices). NB: "
+                    "bm.to_mesh() reorders polygons but does NOT change "
+                    "count — count mismatch is always a drop, not a "
+                    "reorder. Per-face material_index assignment would "
+                    "silently corrupt material slots."
                 )
             for poly, mid in zip(mesh_data.polygons, material_ids):
                 poly.material_index = int(mid)

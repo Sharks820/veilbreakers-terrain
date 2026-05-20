@@ -344,8 +344,17 @@ def test_bug5_strata_materials_mapping_branch_preserves_user_strike() -> None:
         ]
     }
 
-    # Sanity-check the RNG sequence so the test is self-documenting.
-    _expected_legacy = float(np.random.default_rng(42).uniform(0.0, np.pi))
+    # Sanity-check the RNG sequence so the test is self-documenting. The
+    # legacy ``draw1`` (range [0, pi]) used to be consumed as the strike
+    # value and silently discarded; pinning the expected legacy value here
+    # documents that the first draw lands inside ``[0, pi]`` and so could
+    # never equal ``user_strike=1.5`` by accident — keeping the post-fix
+    # contradiction check load-bearing.
+    expected_legacy = float(np.random.default_rng(42).uniform(0.0, np.pi))
+    assert 0.0 <= expected_legacy <= np.pi, (
+        f"RNG draw1 (legacy strike consume) must be in [0, pi]; "
+        f"got {expected_legacy}"
+    )
     rng_replay = np.random.default_rng(42)
     _ = float(rng_replay.uniform(0.0, np.pi))           # draw1
     _ = float(rng_replay.uniform(-0.087, 0.087))         # draw2
