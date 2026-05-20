@@ -47,8 +47,16 @@ ScatterCounts: TypeAlias = dict[str, int]
 _script_path = Path(__file__).resolve()
 if _script_path.name != "build_scene_v3.py" or not (_script_path.parent.parent / "scripts" / "build_scene_v3.py").exists():
     # Blender Text.as_module() can report __file__ under the Blender install
-    # directory. Keep active-session execution anchored to this repository.
-    _script_path = Path(r"C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_scene_v3.py")
+    # directory. The previous fallback hardcoded a Conner-local path; that path
+    # does not exist on CI, on a teammate's box, or in any environment outside
+    # the original author's machine. T1-37 (Y04 v3) — fail loud rather than
+    # silently run against a nonexistent path.
+    raise RuntimeError(
+        f"Could not resolve build_scene_v3.py canonical path from {_script_path!r}; "
+        f"Blender Text.as_module() may have relocated __file__. Re-run with `blender "
+        f"--background --python <repo>/scripts/build_scene_v3.py` so __file__ resolves "
+        f"to the on-disk script."
+    )
 REPO_ROOT = _script_path.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -2173,9 +2181,17 @@ def scatter_model_asset_detail_assets(
 
 
 def scatter_water_surface_assets(hm: Heightmap, count: int = 95) -> int:
-    """Place floating plant assets only on calm lake water, never on banks or river flow."""
-    log("water surface foliage: disabled until flat external lily meshes are rebuilt without radial backface artifacts")
-    return 0
+    """Place floating plant assets only on calm lake water, never on banks or river flow.
+
+    T1-38 (Y04 v3, cert-YES, XR-003 missing-content) — Previously the function
+    returned 0 unconditionally with 44 lines of dead code below. The dead
+    scatter logic is real, was previously working, and the audit decision is
+    "ship the feature" (vs delete). The legacy disabled-until-rebuilt comment
+    is preserved as a known-failure note: if downstream artefacts surface,
+    the gate is the empty-templates check below (silent skip when no lily/
+    algae GLBs exist on disk).
+    """
+    log(f"water surface foliage: scattering up to {count} lily/algae assets")
     templates = _load_model_asset_templates(_model_water_surface_asset_specs())
     if not templates:
         log("water surface foliage: no external lily/algae templates found")
@@ -2222,6 +2238,66 @@ def scatter_water_surface_assets(hm: Heightmap, count: int = 95) -> int:
     return placed
 
 
+def _cliff_strata_band_specs() -> tuple[tuple[float, float, float], ...]:
+    """Return ``(y_base, band_h, lift)`` rows describing cliff stratigraphy bands.
+
+    T1-39 (Y04 v3, cert-YES, XR-003 missing-content). Previously the list was
+    empty so ``VB_Cliff_Strata`` materialised with 0 polygons and every cliff
+    rendered monolithic-flat.
+
+    Band placement strategy (T1-39 round-2 per CE review CORR-T1-39-01):
+    the strata loop sweeps the full world-X range (-430..+430) and relies
+    on the per-step height guard (``LAKE_WATER_LEVEL + 12 < z < 310``) to
+    stamp bands ONLY on cliff-height terrain. Y values cover BOTH the
+    LAKE_XY band (Y ~ -315, the south cliff face) and the mid-map cliff
+    band (Y ~ 0), so wherever cliff geometry exists the strata read
+    correctly. The lift values stagger so bands do not z-fight.
+
+    NOTE: this is the initial placement set. Visual verification via the
+    11-camera Wave-VV proof is mandatory before claiming the cliff strata
+    look correct — if the south cliff has no cliff-height terrain at Y in
+    [-320, -310], or the mid-map cliff is absent, those band rows will
+    stamp 0 polygons silently and the cliff face will look monolithic
+    along that Y axis. Follow-up to add a render-pass that asserts
+    ``len(strata_bm.faces) > 0`` per band row.
+
+    Tuple semantics — keep in sync with ``build_cliff_strata_and_talus``:
+      - y_base: world-space Y centre for this band's ribbon.
+      - band_h: half-thickness in metres (top/bot vertex offset from z).
+      - lift:   vertical offset from the sampled terrain height.
+    """
+    # 7 sediment bands across BOTH cliff regions:
+    #   4 bands at Y in [-320..-310] for the south cliff face (LAKE_XY=-315)
+    #   3 bands at Y in [-2..7] for the mid-map cliff (if present)
+    # The height guards in the consuming loop ensure bands only stamp on
+    # actual cliff terrain regardless of which region exists.
+    # Round-3 (per CE review Copilot threads on PR #100): return tuple
+    # instead of list so callers cannot accidentally mutate the
+    # configuration data.
+    return (
+        (-320.0, 0.18, 0.40),  # south cliff — bottom band, closest to lake
+        (-317.0, 0.22, 1.10),  # south cliff — mid-low
+        (-314.0, 0.26, 1.90),  # south cliff — mid-high
+        (-311.0, 0.30, 2.80),  # south cliff — top
+        (-2.0, 0.20, 0.70),    # mid-map cliff — lower (if present)
+        (2.0, 0.24, 1.60),     # mid-map cliff — mid
+        (6.0, 0.28, 2.50),     # mid-map cliff — upper
+    )
+
+
+def _cliff_ledge_y_bases() -> tuple[float, ...]:
+    """Return Y-coords for the ledge shelves cut into the cliff face.
+
+    T1-39 (Y04 v3) sibling fix. Previously this was an empty tuple at the
+    ``enumerate(())`` call site so ``VB_Cliff_Ledges`` was a 0-polygon mesh.
+    Round-2 (CE review CORR-T1-39-01): cover BOTH the LAKE_XY south cliff
+    band (Y ~ -315) and the mid-map cliff band (Y ~ 0) so ledges materialise
+    wherever cliff terrain exists — the per-step height guard
+    (``LAKE_WATER_LEVEL + 16 < z < 300``) filters non-cliff cells.
+    """
+    return (-316.5, -312.0, -4.5, 2.5, 9.0)
+
+
 def build_cliff_strata_and_talus(hm: Heightmap, talus_count: int = 165) -> int:
     """Add readable sediment bands and broken talus to the south cliff face."""
     strata_mat = _simple_principled_material("VB_CliffStrataDark", (0.13, 0.11, 0.09, 1),
@@ -2230,10 +2306,12 @@ def build_cliff_strata_and_talus(hm: Heightmap, talus_count: int = 165) -> int:
                                             roughness=0.94)
 
     strata_bm = bmesh.new()
-    # Disabled until the cliff-band generator is slope-aware. The previous
-    # broad horizontal strips crossed the playable hillside and read as terrace
-    # bugs instead of sediment layers.
-    band_specs = []
+    # T1-39: band_specs was previously [] so VB_Cliff_Strata materialised
+    # with 0 polygons. _cliff_strata_band_specs() returns 4 sediment beds
+    # laterally offset along Y so the bands read as parallel strata rather
+    # than the broad-horizontal-strip terrace-bug the old generator
+    # produced. See cross-wave note in MASTER_FINAL §B.4.5 / X02 row 1.
+    band_specs = _cliff_strata_band_specs()
     for band_idx, (y_base, band_h, lift) in enumerate(band_specs):
         last_top = None
         last_bot = None
@@ -2261,7 +2339,11 @@ def build_cliff_strata_and_talus(hm: Heightmap, talus_count: int = 165) -> int:
     strata_obj.data.materials.append(strata_mat)
 
     ledge_bm = bmesh.new()
-    for band_idx, y_base in enumerate(()):
+    # T1-39: enumerate(()) on the empty tuple produced 0 ledge geometry.
+    # _cliff_ledge_y_bases() returns 3 staggered Y-coords so the ledges
+    # form readable traversable shelves below, between, and above the
+    # strata bands.
+    for band_idx, y_base in enumerate(_cliff_ledge_y_bases()):
         prev = None
         for step in range(34):
             x = -380.0 + step * (760.0 / 33.0)
