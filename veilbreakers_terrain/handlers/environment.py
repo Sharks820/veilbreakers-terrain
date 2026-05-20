@@ -2678,16 +2678,47 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
                 None,
             )
             try:
-                # T0-7 (Y04 v3 §P.8.1 ord 0k, partial): allow_pickle=False —
-                # neighbor heightmaps come from sibling tiles that may be
-                # under user-controlled paths; deny pickle to close the
-                # cross-tile RCE chain.
+                # T1-17 (Y04 v3 §B.4.11): neighbor heightmap files written
+                # by ``_write_tile_raw_files`` are uint16 little-endian
+                # **raw** binary blobs (``_export_heightmap_raw`` →
+                # ``<u2``, no ``.npy`` magic). The previous code called
+                # ``np.load(path, allow_pickle=False)`` which raises
+                # ``ValueError: Cannot load file containing pickled data
+                # ...`` or ``OSError: Failed to interpret file ... as a
+                # pickle`` — every neighbor-edge stitch silently fell
+                # into the broad ``except`` below, so cross-tile seam
+                # blending was a no-op. Switched to ``np.fromfile``
+                # with the per-tile resolution recovered from the
+                # neighbor's tile-result dict.
+                #
+                # T0-7 (Y04 v3 §P.8.1 ord 0k, partial) — preserved:
+                # ``np.fromfile`` has no pickle path, so the security
+                # property of ``allow_pickle=False`` is upheld
+                # structurally rather than via the flag.
+                #
+                # The writer applies ``np.flipud`` (Unity row order); we
+                # invert that here before sampling the seam-adjacent
+                # column/row.
+                def _read_neighbor_heightmap(neighbor: dict[str, Any]) -> np.ndarray:
+                    res = int(neighbor.get("resolution", 257))
+                    raw = np.fromfile(
+                        neighbor["heightmap_path"],
+                        dtype="<u2",
+                    )
+                    if raw.size != res * res:
+                        raise ValueError(
+                            f"neighbor heightmap size {raw.size} != resolution²={res * res}"
+                        )
+                    arr = raw.reshape((res, res))
+                    # Writer used flip_vertical=True (default); undo it.
+                    return np.flipud(arr)
+
                 if west_tile is not None and "west" not in neighbor_edges:
-                    west_h = np.load(west_tile["heightmap_path"], allow_pickle=False)
-                    neighbor_edges["west"] = np.asarray(west_h)[:, -1].tolist()
+                    west_h = _read_neighbor_heightmap(west_tile)
+                    neighbor_edges["west"] = west_h[:, -1].astype(np.float64).tolist()
                 if north_tile is not None and "north" not in neighbor_edges:
-                    north_h = np.load(north_tile["heightmap_path"], allow_pickle=False)
-                    neighbor_edges["north"] = np.asarray(north_h)[-1, :].tolist()
+                    north_h = _read_neighbor_heightmap(north_tile)
+                    neighbor_edges["north"] = north_h[-1, :].astype(np.float64).tolist()
             except Exception as exc:
                 logger.warning(
                     "handle_generate_world_terrain: failed to load neighbor edge for tile (%d,%d): %s",

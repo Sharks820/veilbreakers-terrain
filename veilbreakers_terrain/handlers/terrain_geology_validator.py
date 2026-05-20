@@ -635,7 +635,13 @@ def validate_karst_plausibility(
 
 BUNDLE_I_PASSES = (
     "stratigraphy",
-    "glacial",
+    # T1-3 (Y04 v3 §B.4.11): the canonical glacial pass is registered as
+    # ``pass_glacial`` by ``terrain_glacial.register_glacial_pass`` (Bundle
+    # I-glacial in terrain_master_registrar). The Bundle I registrar
+    # previously also declared ``name="glacial"`` with the same ``func``,
+    # producing the same channels — a dual-register that risked
+    # double-applying the glacial delta. Removed to leave a single
+    # canonical name.
     "wind_erosion",
     "coastline",
     "karst",
@@ -699,23 +705,20 @@ def register_bundle_i_passes() -> None:
             description="Bundle I: rock hardness + strata orientation + delta",
         )
     )
-    TerrainPassController.register_pass(
-        PassDefinition(
-            name="glacial",
-            func=_glacial.pass_glacial,
-            requires_channels=("height",),
-            produces_channels=("snow_line_factor", "glacial_delta"),
-            # OVERRIDE: Bundle A's ``snow_line`` pass writes a sigmoid-altitude
-            # baseline ``snow_line_factor``. Bundle I's glacial pass refines it
-            # with glacial-carving context (ice flow reduces local snow line,
-            # moraine accumulation raises it) and writes the authoritative
-            # value used by downstream materials / ecosystem passes.
-            overrides=("snow_line_factor",),
-            seed_namespace="glacial",
-            requires_scene_read=False,
-            description="Bundle I: glacial carving + snow line",
-        )
-    )
+    # T1-3 (Y04 v3 §B.4.11 D-06 / G-65 reachability defect): the glacial
+    # pass is registered as ``pass_glacial`` by
+    # ``terrain_glacial.register_glacial_pass`` (Bundle I-glacial in
+    # terrain_master_registrar). Registering it again here under
+    # ``name="glacial"`` with the same ``func=_glacial.pass_glacial`` and
+    # the same produced channels was a dual-register: only the
+    # pass-controller name collision check guards against double-apply,
+    # and two distinct names sharing one function silently bypassed that
+    # check. The pipeline scheduler inserts ``"pass_glacial"`` (terrain
+    # _pipeline._LABEL_STAMPING_DEFERRABLE_PASSES line ~109), so the
+    # ``"glacial"`` registration was reachable only via a manual
+    # scheduler edit — which would then run the glacial pass twice,
+    # accumulating ``glacial_delta`` and over-thickening ice/snow_line
+    # output. Removed to leave a single canonical entry.
     TerrainPassController.register_pass(
         PassDefinition(
             name="wind_erosion",
