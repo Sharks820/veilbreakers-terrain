@@ -5110,17 +5110,20 @@ def handle_generate_cave(params: Metadata) -> Metadata:
 
             tunnel_mesh_name = f"{name}_Tunnel"
             tmesh = _bpy.data.meshes.new(tunnel_mesh_name)
+            # T0-3.5: try/finally guarantees tbm.free() on every exit path.
             tbm = _bmesh.new()
-            for tv in tunnel_verts:
-                tbm.verts.new(tv)
-            tbm.verts.ensure_lookup_table()
-            for tf in tunnel_faces:
-                try:
-                    tbm.faces.new([tbm.verts[vi] for vi in tf])
-                except (ValueError, IndexError):
-                    pass
-            tbm.to_mesh(tmesh)
-            tbm.free()
+            try:
+                for tv in tunnel_verts:
+                    tbm.verts.new(tv)
+                tbm.verts.ensure_lookup_table()
+                for tf in tunnel_faces:
+                    try:
+                        tbm.faces.new([tbm.verts[vi] for vi in tf])
+                    except (ValueError, IndexError):
+                        pass
+                tbm.to_mesh(tmesh)
+            finally:
+                tbm.free()
             tmesh.update()
 
             tunnel_obj = _bpy.data.objects.new(tunnel_mesh_name, tmesh)

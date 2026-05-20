@@ -1414,94 +1414,97 @@ def mesh_from_spec(
         }
 
     # -- Blender path --
+    # T0-3.5: try/finally guarantees bm.free() runs even on exception, preventing
+    # BMesh handle leaks during repeated render loops.
     bm = bmesh.new()
-
-    # Add vertices with deduplication: weld coincident vertices from
-    # generators that create disconnected components at the same positions
-    _vert_dedup: dict[tuple[int, int, int], int] = {}
-    bm_verts: list[Any] = []
-    _remap: list[int] = []  # maps original index -> deduped index
-    for v in verts:
-        # Quantize to tolerance grid for fast lookup
-        key = (
-            round(v[0] / weld_tolerance),
-            round(v[1] / weld_tolerance),
-            round(v[2] / weld_tolerance),
-        )
-        if key in _vert_dedup:
-            _remap.append(_vert_dedup[key])
-        else:
-            idx = len(bm_verts)
-            _vert_dedup[key] = idx
-            bm_verts.append(bm.verts.new(v))
-            _remap.append(idx)
-    bm.verts.ensure_lookup_table()
-
-    # Add faces using remapped vertex indices
-    for face_indices in faces:
-        try:
-            remapped = [_remap[i] for i in face_indices]
-            # Skip degenerate faces where dedup collapsed vertices
-            if len(set(remapped)) < 3:
-                continue
-            bm.faces.new([bm_verts[i] for i in remapped])
-        except (ValueError, IndexError) as exc:
-            import logging
-            logging.getLogger("veilbreakers.mesh_bridge").debug(
-                "Skipped degenerate/duplicate face %s: %s", face_indices, exc,
+    try:
+        # Add vertices with deduplication: weld coincident vertices from
+        # generators that create disconnected components at the same positions
+        _vert_dedup: dict[tuple[int, int, int], int] = {}
+        bm_verts: list[Any] = []
+        _remap: list[int] = []  # maps original index -> deduped index
+        for v in verts:
+            # Quantize to tolerance grid for fast lookup
+            key = (
+                round(v[0] / weld_tolerance),
+                round(v[1] / weld_tolerance),
+                round(v[2] / weld_tolerance),
             )
+            if key in _vert_dedup:
+                _remap.append(_vert_dedup[key])
+            else:
+                idx = len(bm_verts)
+                _vert_dedup[key] = idx
+                bm_verts.append(bm.verts.new(v))
+                _remap.append(idx)
+        bm.verts.ensure_lookup_table()
 
-    # Process edge annotations from MeshSpec
-    if sharp_edges or crease_edges:
-        bm.edges.ensure_lookup_table()
+        # Add faces using remapped vertex indices
+        for face_indices in faces:
+            try:
+                remapped = [_remap[i] for i in face_indices]
+                # Skip degenerate faces where dedup collapsed vertices
+                if len(set(remapped)) < 3:
+                    continue
+                bm.faces.new([bm_verts[i] for i in remapped])
+            except (ValueError, IndexError) as exc:
+                import logging
+                logging.getLogger("veilbreakers.mesh_bridge").debug(
+                    "Skipped degenerate/duplicate face %s: %s", face_indices, exc,
+                )
 
-        # Build vertex-pair -> edge lookup
-        edge_lookup: dict[tuple[int, int], Any] = {}
-        for edge in bm.edges:
-            key = (min(edge.verts[0].index, edge.verts[1].index),
-                   max(edge.verts[0].index, edge.verts[1].index))
-            edge_lookup[key] = edge
+        # Process edge annotations from MeshSpec
+        if sharp_edges or crease_edges:
+            bm.edges.ensure_lookup_table()
 
-        # Mark sharp edges
-        for se in sharp_edges:
-            if len(se) >= 2:
-                key = (min(se[0], se[1]), max(se[0], se[1]))
-                edge = edge_lookup.get(key)
-                if edge:
-                    edge.smooth = False
+            # Build vertex-pair -> edge lookup
+            edge_lookup: dict[tuple[int, int], Any] = {}
+            for edge in bm.edges:
+                key = (min(edge.verts[0].index, edge.verts[1].index),
+                       max(edge.verts[0].index, edge.verts[1].index))
+                edge_lookup[key] = edge
 
-        # Set edge creases
-        if crease_edges:
-            crease_layer = bm.edges.layers.float.get("crease_edge")
-            if crease_layer is None:
-                crease_layer = bm.edges.layers.float.new("crease_edge")
-            for ce in crease_edges:
-                edge_pair = ce.get("edge", [])
-                if len(edge_pair) >= 2:
-                    key = (min(edge_pair[0], edge_pair[1]),
-                           max(edge_pair[0], edge_pair[1]))
+            # Mark sharp edges
+            for se in sharp_edges:
+                if len(se) >= 2:
+                    key = (min(se[0], se[1]), max(se[0], se[1]))
                     edge = edge_lookup.get(key)
                     if edge:
-                        edge[crease_layer] = ce.get("value", 1.0)
+                        edge.smooth = False
 
-    # Assign UVs if present
-    if uvs:
-        uv_layer = bm.loops.layers.uv.new("UVMap")
-        bm.faces.ensure_lookup_table()
-        for face in bm.faces:
-            for loop in face.loops:
-                vi = loop.vert.index
-                if vi < len(uvs):
-                    loop[uv_layer].uv = uvs[vi]
+            # Set edge creases
+            if crease_edges:
+                crease_layer = bm.edges.layers.float.get("crease_edge")
+                if crease_layer is None:
+                    crease_layer = bm.edges.layers.float.new("crease_edge")
+                for ce in crease_edges:
+                    edge_pair = ce.get("edge", [])
+                    if len(edge_pair) >= 2:
+                        key = (min(edge_pair[0], edge_pair[1]),
+                               max(edge_pair[0], edge_pair[1]))
+                        edge = edge_lookup.get(key)
+                        if edge:
+                            edge[crease_layer] = ce.get("value", 1.0)
 
-    # Recalculate normals
-    bm.normal_update()
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        # Assign UVs if present
+        if uvs:
+            uv_layer = bm.loops.layers.uv.new("UVMap")
+            bm.faces.ensure_lookup_table()
+            for face in bm.faces:
+                for loop in face.loops:
+                    vi = loop.vert.index
+                    if vi < len(uvs):
+                        loop[uv_layer].uv = uvs[vi]
 
-    # Create Blender mesh data and object
-    mesh_data = bpy.data.meshes.new(obj_name)
-    bm.to_mesh(mesh_data)
-    bm.free()
+        # Recalculate normals
+        bm.normal_update()
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+
+        # Create Blender mesh data and object
+        mesh_data = bpy.data.meshes.new(obj_name)
+        bm.to_mesh(mesh_data)
+    finally:
+        bm.free()
 
     # Apply smooth shading
     if smooth_shading:
