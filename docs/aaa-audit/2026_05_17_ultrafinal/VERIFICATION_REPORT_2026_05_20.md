@@ -1,7 +1,7 @@
 # Verification Report — 2026-05-19/20 Session, 19 PRs Landed
 
 **Generated:** 2026-05-20 (post-merge of #92, final PR in the campaign).
-**Methodology:** 4 parallel ultrathink-mode reasoning agents (opus model) audited all 10 today-PRs (#82-#92) along orthogonal dimensions: production-code correctness, test/regression-net soundness, channel/unit registry coherence, and cross-cutting integration.
+**Methodology:** 4 parallel ultrathink-mode reasoning agents (opus model) audited all 11 today-PRs (#82-#92, inclusive — count is 11, range spans #82 through #92) along orthogonal dimensions: production-code correctness, test/regression-net soundness, channel/unit registry coherence, and cross-cutting integration.
 **Scope:** Every PR's diff at its merge SHA on `origin/main`, plus the post-merge HEAD state of every touched file.
 **Hunt list (per user directive):** bugs, errors, wiring issues, failure points, AAA-quality gaps, and any other potential gaps whatsoever.
 
@@ -55,12 +55,12 @@
 1. **`STRATA_ORIENTATION_RAD` wrongly tagged** in BOTH registries — `terrain_stratigraphy.py:213-224` writes a 3D unit normal vector (sin·cos, sin·sin, cos) — dimensionless direction cosines `[-1,1]`. Both `_CHANNEL_CANONICAL_UNITS` and `Channel.STRATA_ORIENTATION_RAD` say "rad". Same Shape-A bug class that Codex caught for `flow_direction`; this one slipped.
 2. **`TERRAIN_DISPLACEMENT` has dual-semantics** — meters via `terrain_materials_v2.py:1156` (multiplied by `displacement_amplitude_m`), dimensionless `[0,1]` via `terrain_quixel_ingest.py:728` (raw `sampled_disp * layer_weight`, no meter scale). Registry can pin only one; producers disagree.
 3. **`macro_color`** is in `_CHANNEL_CANONICAL_UNITS` (PR #88) but NOT in `Channel` enum (PR #89). Asymmetry.
-4. **9 enum-only channels** missing from `_CHANNEL_CANONICAL_UNITS`: `tidal_zone_label`, `water_surface_mask`, `cave_candidate`, `flow_accumulation`, `erosion_amount`, `deposition_amount`, `curvature`, `bank_instability` — silently legacy-permissive at the assertion site.
+4. **8 enum-only channels** missing from `_CHANNEL_CANONICAL_UNITS`: `tidal_zone_label`, `water_surface_mask`, `cave_candidate`, `flow_accumulation`, `erosion_amount`, `deposition_amount`, `curvature`, `bank_instability` — silently legacy-permissive at the assertion site.
 5. **`flow_direction` dtype loss** — `_stack_channel` casts to `np.float64`; int8 D8 indices survive numerically but `mean`/`relief` stats are meaningless. The gate validates units but not dtype.
 6. **Cross-registry consistency test is unidirectional** — walks `Channel` and looks up in `_CHANNEL_CANONICAL_UNITS`, skips on miss. A gs-only channel (like `macro_color`) is silently OK. Bidirectional walk needed.
 7. **Skip-guard text stale** — `test_cross_registry_consistency_with_golden_snapshots` still has the "pre-PR #88" skip path. After both landed, skip is unreachable; remove or convert to hard-fail.
 
-### Agent 4 — Integration & AAA bar (all 10 PRs)
+### Agent 4 — Integration & AAA bar (all 11 PRs)
 
 | Dimension | Status | Notes |
 |---|---|---|
@@ -87,7 +87,7 @@
 | **P1** | T0.5-1c — fix TERRAIN_DISPLACEMENT dual-semantics | Either fix quixel_ingest writer OR split channel | 1-2 hr | new |
 | **P1** | T0-4.5b — fix ZZ3-NEW-P0-01 (terrain_assets.py:811 writes rad as "deg") | Insert math.degrees() at producer OR fix downstream | 30 min + producer round-trip test | already in Y04 v3 as T0-4.5 P0-01, formally separate |
 | **P1** | T0.5-8c — 2 Unity-bound JSON writers (chunking + waterfalls) + tighten AST | Add to _GUARDED_FILES, bump count 13→15, fix `allow_nan=0` matching | 30 min | new |
-| **P2** | T0.5-5b — fill 9 enum-only channels in `_CHANNEL_CANONICAL_UNITS` + add `macro_color` to Channel enum + bidirectional cross-registry walk | Symmetric registry, remove stale skip | 1 hr | new |
+| **P2** | T0.5-5b — fill 8 enum-only channels in `_CHANNEL_CANONICAL_UNITS` + add `macro_color` to Channel enum + bidirectional cross-registry walk | Symmetric registry, remove stale skip | 1 hr | new |
 | **P3** | Wave-VV proof for #90 — Blender → Unity rotation-clip round-trip screenshot | 1 cycle of bake + import + screenshot | 30 min | per visual_verification_mandate memory |
 | **P3** | T0.5-1d — start producer migration on Channel.WATER_DEPTH_M (3 highest-risk producers) | Mechanical replacement + pyright stub | 2 hr | follow-on |
 
@@ -126,11 +126,11 @@ The pattern paid for itself **3 times today** in mechanical-correctness signals 
 ## 6. Reference
 
 - 4 underlying agent reports (consolidated above) are in this session's conversation log.
-- Memory entry: `project_session_complete_2026_05_19_19_prs.md`
+- Memory entry: `project_session_complete_2026_05_19_19_prs.md` — lives in the Claude Code agent's per-project memory store at `~/.claude/projects/<project-slug>/memory/`, **not** in this repo. Referenced here as the canonical session log; downstream agents can re-derive it by reading `gh pr list --state merged --search 'merged:>2026-05-19'` against this repo, or by reading the per-PR commit messages on `main`.
 - Canonical pattern: `FIX_PATTERN_v1.md` in this directory.
 - Y04 v3 spec: `MASTER_FINAL.md` Part P §P.8.
 
 **Reply line for downstream agents:**
-```
+```text
 VERIFICATION_2026_05_20 prs_landed=19 (#74-#92) verdict=ACCEPTABLE_WITH_FOLLOWUP gaps_p1=5 gaps_p2=1 gaps_p3=2 zero_ship_blockers=true forcing_functions_proven=3 next_batch=remediation_pairs
 ```
