@@ -372,3 +372,77 @@ def test_t2_40_vorticity_axis_convention_pinned() -> None:
         f"with={interior_with:.6f} without={interior_without:.6f} "
         "(T2-40 axis-convention regression)"
     )
+
+
+# ---------------------------------------------------------------------------
+# ADV-PR97-01 (CHECKPOINT-2 hotfix) — kelvin_wake_mask zero-flow regression
+# ---------------------------------------------------------------------------
+
+
+def test_kelvin_wake_zero_flow_returns_zeros() -> None:
+    """Stationary water (flow_speed == 0) must produce a zero wake mask.
+
+    ADV-PR97-01: PR #97 correctly capped the subcritical half-angle at
+    ``arcsin(1/3) = 19.47 deg`` but left an unguarded regression: at
+    ``flow_speed = 0`` the Kelvin geometry still emits a 19.47 deg cone
+    (silent corruption -- credible-but-wrong, vs the pre-PR-97 90 deg cone
+    which was obviously-wrong). A Kelvin wake only exists when relative
+    motion between fluid and obstacle is non-trivial; below ~1 mm/s no
+    coherent wake forms.
+
+    The hotfix adds an early-return guard for ``flow_speed < 1e-3``; this
+    test pins that guard so any future refactor that removes it fails CI.
+    """
+    from veilbreakers_terrain.sim.foam import kelvin_wake_mask
+
+    H, W = 21, 21
+    cell_size = 1.0
+    pos_x = np.arange(W, dtype=np.float32)[None, :].repeat(H, axis=0) * cell_size
+    pos_y = np.arange(H, dtype=np.float32)[:, None].repeat(W, axis=1) * cell_size
+
+    mask = kelvin_wake_mask(
+        pos_x, pos_y,
+        rock_row=10.0, rock_col=10.0,
+        flow_dir_xy=(1.0, 0.0),  # well-formed direction
+        flow_speed=0.0,  # stationary water
+        cell_size=cell_size,
+        max_dist_m=20.0,
+    )
+
+    assert mask.shape == (H, W)
+    assert mask.dtype == np.float32
+    np.testing.assert_array_equal(
+        mask, np.zeros((H, W), dtype=np.float32),
+        err_msg=(
+            "kelvin_wake_mask(flow_speed=0.0) must return an all-zero mask "
+            "(ADV-PR97-01 hotfix regression)"
+        ),
+    )
+
+
+def test_kelvin_wake_sub_threshold_flow_returns_zeros() -> None:
+    """Sub-1mm/s flow is below the coherent-wake threshold -> zero mask.
+
+    Pins the ``flow_speed < 1e-3`` boundary so future tuning of the
+    threshold does not silently start emitting a wake for stationary or
+    near-stationary water.
+    """
+    from veilbreakers_terrain.sim.foam import kelvin_wake_mask
+
+    H, W = 11, 11
+    cell_size = 1.0
+    pos_x = np.arange(W, dtype=np.float32)[None, :].repeat(H, axis=0) * cell_size
+    pos_y = np.arange(H, dtype=np.float32)[:, None].repeat(W, axis=1) * cell_size
+
+    # 0.5 mm/s — below the 1 mm/s coherent-wake threshold.
+    mask = kelvin_wake_mask(
+        pos_x, pos_y,
+        rock_row=5.0, rock_col=5.0,
+        flow_dir_xy=(1.0, 0.0),
+        flow_speed=5e-4,
+        cell_size=cell_size,
+    )
+    assert float(mask.sum()) == 0.0, (
+        "kelvin_wake_mask must short-circuit for flow_speed < 1e-3 m/s "
+        "(ADV-PR97-01 hotfix regression)"
+    )

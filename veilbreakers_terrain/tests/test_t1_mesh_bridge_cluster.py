@@ -250,3 +250,75 @@ def test_t1_20_mesh_bridge_bmesh_sites_have_try_finally() -> None:
         f"baseline) but found {total}. If a new site is intentional, bump "
         f"this assertion and verify try/finally bm.free() coverage above."
     )
+
+
+# ---------------------------------------------------------------------------
+# ADV-PR104-01 (CHECKPOINT-2 hotfix) — Blender path must consume num_slots
+# ---------------------------------------------------------------------------
+
+
+def test_adv_pr104_01_blender_path_allocates_slots_and_assigns_material_index() -> None:
+    """The Blender path in mesh_from_spec must consume num_slots end-to-end.
+
+    ADV-PR104-01: PR #104 fixed ``num_slots = max(material_ids) + 1`` but
+    the Blender branch never read ``num_slots`` and never assigned
+    ``face.material_index``. Multi-material specs rendered as a single
+    category-mapped slot 0, silently collapsing slot information that the
+    headless-fallback dict surfaced correctly. PR #104's fix was dead code
+    in the path that actually runs in Blender.
+
+    A full Blender integration test would require a richer bpy stub than
+    the project conftest provides today. Per the hotfix spec, this is a
+    source-level sentinel: it asserts the two patterns added by the hotfix
+    are present in the Blender branch so a future refactor that removes
+    them lights up CI immediately.
+
+    Patterns asserted:
+    * ``mesh_data.materials.append(None)`` — placeholder-slot allocation
+      driven by ``num_slots`` so downstream consumers see the right count.
+    * ``poly.material_index = int(mid)`` — per-face id assignment so each
+      face actually paints the slot the spec intended.
+    """
+    source = _MESH_BRIDGE.read_text(encoding="utf-8")
+
+    assert "mesh_data.materials.append(None)" in source, (
+        "_mesh_bridge.py Blender path is missing "
+        "`mesh_data.materials.append(None)` slot allocation "
+        "(ADV-PR104-01 hotfix regression — num_slots is dead code again)"
+    )
+    assert "poly.material_index = int(mid)" in source, (
+        "_mesh_bridge.py Blender path is missing "
+        "`poly.material_index = int(mid)` per-face assignment "
+        "(ADV-PR104-01 hotfix regression — multi-material specs collapse)"
+    )
+
+    # Pin the order: the slot allocation must come BEFORE the per-face
+    # assignment (you can't set material_index on a slot that hasn't been
+    # appended yet — Blender silently clamps to len(materials)-1).
+    alloc_idx = source.index("mesh_data.materials.append(None)")
+    assign_idx = source.index("poly.material_index = int(mid)")
+    assert alloc_idx < assign_idx, (
+        "Slot allocation must precede per-face material_index assignment "
+        "(Blender clamps material_index to len(materials)-1 otherwise)"
+    )
+
+
+def test_adv_pr104_01_headless_fallback_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The headless fallback dict path still reports num_slots correctly.
+
+    Belt-and-braces: this re-asserts the PR-104 invariant on the path that
+    PR-104 originally fixed, to confirm the hotfix did not regress the
+    fallback contract that downstream tooling relies on for CI.
+    """
+    from veilbreakers_terrain.handlers import _mesh_bridge as _mb
+
+    monkeypatch.setattr(_mb, "_HAS_BPY", False)
+    spec = _spec([0, 5, 5, 5])  # max+1 = 6, len(set) = 2
+    result = mesh_from_spec(spec)
+    assert isinstance(result, dict)
+    assert result["material_slot_count"] == 6, (
+        "Headless fallback num_slots must remain max(material_ids)+1=6 "
+        "after ADV-PR104-01 hotfix (PR #104 contract preserved)"
+    )

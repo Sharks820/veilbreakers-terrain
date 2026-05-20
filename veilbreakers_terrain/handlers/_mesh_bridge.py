@@ -1516,6 +1516,23 @@ def mesh_from_spec(
         # Create Blender mesh data and object
         mesh_data = bpy.data.meshes.new(obj_name)
         bm.to_mesh(mesh_data)
+
+        # ADV-PR104-01 (CHECKPOINT-2 hotfix): PR #104 corrected the num_slots
+        # formula (max(material_ids)+1 vs len(set(...))) but the Blender path
+        # NEVER consumed num_slots — no slots were appended to mesh_data.materials
+        # and face.material_index was never set, so a multi-material spec
+        # rendered as a single-material mesh with all faces pinned to slot 0.
+        # Only the headless fallback dict surfaced num_slots, making the fix
+        # dead code for the actual Blender pipeline.
+        #
+        # Allocate placeholder slots (filled later by the category-material
+        # loop or by downstream consumers) and assign per-face material_index
+        # so the slot count is actually load-bearing.
+        for _ in range(num_slots):
+            mesh_data.materials.append(None)
+        if material_ids and len(material_ids) == len(mesh_data.polygons):
+            for poly, mid in zip(mesh_data.polygons, material_ids):
+                poly.material_index = int(mid)
     finally:
         bm.free()
 

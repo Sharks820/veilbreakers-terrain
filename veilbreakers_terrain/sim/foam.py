@@ -91,6 +91,16 @@ def kelvin_wake_mask(
         return np.zeros(pos_grid_x.shape, dtype=np.float32)
     dx_flow, dy_flow = dx_flow / norm, dy_flow / norm
 
+    # ADV-PR97-01 (CHECKPOINT-2 hotfix): stationary water must produce zero wake.
+    # PR #97 fixed the half-angle math (arcsin(1/3) = 19.47 deg) but left the
+    # zero-flow-speed regression unguarded: when flow_speed == 0 the cone is
+    # still emitted at 19.47 deg, which is credible-but-wrong silent corruption
+    # (pre-PR-97 emitted an obviously-wrong 90 deg cone instead). A Kelvin wake
+    # only exists where there is actual relative motion between fluid and
+    # obstacle; below ~1 mm/s no coherent wake forms (Bostan 2021 sec. 2).
+    if flow_speed < 1e-3:
+        return np.zeros(pos_grid_x.shape, dtype=np.float32)
+
     rel_x = pos_grid_x - rock_x
     rel_y = pos_grid_y - rock_y
 
