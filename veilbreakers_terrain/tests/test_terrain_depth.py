@@ -694,8 +694,15 @@ class TestCanonicalFbmNoise:
     sum so |v| <= 1.
     """
 
+    @pytest.mark.timeout(300)
     def test_output_bounded_1M_samples(self):
-        """Max |v| must be <= 1.0 across 1M deterministic samples."""
+        """Max |v| must be <= 1.0 across 1M deterministic samples.
+
+        Per-test timeout bumped to 300s — the global 120s is fine locally
+        (~76s warm) but CI cold-runners consistently slip past, producing
+        flaky timeouts on the 1M-sample loop. The test's contract is
+        max-|v|<=1, not wallclock; raising the gate fixes the right thing.
+        """
         rng = np.random.default_rng(20260423)
         n = 1_000_000
         xs = rng.uniform(-50.0, 50.0, n)
