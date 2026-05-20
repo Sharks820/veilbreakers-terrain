@@ -129,9 +129,17 @@ class TestT1_1_HdrpShaderLeakRemoved:
 
 
 class TestT1_22_AnisotropicAndTrilinear:
-    """Per Y04 v3 T1-22: VbTerrainImporter.CopyAndConfigureTexture must
-    set ``filterMode = Trilinear`` and ``anisoLevel = 8`` for imported
+    """Per Y04 v3 T1-22 + CHECKPOINT-OPUS-ULTRA V5 followup:
+    VbTerrainImporter.CopyAndConfigureTexture must set
+    ``filterMode = Trilinear`` and ``anisoLevel = 16`` for imported
     terrain textures.
+
+    The V5 AAA reviewer flagged the original ``anisoLevel = 8`` as
+    mobile-AAA bar. Witcher 3 / Snowdrop / Anvil ship ground textures
+    at 16; Unity max is 16
+    (https://docs.unity3d.com/ScriptReference/Texture-anisoLevel.html);
+    modern desktop GPUs (PS5 / XSX / RTX) have no perf cost for 16 vs 8
+    on terrain. Bumping to 16 hits hero-AAA bar with no perf regression.
     """
 
     def test_terrain_importer_uses_trilinear_filter(self) -> None:
@@ -143,12 +151,16 @@ class TestT1_22_AnisotropicAndTrilinear:
             "sets FilterMode.Trilinear. Textures will alias visibly in motion."
         )
 
-    def test_terrain_importer_sets_aniso_level_8(self) -> None:
+    def test_terrain_importer_sets_aniso_level_16(self) -> None:
+        """CHECKPOINT-OPUS-ULTRA V5 AAA bar: anisoLevel must be 16
+        (hero-AAA, Witcher 3 / Snowdrop / Anvil convention; Unity max),
+        not 8 (mobile-AAA bar). No perf cost on PS5 / XSX / desktop RTX.
+        """
         text = _VB_TERRAIN_IMPORTER.read_text(encoding="utf-8")
-        assert "importer.anisoLevel = 8" in text, (
-            "T1-22 regression: VbTerrainImporter texture importer no longer "
-            "sets anisoLevel = 8. Grazing-angle terrain textures will "
-            "shimmer."
+        assert "importer.anisoLevel = 16" in text, (
+            "T1-22 / V5 regression: VbTerrainImporter texture importer no "
+            "longer sets anisoLevel = 16. Grazing-angle terrain textures "
+            "will shimmer; quality drops below hero-AAA bar."
         )
 
 
