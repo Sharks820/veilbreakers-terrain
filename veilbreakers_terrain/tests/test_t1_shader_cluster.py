@@ -40,6 +40,7 @@ silent-fallback strings are absent (no ``Shader.Find("HDRP/...")`` left).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -332,9 +333,11 @@ class TestT1_29_ShadowRayMarchBilinear:
         # quantisation artefact will show up as discrete jumps in the
         # shadow mask between adjacent azimuths.
         rows, cols = 32, 32
-        h = np.fromfunction(
-            lambda y, x: 0.05 * x + 0.02 * y, (rows, cols), dtype=np.float64
-        )
+
+        def _ramp(y: np.ndarray[Any, Any], x: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+            return 0.05 * x + 0.02 * y
+
+        h = np.fromfunction(_ramp, (rows, cols), dtype=np.float64)
 
         el = float(np.deg2rad(20.0))  # low sun = long shadows
         cell_m = 1.0
