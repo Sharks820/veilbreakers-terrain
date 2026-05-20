@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -51,12 +52,16 @@ def _invoke_cli(out_dir: Path, *, seed: int = 7, size: int = 32) -> None:
     )
 
 
-def _read_manifest(out_dir: Path) -> dict:
+def _read_manifest(out_dir: Path) -> dict[str, Any]:
     manifest_path = out_dir / "manifest.json"
     assert manifest_path.is_file(), (
         f"CLI did not write manifest.json to {out_dir}"
     )
-    return json.loads(manifest_path.read_text(encoding="utf-8"))
+    parsed: Any = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert isinstance(parsed, dict), (
+        f"manifest.json must decode to a dict, got {type(parsed).__name__}"
+    )
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +69,7 @@ def _read_manifest(out_dir: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_t0_2_cli_manifest_carries_non_empty_final_mask_stack_hash(tmp_path):
+def test_t0_2_cli_manifest_carries_non_empty_final_mask_stack_hash(tmp_path: Path) -> None:
     """The manifest must contain a non-empty ``final_mask_stack_hash``.
 
     Pre-fix the field did not exist at all (the stub never instantiated
@@ -94,7 +99,7 @@ def test_t0_2_cli_manifest_carries_non_empty_final_mask_stack_hash(tmp_path):
     )
 
 
-def test_t0_2_cli_manifest_records_real_pass_sequence(tmp_path):
+def test_t0_2_cli_manifest_records_real_pass_sequence(tmp_path: Path) -> None:
     """The manifest must list the passes the orchestrator actually ran.
 
     A stub bypass can fake a hash by hardcoding hex, but it cannot
@@ -142,7 +147,7 @@ def test_t0_2_cli_manifest_records_real_pass_sequence(tmp_path):
     )
 
 
-def test_t0_2_cli_manifest_records_populated_channels_beyond_height(tmp_path):
+def test_t0_2_cli_manifest_records_populated_channels_beyond_height(tmp_path: Path) -> None:
     """At least one channel other than ``height`` must be populated.
 
     A stub that merely echoes the caller-supplied heightmap cannot
@@ -185,7 +190,7 @@ def test_t0_2_cli_manifest_records_populated_channels_beyond_height(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_t0_2_cli_pipeline_hash_is_deterministic_across_runs(tmp_path):
+def test_t0_2_cli_pipeline_hash_is_deterministic_across_runs(tmp_path: Path) -> None:
     """Same seed/size MUST produce the same final_mask_stack_hash twice."""
     run_a = tmp_path / "run_a"
     run_b = tmp_path / "run_b"
@@ -206,7 +211,7 @@ def test_t0_2_cli_pipeline_hash_is_deterministic_across_runs(tmp_path):
     )
 
 
-def test_t0_2_cli_pipeline_hash_changes_with_seed(tmp_path):
+def test_t0_2_cli_pipeline_hash_changes_with_seed(tmp_path: Path) -> None:
     """Different seeds MUST produce different final_mask_stack_hash values.
 
     Guards against the perverse failure mode where the CLI is wired
