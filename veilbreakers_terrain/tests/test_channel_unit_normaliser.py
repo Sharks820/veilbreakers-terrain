@@ -153,21 +153,25 @@ class TestUnregisteredChannelLegacyPermissive:
             _evaluate_channel_assertion,
         )
 
-        # ``curvature`` is a real TerrainMaskStack field but is NOT in the
-        # registry — perfect "legacy-permissive" sentinel. If a future PR
-        # adds curvature to the registry, switch this test to use another
-        # unregistered real channel.
-        assert "curvature" not in _CHANNEL_CANONICAL_UNITS, (
-            "fixture invalidated: 'curvature' is now in the registry; "
+        # ``concavity`` is a real TerrainMaskStack field but is NOT in the
+        # registry — perfect "legacy-permissive" sentinel. (Pre-PR
+        # `fix/channel-registry-symmetry` this fixture used ``curvature``;
+        # that channel has since been registered as "dimensionless" to
+        # close the V4 Shape-A asymmetry, so the fixture migrated to
+        # ``concavity``.) If a future PR adds ``concavity`` to the
+        # registry, switch this test to use another unregistered real
+        # channel.
+        assert "concavity" not in _CHANNEL_CANONICAL_UNITS, (
+            "fixture invalidated: 'concavity' is now in the registry; "
             "pick another unregistered real-stack channel for this test"
         )
 
         arbitrary = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
-        stack = _make_stack_with_channel("curvature", arbitrary)
+        stack = _make_stack_with_channel("concavity", arbitrary)
 
         _ok, issues, _stats = _evaluate_channel_assertion(
             stack,
-            "curvature",
+            "concavity",
             {"max_value_m": 100.0},
         )
 

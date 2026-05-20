@@ -207,43 +207,24 @@ def test_cross_registry_consistency_with_golden_snapshots() -> None:
     (the T0.5-5 registry). Two registries cannot disagree about the same
     channel's unit — that would itself be a Shape C bug.
 
-    Skips gracefully if the T0.5-5 registry isn't present (e.g. when this
-    PR lands before PR #88 / T0.5-5).
+    PR #88 (_CHANNEL_CANONICAL_UNITS) has landed; the skip path is now
+    a hard import-error guard, not a graceful pre-#88 fallback.
     """
-    import importlib
-    from typing import Any, Mapping, cast
-
     from veilbreakers_terrain.handlers._channels import Channel
-
-    try:
-        golden_snapshots = importlib.import_module(
-            "veilbreakers_terrain.handlers.terrain_golden_snapshots"
-        )
-        canonical_units = cast(
-            Mapping[str, str],
-            getattr(golden_snapshots, "_CHANNEL_CANONICAL_UNITS", None),
-        )
-    except ImportError:
-        canonical_units = cast("Mapping[str, str] | None", None)
-
-    if canonical_units is None:
-        pytest.skip(
-            "T0.5-5 _CHANNEL_CANONICAL_UNITS registry not present in this "
-            "build — cross-registry check is moot. Will activate once PR "
-            "#88 (T0.5-5) lands."
-        )
-
-    _unused: Any = canonical_units  # keep type checker calm pre-narrowing
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+        _CHANNEL_CANONICAL_UNITS,
+    )
 
     drifts: list[str] = []
     for ch in Channel:
-        gs_unit = canonical_units.get(ch.value)
+        gs_unit = _CHANNEL_CANONICAL_UNITS.get(ch.value)
         if gs_unit is None:
-            continue  # not yet registered in golden_snapshots — ok
+            continue  # not yet registered in golden_snapshots — bidirectional
+            # test below catches this side; this loop only validates
+            # unit-agreement for the symmetric subset.
         enum_unit = ch.info.unit
-        # Golden-snapshots registry uses "m" / "rad" / "deg" / "dimensionless"
-        # — our enum extends to "id" and "count". Both are non-overlapping
-        # with the gs set so any drift is a real bug.
+        # Golden-snapshots registry uses "m" / "rad" / "deg" / "dimensionless" /
+        # "count" — enum uses the same set. Any disagreement is a real bug.
         if enum_unit != gs_unit:
             drifts.append(
                 f"Channel.{ch.name} ({ch.value!r}): _channels says {enum_unit!r}, "
@@ -253,4 +234,113 @@ def test_cross_registry_consistency_with_golden_snapshots() -> None:
         "Unit drift between _channels.Channel registry and "
         "terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS:\n  "
         + "\n  ".join(drifts)
+    )
+
+
+def test_all_channels_have_canonical_unit() -> None:
+    """Forward-direction cross-registry walk: every Channel enum value
+    must have a unit declaration in ``_CHANNEL_CANONICAL_UNITS``.
+
+    Closes the enum-only side of the V4-reported asymmetry surface
+    (CHECKPOINT-OPUS-ULTRA P1-CCU-A1). Channels added to ``Channel``
+    without a matching ``_CHANNEL_CANONICAL_UNITS`` entry would
+    silently bypass the unit-drift gate at the assertion site
+    (``_channel_unit_mismatch`` returns None for unregistered keys).
+
+    Pinning this prevents reintroduction of the 8 enum-only channels
+    reported in the V4 audit: tidal_zone_label, water_surface_mask,
+    cave_candidate, flow_accumulation, erosion_amount,
+    deposition_amount, curvature, bank_instability.
+    """
+    from veilbreakers_terrain.handlers._channels import Channel
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+        _CHANNEL_CANONICAL_UNITS,
+    )
+
+    missing_in_units = [
+        c.value for c in Channel if c.value not in _CHANNEL_CANONICAL_UNITS
+    ]
+    assert not missing_in_units, (
+        f"Cross-registry drift: {missing_in_units} are in Channel enum "
+        "but NOT in _CHANNEL_CANONICAL_UNITS. Add them to "
+        "terrain_golden_snapshots.py to close the V4 Shape-A "
+        "silent-corruption surface."
+    )
+
+
+def test_channel_canonical_units_keys_all_exist_in_channel_enum() -> None:
+    """Inverse cross-registry walk: every key in
+    ``_CHANNEL_CANONICAL_UNITS`` must resolve via
+    ``Channel.maybe_from_name`` (i.e. exist as a ``Channel`` enum value).
+
+    Closes the V4-reported asymmetry surface (CHECKPOINT-OPUS-ULTRA
+    P1-CCU-A2) where channels added to one registry without the other
+    silently bypass unit-drift validation. The pre-existing
+    ``test_cross_registry_consistency_with_golden_snapshots`` walks
+    ``Channel → _CHANNEL_CANONICAL_UNITS`` only and skips on miss; this
+    test closes the inverse direction.
+
+    Pinning this prevents reintroduction of the 2 dict-only channels
+    reported in the V4 audit: vb_aspect_deg, macro_color.
+    """
+    from veilbreakers_terrain.handlers._channels import Channel
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+        _CHANNEL_CANONICAL_UNITS,
+    )
+
+    enum_values = {c.value for c in Channel}
+    missing_in_enum = [
+        name for name in _CHANNEL_CANONICAL_UNITS if name not in enum_values
+    ]
+    assert not missing_in_enum, (
+        f"Cross-registry drift: {missing_in_enum} are in "
+        "_CHANNEL_CANONICAL_UNITS but NOT in Channel enum. "
+        "Add them to handlers/_channels.py Channel class + "
+        "_CHANNEL_INFO to close the V4 Shape-A silent-corruption "
+        "surface."
+    )
+
+
+def test_channel_registries_are_symmetric_set_equality() -> None:
+    """Stronger summary form of the two directional tests above —
+    asserts the two registries are set-equal so that any future
+    additions to one MUST be added to the other in the same PR.
+
+    This is the structural closure for CHECKPOINT-OPUS-ULTRA V4
+    P1-CCU-A1 + P1-CCU-A2: the Shape-A silent-corruption class is
+    closed permanently when this assertion holds and the two
+    directional walks above run.
+    """
+    from veilbreakers_terrain.handlers._channels import Channel
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+        _CHANNEL_CANONICAL_UNITS,
+    )
+
+    enum_names = {c.value for c in Channel}
+    dict_names = set(_CHANNEL_CANONICAL_UNITS.keys())
+    assert enum_names == dict_names, (
+        "Channel enum vs _CHANNEL_CANONICAL_UNITS asymmetry. "
+        f"Enum-only: {sorted(enum_names - dict_names)}. "
+        f"Dict-only: {sorted(dict_names - enum_names)}."
+    )
+
+
+def test_yaw_degrees_and_vb_aspect_deg_are_distinct_axes() -> None:
+    """Both Channel.YAW_DEG and Channel.VB_ASPECT_DEG carry unit "deg"
+    but represent two distinct physical axes (per-instance rotation
+    vs per-cell topographic aspect). Closing CHECKPOINT-OPUS-ULTRA V4
+    naming-drift item #11: document the distinction; do NOT unify.
+    """
+    from veilbreakers_terrain.handlers._channels import Channel
+
+    assert Channel.YAW_DEG.value == "yaw_degrees"
+    assert Channel.VB_ASPECT_DEG.value == "vb_aspect_deg"
+    # Both must be "deg" but are NOT the same enum member.
+    assert Channel.YAW_DEG.info.unit == "deg"
+    assert Channel.VB_ASPECT_DEG.info.unit == "deg"
+    assert Channel.YAW_DEG is not Channel.VB_ASPECT_DEG, (
+        "YAW_DEG (export-side per-instance yaw) and VB_ASPECT_DEG "
+        "(mask-stack per-cell topographic aspect) are distinct axes "
+        "and must not be unified — see comment block above their enum "
+        "entries in handlers/_channels.py."
     )

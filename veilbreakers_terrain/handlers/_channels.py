@@ -86,7 +86,29 @@ class Channel(Enum):
     FLOW_DIRECTION = "flow_direction"
 
     # --- Degrees (export-side / Unity-bound) ---
+    # NB: YAW_DEG and VB_ASPECT_DEG are TWO distinct degree-native channels.
+    # They share the canonical unit "deg" but represent different physical
+    # axes and live on different surfaces:
+    #
+    #   - YAW_DEG ("yaw_degrees")     — per-instance scatter/tree/animation
+    #     rotation around the world-up axis, written into the
+    #     tree_instance_points export at the Unity boundary by
+    #     terrain_assets._build_tree_instance_array (PR #90 rad→deg anchor).
+    #     Lives on EXPORT-side; NOT a TerrainMaskStack field — see
+    #     test_channel_value_matches_terrain_mask_stack_field's
+    #     _EXPORT_SIDE_CHANNELS exemption set.
+    #
+    #   - VB_ASPECT_DEG ("vb_aspect_deg") — topographic aspect (compass
+    #     direction the slope faces) at each terrain cell in [0, 360),
+    #     emitted by handlers.terrain_topographic_indices.pass_topographic_indices
+    #     for foliage/scatter placement rules. Lives as a real
+    #     TerrainMaskStack field.
+    #
+    # These two MUST NOT be unified — they represent different concepts
+    # (rotation vs orientation, per-instance vs per-cell). Any future
+    # consolidation proposal should be rejected.
     YAW_DEG = "yaw_degrees"
+    VB_ASPECT_DEG = "vb_aspect_deg"
 
     # --- Dimensionless [0, 1] continuous masks ---
     WETNESS = "wetness"
@@ -102,6 +124,13 @@ class Channel(Enum):
     DEPOSITION_AMOUNT = "deposition_amount"
     CURVATURE = "curvature"
     BANK_INSTABILITY = "bank_instability"
+    # --- Categorical-derived RGB mask (multi-channel float32) ---
+    # macro_color is (H, W, 3) float32 RGB on TerrainMaskStack — produced by
+    # terrain_macro_color.compute_macro_color from biome palette + altitude
+    # + wetness. Pinned "dimensionless" to match the assertion-site registry
+    # in terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS (no physical unit,
+    # but not in [0, 1] per-channel; the RGB triple carries no metric).
+    MACRO_COLOR = "macro_color"
 
     # --- Binary masks (dimensionless 0/1) ---
     CLIFF_CANDIDATE = "cliff_candidate"
@@ -184,9 +213,19 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
         "dimensionless",
         "D8 flow direction, int8 indices (-1=pit/border, 0..7=neighbour) — NOT radians",
     ),
-    # Degrees-native (export hop)
+    # Degrees-native — TWO distinct axes (see comment above the enum
+    # entries near YAW_DEG / VB_ASPECT_DEG for why these must stay separate).
     Channel.YAW_DEG: ChannelInfo(
-        "deg", "Tree yaw in tree_instance_points export, degrees (Unity-facing)"
+        "deg",
+        "Per-instance yaw in tree_instance_points export, degrees "
+        "(Unity-facing rotation around world-up axis) — distinct from "
+        "vb_aspect_deg",
+    ),
+    Channel.VB_ASPECT_DEG: ChannelInfo(
+        "deg",
+        "Topographic aspect (compass direction slope faces) per cell, "
+        "degrees in [0, 360); 0=N, 90=E, 180=S, 270=W — distinct from "
+        "yaw_degrees",
     ),
     # Dimensionless
     Channel.WETNESS: ChannelInfo("dimensionless", "Surface wetness [0, 1]"),
@@ -217,6 +256,12 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
     ),
     Channel.BANK_INSTABILITY: ChannelInfo(
         "dimensionless", "Bank instability factor [0, 1]"
+    ),
+    Channel.MACRO_COLOR: ChannelInfo(
+        "dimensionless",
+        "Per-cell macro-color RGB triple (H, W, 3) float32 — biome palette "
+        "blended with altitude + wetness modulations. Multi-channel; no "
+        "scalar unit",
     ),
     # Binary masks
     Channel.CLIFF_CANDIDATE: ChannelInfo(

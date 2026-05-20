@@ -608,7 +608,13 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     # produce silent wrong-unit verdicts at the assertion site.
     "flow_direction": "dimensionless",
     # Degrees — degrees-native channels.
+    # NB: vb_aspect_deg (topographic aspect / compass direction at each cell,
+    # 0..360°) and yaw_degrees (per-instance scatter/tree rotation at the
+    # Unity export boundary) are TWO distinct degree-native channels — they
+    # are NOT aliases. See the matching comment in handlers/_channels.py
+    # above Channel.YAW_DEG / Channel.VB_ASPECT_DEG.
     "vb_aspect_deg": "deg",
+    "yaw_degrees": "deg",
     # Per-cell counts and densities — dimensionless [0, 1] or counts.
     "wetness": "dimensionless",
     "drainage": "dimensionless",
@@ -622,8 +628,21 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     "terrain_brucks_weight": "dimensionless",
     "cliff_candidate": "dimensionless",
     "cliff_mask": "dimensionless",
+    "water_surface_mask": "dimensionless",
+    "cave_candidate": "dimensionless",
     "biome_id": "dimensionless",
     "navmesh_area_id": "dimensionless",
+    "tidal_zone_label": "dimensionless",
+    # Erosion / deposition / curvature — derived dimensionless maps from
+    # the hydrology + sediment passes. All [0, 1]-ish or signed values
+    # carrying no physical unit.
+    "erosion_amount": "dimensionless",
+    "deposition_amount": "dimensionless",
+    "curvature": "dimensionless",
+    "bank_instability": "dimensionless",
+    # Counts / accumulators — upstream cell-count integers, not
+    # dimensionless [0, 1]; gate distinguishes via the "count" tag.
+    "flow_accumulation": "count",
 }
 
 # Map assertion-key suffix → canonical unit string.
