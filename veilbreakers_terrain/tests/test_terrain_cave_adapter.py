@@ -185,7 +185,11 @@ def test_handle_generate_cave_wraps_pass_caves() -> None:
     with patch.object(terrain_caves, "pass_caves", side_effect=fake_pass_caves):
         result = terrain_caves.handle_generate_cave(_baseline_params())
 
-    assert result["status"] in {"ok", "warning"}, (
+    # T0.5-2 (Y04 v3 §P.8.2 / Part P §P.3) — strict-"ok" assertion. Happy path:
+    # the fake_pass_caves side-effect returns the real pass_caves result, so
+    # status SHOULD be "ok". Accepting "warning" would mask any latent regression
+    # in the adapter's PassResult-to-MCP serialisation surface.
+    assert result["status"] == "ok", (
         f"adapter must succeed when pass_caves succeeds; got status={result['status']} "
         f"error={result.get('error')!r}"
     )
@@ -300,7 +304,9 @@ def test_cave_entry_exit_on_different_faces() -> None:
     result = terrain_caves.handle_generate_cave(
         _baseline_params(traversable=True, width=32, height=32, wall_height=8.0)
     )
-    assert result["status"] in {"ok", "warning"}, result
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — traversable cave with valid params
+    # MUST succeed cleanly; a "warning" here masks an entry/exit topology bug.
+    assert result["status"] == "ok", result
 
     archways = result["meta"]["archway_specs"]
     # Must have entry + exit + secondary exit (3 archways minimum)
@@ -343,8 +349,11 @@ def test_cave_speleothem_pairing_density() -> None:
             seed=7, pairing_strength=0.0, wall_height=3.0, width=14, height=14,
         )
     )
-    assert high["status"] in {"ok", "warning"}, high
-    assert low["status"] in {"ok", "warning"}, low
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" pair — pairing_strength sweep must
+    # produce clean "ok" on both ends; "warning" would hide a stalactite-
+    # stalagmite pairing regression at the limit values.
+    assert high["status"] == "ok", high
+    assert low["status"] == "ok", low
 
     def _counts(res: Mapping[str, Any]) -> dict[str, int]:
         c = {"stalactite": 0, "stalagmite": 0, "column": 0}
@@ -381,7 +390,10 @@ def test_cave_navigation_clearance_minimum() -> None:
             wall_height=4.0, width=20, height=20,
         )
     )
-    assert result["status"] in {"ok", "warning"}, result
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — nav-clearance assertion must run
+    # against a clean cave; "warning" here would let clearance violations
+    # downstream slip past with no diagnostic.
+    assert result["status"] == "ok", result
 
     spline = [tuple(p) for p in result["meta"]["traversable_spline"]]
     min_clear = float(result["meta"]["min_nav_clearance_m"])
@@ -526,7 +538,9 @@ def test_cave_canyon_dual_exit_regression() -> None:
     result = terrain_caves.handle_generate_cave(
         _baseline_params(traversable=True, wall_height=6.0, width=20, height=20)
     )
-    assert result["status"] in {"ok", "warning"}, result
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — secondary-exit regression test
+    # depends on a clean traversable=True bake.
+    assert result["status"] == "ok", result
     archway_specs = result["meta"]["archway_specs"]
     roles = [a.get("role") for a in archway_specs]
     assert "exit_secondary" in roles, (
@@ -540,7 +554,9 @@ def test_cave_stalactite_ceiling_regression() -> None:
     (pointing down) and the handler must surface entry/exit world positions.
     """
     result = terrain_caves.handle_generate_cave(_baseline_params(wall_height=4.0))
-    assert result["status"] in {"ok", "warning"}, result
+    # T0.5-2 (Y04 v3 §P.8.2): strict-"ok" — stalactite-ceiling regression for
+    # commit 7adfef1; "warning" would hide a ceiling-attachment topology bug.
+    assert result["status"] == "ok", result
 
     # entry/exit positions present at top level (7adfef1 contract)
     assert "entry_world_pos" in result, "entry_world_pos must be at top level"

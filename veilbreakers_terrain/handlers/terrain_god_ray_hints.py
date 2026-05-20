@@ -358,7 +358,9 @@ def export_god_ray_hints_json(
         "hint_count": len(hints),
         "hints": [h.to_dict() for h in hints],
     }
-    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    # T0.5-8b (Y04 v3 §P.8.2): allow_nan=False — loud-at-source for
+    # god-ray-hints manifest (Unity-consumed lighting hint sidecar).
+    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))
 
 
 # ---------------------------------------------------------------------------
