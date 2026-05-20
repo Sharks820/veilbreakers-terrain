@@ -309,11 +309,17 @@ class IterationMetrics:
     def to_json(self, *, indent: int = 2) -> str:
         """Serialise the full metrics snapshot to a JSON string.
 
-        Equivalent to ``json.dumps(self.summary_report(), indent=indent)``
-        but provided as a first-class method so callers can write metrics
-        files without importing json themselves.
+        Equivalent to ``json.dumps(self.summary_report(), indent=indent,
+        allow_nan=False)`` but provided as a first-class method so callers
+        can write metrics files without importing json themselves.
+
+        T1-4 (Y04 v3 ord 13): ``allow_nan=False`` — iteration-metrics JSON
+        feeds the CI dashboard parser; NaN/Inf in pass-duration or hotspot
+        stats would silently break aggregation.
         """
-        return json.dumps(self.summary_report(), indent=indent)
+        return json.dumps(
+            self.summary_report(), indent=indent, allow_nan=False
+        )
 
 
 def _percentile(samples: List[float], pct: float) -> float:

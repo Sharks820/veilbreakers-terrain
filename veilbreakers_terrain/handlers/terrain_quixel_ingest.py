@@ -570,6 +570,9 @@ def apply_quixel_to_layer(
                 ),
             )
             if side_effects is not None:
+                # T1-4 (Y04 v3 ord 13): allow_nan=False — provenance events
+                # feed the Unity-side ingest log; NaN literals would break
+                # downstream parsers.
                 side_effects.append(json.dumps(
                     {
                         "event": "validation_issue",
@@ -578,6 +581,7 @@ def apply_quixel_to_layer(
                         "message": issue.message,
                     },
                     sort_keys=True,
+                    allow_nan=False,
                 ))
             raise ValueError(issue.message)
 
@@ -732,6 +736,8 @@ def apply_quixel_to_layer(
     # 3. Provenance event
     # ------------------------------------------------------------------ #
     if side_effects is not None:
+        # T1-4 (Y04 v3 ord 13): allow_nan=False — provenance events feed
+        # the Unity-side ingest log; NaN literals would break parsers.
         side_effects.append(json.dumps(
             {
                 "event": "quixel_layer",
@@ -746,6 +752,7 @@ def apply_quixel_to_layer(
                 "textures": {k: str(v) for k, v in asset.textures.items()},
             },
             sort_keys=True,
+            allow_nan=False,
         ))
 
 

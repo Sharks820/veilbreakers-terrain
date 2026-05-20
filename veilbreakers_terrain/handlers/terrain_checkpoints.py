@@ -534,7 +534,12 @@ def save_preset(
     tmp_path = json_path.with_suffix(".json.tmp")
     try:
         with open(tmp_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2, default=str)
+            # T1-4 (Y04 v3 ord 13): allow_nan=False — preset checkpoints are
+            # round-tripped via restore_preset and the intent payload carries
+            # float fields (cell_size, scale, world_origin) that should never
+            # be NaN. Loud-at-source so silent NaN -> 0 corruption can't
+            # silently load.
+            json.dump(payload, fh, indent=2, default=str, allow_nan=False)
         tmp_path.replace(json_path)
     except Exception:
         try:

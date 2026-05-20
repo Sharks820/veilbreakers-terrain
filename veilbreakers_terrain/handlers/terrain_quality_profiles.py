@@ -964,7 +964,14 @@ def write_profile_jsons(root: Path) -> List[Path]:
         out = root / f"{name}.json"
         tmp_path = out.with_suffix(".json.tmp")
         try:
-            tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            # T1-4 (Y04 v3 ord 13 / γ1 ZZ3-NEW-P1-04): allow_nan=False —
+            # quality-profile JSONs feed both the pipeline loader and the
+            # Unity-side validator; NaN in erosion / quality thresholds
+            # would silently mask a bad bake config.
+            tmp_path.write_text(
+                json.dumps(payload, indent=2, allow_nan=False),
+                encoding="utf-8",
+            )
             os.replace(str(tmp_path), str(out))
         except Exception:
             # Clean up the temp file on failure to avoid stale .tmp files

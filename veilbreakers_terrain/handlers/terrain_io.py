@@ -197,13 +197,22 @@ def atomic_write_json(
     indent: int = 2,
     sort_keys: bool = True,
     default: Any = None,
+    allow_nan: bool = False,
 ) -> Path:
     """Atomically serialise ``payload`` as JSON and write it to ``path``.
 
     Defaults match the conventions used across the existing manifest
     writers (``terrain_unity_export.py``, ``terrain_unity_export_contracts.py``,
     ``terrain_navmesh_export.py``, ``terrain_golden_snapshots.py``):
-    ``indent=2``, ``sort_keys=True``, UTF-8 encoded.
+    ``indent=2``, ``sort_keys=True``, UTF-8 encoded, ``allow_nan=False``.
+
+    T1-4 (Y04 v3 ord 13 / γ1 ZZ3-NEW-P1-04): the canonical helper defaults
+    to ``allow_nan=False`` so every caller is loud-at-source on NaN/Inf
+    rather than silently emitting the non-spec ``NaN`` / ``Infinity``
+    tokens that Unity's ``JsonUtility.FromJson`` cannot parse and
+    Newtonsoft.Json silently coerces to ``0.0``. Override only when the
+    payload is internal-only (e.g. a hash digest) and NaN tolerance is
+    intentional — and document the override at the callsite.
 
     Parameters
     ----------
@@ -220,8 +229,19 @@ def atomic_write_json(
     default : callable, optional
         Optional ``json.dumps(default=...)`` callable for non-JSON types
         such as numpy scalars / arrays.
+    allow_nan : bool
+        Pass-through to ``json.dumps``. Defaults to ``False`` (strict,
+        loud-at-source). Set ``True`` only for internal-only payloads
+        where NaN/Inf are intentionally legal and the consumer parses
+        the non-spec tokens.
     """
-    body = json.dumps(payload, indent=indent, sort_keys=sort_keys, default=default)
+    body = json.dumps(
+        payload,
+        indent=indent,
+        sort_keys=sort_keys,
+        default=default,
+        allow_nan=allow_nan,
+    )
     return atomic_write_text(path, body)
 
 

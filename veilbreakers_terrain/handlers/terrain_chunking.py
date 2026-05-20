@@ -501,7 +501,11 @@ def export_chunks_metadata(
             str(k): v for k, v in sd.items()
         }
 
-    return json.dumps(export_data, indent=2)
+    # T1-4 (Y04 v3 ord 13 / γ1 ZZ3-NEW-P1-04): allow_nan=False — chunked
+    # streaming metadata is Unity-consumed (terrain streaming system).
+    # NaN/Inf in bounds, lod_count, or streaming distances would silently
+    # corrupt the streaming budget and cause runtime chunk skips on import.
+    return json.dumps(export_data, indent=2, allow_nan=False)
 
 
 def build_tile_seam_contract(

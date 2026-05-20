@@ -219,5 +219,8 @@ class ExternalAssetProvider(abc.ABC):
             "validation_issues": result.validation_issues,
         }
         catalog.append(entry)
-        catalog_path.write_text(json.dumps(catalog, indent=2))
+        # T1-4 (Y04 v3 ord 13 / γ1 ZZ3-NEW-P1-04): allow_nan=False — the
+        # asset catalog feeds asset_generation -> Unity import; NaN in
+        # poly_count or pbr_channels would silently break asset binding.
+        catalog_path.write_text(json.dumps(catalog, indent=2, allow_nan=False))
         logger.info("[%s] cataloged %s -> %s", result.provider, result.species_id, catalog_path)
