@@ -75,7 +75,12 @@ def solve_catenary(
         hi *= 2.0
         walks += 1
     try:
-        a = brentq(_residual, lo, hi, xtol=1e-6, maxiter=100)
+        # Note: brentq stub returns tuple[float, RootResults] when
+        # full_output=True; we don't pass that flag so it returns float.
+        # Pyright doesn't narrow on the kwarg so we use typing.cast to
+        # tell the type checker we're in the float-return branch.
+        from typing import cast
+        a = cast(float, brentq(_residual, lo, hi, xtol=1e-6, maxiter=100))
     except ValueError as exc:
         raise RuntimeError(
             "catenary brentq failed to bracket; "
