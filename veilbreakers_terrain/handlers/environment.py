@@ -2711,7 +2711,41 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
                         )
                     arr = raw.reshape((res, res))
                     # Writer used flip_vertical=True (default); undo it.
-                    return np.flipud(arr)
+                    arr = np.flipud(arr)
+                    # T1-17 round-4 (CodeRabbit CRITICAL): the on-disk format
+                    # is uint16 quantized to [0, 65535] via
+                    # ``_export_heightmap_raw`` (line 1362-1363:
+                    # ``hmap_u16 = np.rint(hmap * 65535.0)`` after
+                    # normalising to [0, 1] with ``(hmap - hmin) / (hmax - hmin)``).
+                    # Returning the raw uint16 values into seam locking
+                    # would feed values in the [0, 65535] domain to logic
+                    # that expects height-in-metres — silent seam corruption.
+                    # Dequantize back to metres using the neighbor's stored
+                    # ``height_range`` (written verbatim into the tile manifest
+                    # at ``_export_world_tile_artifacts``).
+                    height_range = neighbor.get("height_range")
+                    if (
+                        height_range is None
+                        or len(height_range) != 2
+                    ):
+                        raise ValueError(
+                            "neighbor tile result missing 'height_range'; "
+                            "cannot dequantize uint16 heightmap to metres"
+                        )
+                    hmin = float(height_range[0])
+                    hmax = float(height_range[1])
+                    if not (
+                        np.isfinite(hmin) and np.isfinite(hmax)
+                    ):
+                        raise ValueError(
+                            "neighbor 'height_range' has non-finite bounds"
+                        )
+                    if hmax - hmin > 1e-10:
+                        return (
+                            arr.astype(np.float64) / 65535.0
+                        ) * (hmax - hmin) + hmin
+                    # Degenerate case: flat tile — return constant hmin.
+                    return np.full(arr.shape, hmin, dtype=np.float64)
 
                 if west_tile is not None and "west" not in neighbor_edges:
                     west_h = _read_neighbor_heightmap(west_tile)
