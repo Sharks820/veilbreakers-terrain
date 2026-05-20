@@ -12,10 +12,12 @@ Each fix in the cluster:
   Standard/Diffuse fallback.
 
 * **T1-22** — Anisotropic + Trilinear at terrain texture import in
-  ``VbTerrainImporter.CopyAndConfigureTexture``. Previously Bilinear +
-  default ``anisoLevel = 1`` caused visible moire / shimmer in motion.
-  Fix: ``filterMode = Trilinear``, ``anisoLevel = 8`` (Snowdrop / Anvil
-  default).
+  ``VbTerrainImporter.ImportTextureAsset`` (the shared importer used by
+  both terrain layers and normal maps via ``ImportTerrainNormalMapAsset``).
+  Previously Bilinear + default ``anisoLevel = 1`` caused visible moire /
+  shimmer in motion. Fix: ``filterMode = Trilinear``, ``anisoLevel = 16``
+  (hero-AAA bar per CHECKPOINT-OPUS-ULTRA V5 — Witcher 3 / Snowdrop /
+  Anvil ship ground textures at the Unity max of 16).
 
 * **T1-28** — 5 PBR additive blend sites in
   ``handlers/terrain_quixel_ingest.py`` (lines 629, 643, 665, 699, 728 in
@@ -130,9 +132,12 @@ class TestT1_1_HdrpShaderLeakRemoved:
 
 class TestT1_22_AnisotropicAndTrilinear:
     """Per Y04 v3 T1-22 + CHECKPOINT-OPUS-ULTRA V5 followup:
-    VbTerrainImporter.CopyAndConfigureTexture must set
-    ``filterMode = Trilinear`` and ``anisoLevel = 16`` for imported
-    terrain textures.
+    ``VbTerrainImporter.ImportTextureAsset`` must set
+    ``filterMode = Trilinear`` and ``anisoLevel = 16`` for every
+    imported terrain texture — this includes both terrain layer
+    textures (the original T1-22 surface) and the terrain normal map
+    routed through ``ImportTerrainNormalMapAsset`` (which delegates
+    to ``ImportTextureAsset`` with ``normalMap: true``).
 
     The V5 AAA reviewer flagged the original ``anisoLevel = 8`` as
     mobile-AAA bar. Witcher 3 / Snowdrop / Anvil ship ground textures
