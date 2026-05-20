@@ -867,9 +867,13 @@ def test_bundle_i_does_not_modify_default_passes():
         register_bundle_i_passes()
         after_names = set(TerrainPassController.PASS_REGISTRY.keys())
         assert default_names.issubset(after_names)
+        # T1-3 (Y04 v3 §B.4.11): ``"glacial"`` is intentionally NOT in this
+        # set — the canonical glacial pass is registered as
+        # ``"pass_glacial"`` by ``terrain_glacial.register_glacial_pass``;
+        # this registrar previously dual-registered it under
+        # ``"glacial"`` which risked double-apply.
         assert after_names - default_names == {
             "stratigraphy",
-            "glacial",
             "wind_erosion",
             "coastline",
             "karst",

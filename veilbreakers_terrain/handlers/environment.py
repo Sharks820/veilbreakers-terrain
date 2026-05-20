@@ -2678,16 +2678,81 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
                 None,
             )
             try:
-                # T0-7 (Y04 v3 §P.8.1 ord 0k, partial): allow_pickle=False —
-                # neighbor heightmaps come from sibling tiles that may be
-                # under user-controlled paths; deny pickle to close the
-                # cross-tile RCE chain.
+                # T1-17 (Y04 v3 §B.4.11): neighbor heightmap files written
+                # by ``_write_tile_raw_files`` are uint16 little-endian
+                # **raw** binary blobs (``_export_heightmap_raw`` →
+                # ``<u2``, no ``.npy`` magic). The previous code called
+                # ``np.load(path, allow_pickle=False)`` which raises
+                # ``ValueError: Cannot load file containing pickled data
+                # ...`` or ``OSError: Failed to interpret file ... as a
+                # pickle`` — every neighbor-edge stitch silently fell
+                # into the broad ``except`` below, so cross-tile seam
+                # blending was a no-op. Switched to ``np.fromfile``
+                # with the per-tile resolution recovered from the
+                # neighbor's tile-result dict.
+                #
+                # T0-7 (Y04 v3 §P.8.1 ord 0k, partial) — preserved:
+                # ``np.fromfile`` has no pickle path, so the security
+                # property of ``allow_pickle=False`` is upheld
+                # structurally rather than via the flag.
+                #
+                # The writer applies ``np.flipud`` (Unity row order); we
+                # invert that here before sampling the seam-adjacent
+                # column/row.
+                def _read_neighbor_heightmap(neighbor: dict[str, Any]) -> np.ndarray:
+                    res = int(neighbor.get("resolution", 257))
+                    raw = np.fromfile(
+                        neighbor["heightmap_path"],
+                        dtype="<u2",
+                    )
+                    if raw.size != res * res:
+                        raise ValueError(
+                            f"neighbor heightmap size {raw.size} != resolution²={res * res}"
+                        )
+                    arr = raw.reshape((res, res))
+                    # Writer used flip_vertical=True (default); undo it.
+                    arr = np.flipud(arr)
+                    # T1-17 round-4 (CodeRabbit CRITICAL): the on-disk format
+                    # is uint16 quantized to [0, 65535] via
+                    # ``_export_heightmap_raw`` (line 1362-1363:
+                    # ``hmap_u16 = np.rint(hmap * 65535.0)`` after
+                    # normalising to [0, 1] with ``(hmap - hmin) / (hmax - hmin)``).
+                    # Returning the raw uint16 values into seam locking
+                    # would feed values in the [0, 65535] domain to logic
+                    # that expects height-in-metres — silent seam corruption.
+                    # Dequantize back to metres using the neighbor's stored
+                    # ``height_range`` (written verbatim into the tile manifest
+                    # at ``_export_world_tile_artifacts``).
+                    height_range = neighbor.get("height_range")
+                    if (
+                        height_range is None
+                        or len(height_range) != 2
+                    ):
+                        raise ValueError(
+                            "neighbor tile result missing 'height_range'; "
+                            "cannot dequantize uint16 heightmap to metres"
+                        )
+                    hmin = float(height_range[0])
+                    hmax = float(height_range[1])
+                    if not (
+                        np.isfinite(hmin) and np.isfinite(hmax)
+                    ):
+                        raise ValueError(
+                            "neighbor 'height_range' has non-finite bounds"
+                        )
+                    if hmax - hmin > 1e-10:
+                        return (
+                            arr.astype(np.float64) / 65535.0
+                        ) * (hmax - hmin) + hmin
+                    # Degenerate case: flat tile — return constant hmin.
+                    return np.full(arr.shape, hmin, dtype=np.float64)
+
                 if west_tile is not None and "west" not in neighbor_edges:
-                    west_h = np.load(west_tile["heightmap_path"], allow_pickle=False)
-                    neighbor_edges["west"] = np.asarray(west_h)[:, -1].tolist()
+                    west_h = _read_neighbor_heightmap(west_tile)
+                    neighbor_edges["west"] = west_h[:, -1].astype(np.float64).tolist()
                 if north_tile is not None and "north" not in neighbor_edges:
-                    north_h = np.load(north_tile["heightmap_path"], allow_pickle=False)
-                    neighbor_edges["north"] = np.asarray(north_h)[-1, :].tolist()
+                    north_h = _read_neighbor_heightmap(north_tile)
+                    neighbor_edges["north"] = north_h[-1, :].astype(np.float64).tolist()
             except Exception as exc:
                 logger.warning(
                     "handle_generate_world_terrain: failed to load neighbor edge for tile (%d,%d): %s",

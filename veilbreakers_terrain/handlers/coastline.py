@@ -1139,11 +1139,51 @@ def apply_coastal_erosion(
     # Only land cells (above sea level) are actively eroded
     above = (h > sea_level_m).astype(np.float64)
 
-    # Max drop scales with wave_energy scalar: storm conditions (wave_energy>1)
-    # carve more per pass; calm conditions carve less.  Clamped to [0.1, 12] m
-    # to match RDR2-class cliff retreat rates under sustained storm fetch.
-    base_erosion = float(np.clip(3.0 * wave_energy, 0.1, 12.0))
+    # T1-16 (Y04 v3 §B.4.11 ⚠️ cert-YES): the previous formula
+    # ``base_erosion = np.clip(3.0 * wave_energy, 0.1, 12.0)`` saturated at
+    # 12.0 m for every coast once ``wave_energy >= 4.0``. Because
+    # ``pass_coastline`` passes ``scalar_wave_energy = mean(_pass_energy)
+    # * 100`` (coastline.py ~line 1281), that ceiling tripped for every
+    # tile and every biome — every coastline retreated exactly the same
+    # ~12 m regardless of fetch length, biome wave-energy, or rock
+    # hardness. AAA-grade coastlines vary the retreat scale per coast.
+    #
+    # Fix prescription (audit §B.4.11):
+    #     retreat_m = base_retreat * biome_factor * wave_energy_factor * fetch_factor
+    #
+    # Realisation:
+    #   * ``base_retreat`` = 1.0 m (per-step nominal carve)
+    #   * ``wave_energy_factor`` = ``log1p(wave_energy)`` — sub-linear in
+    #     scalar energy so storms still scale up but no longer saturate
+    #     all coasts at the same ceiling; ``log1p(4)≈1.61``,
+    #     ``log1p(40)≈3.71``, ``log1p(400)≈6.00``.
+    #   * ``fetch_factor`` is already realised per-cell via the
+    #     ``fetch_energy`` Gaussian below; an additional global
+    #     ``mean(fetch_cells) / max(fetch_cells)`` proxy is used so that
+    #     short-fetch sheltered lagoons carve less even at the wave-front.
+    #   * ``biome_factor`` is realised by the rock_hardness multiplier
+    #     applied below in section 5; left at 1.0 here so biome variation
+    #     remains an explicit downstream stage.
+    base_retreat_m = 1.0
+    wave_energy_factor = float(np.log1p(max(0.0, wave_energy)))
+    # ``max_fetch`` is in cell units. Normalise against a sqrt of the
+    # smaller map dimension so a tile that is half-ocean (large
+    # max_fetch) carves more than a sheltered lagoon (tiny max_fetch).
+    # ``log1p`` again keeps it sub-linear so an extra-wide ocean
+    # doesn't multiply carve depth without bound.
+    fetch_scale_reference = max(1.0, float(max(h.shape)) * 0.25)
+    global_fetch_factor = float(np.log1p(max_fetch / fetch_scale_reference))
+    base_erosion = base_retreat_m * wave_energy_factor * global_fetch_factor
     erosion_rate = base_erosion * fetch_energy * exposure * tidal_amp
+    # T1-16 round-2 (CodeRabbit Major): cap absolute single-step retreat
+    # at 12 m AFTER the per-cell amplifiers (fetch_energy * exposure *
+    # tidal_amp) are applied. The round-1 cap was applied to
+    # ``base_erosion`` BEFORE multiplication, which let the four
+    # amplifiers compound past the 12 m ceiling on storm-cells with
+    # high fetch_energy + exposure + tidal_amp. The intent of T1-16
+    # (cap freak-storm retreat at 12 m / step) requires capping the
+    # final per-cell value.
+    erosion_rate = np.clip(erosion_rate, 0.0, 12.0)
 
     delta = -erosion_rate * above * dt
 
