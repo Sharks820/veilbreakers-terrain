@@ -50,7 +50,7 @@ providers = [
 blender = [
     # Blender 4.5 ships NumPy 1.x; keep this lane installable inside Blender's
     # bundled Python. Other lanes (bake/dev) may resolve to NumPy 2.x.
-    "numpy>=1.26.0,<2.0",
+    "numpy>=1.26.0,<3.0",
 ]
 mcp = [
     "veilbreakers-mcp @ git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git@35815ea7f1caf078de551378ab85e6c1f34b8750#subdirectory=Tools/mcp-toolkit ; python_version >= '3.12'",
