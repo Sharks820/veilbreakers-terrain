@@ -2736,7 +2736,7 @@ def voronoi_biome_distribution(
     from .terrain_rng import derive_pass_seed as _derive_pass_seed
     rng = _rnd.Random(
         _derive_pass_seed(
-            int(seed), "terrain_noise.voronoi_biome_map", 0, 0, None
+            int(seed), "terrain_noise.voronoi_biome_distribution", 0, 0, None
         )
     )
 
@@ -2766,7 +2766,7 @@ def voronoi_biome_distribution(
     _xs_rng = _rnd.Random(
         _derive_pass_seed(
             int(seed) ^ 0xABCDEF,
-            "terrain_noise.voronoi_biome_map.xs_shuffle",
+            "terrain_noise.voronoi_biome_distribution.xs_shuffle",
             0,
             0,
             None,
