@@ -595,7 +595,12 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     "slope": "rad",
     "rotation_y_rad": "rad",
     "strata_orientation": "rad",
-    "flow_direction": "rad",
+    # NB: flow_direction is D8 int8 indices (-1..7) emitted by
+    # priority_flood_d8 in _water_network.pass_hydrology — NOT radians.
+    # The angular form (LipCandidate.flow_direction_rad) is a derived
+    # per-lip scalar, not a mask-stack channel. Mismatching this would
+    # produce silent wrong-unit verdicts at the assertion site.
+    "flow_direction": "dimensionless",
     # Degrees — degrees-native channels.
     "vb_aspect_deg": "deg",
     # Per-cell counts and densities — dimensionless [0, 1] or counts.
