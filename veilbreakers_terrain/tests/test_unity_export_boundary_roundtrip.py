@@ -116,18 +116,6 @@ def test_tree_yaw_degrees_round_trip_through_json_export() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "T0-4.5 not yet landed — write_animation_clip_yaml passes Keyframe.value "
-        "through unchanged but Unity reads m_EulerCurves.value as degrees. "
-        "Keyframe.value is documented as radians for the rotation channel "
-        "(animation_gaits.py:25-29). Today every animated rotation rotates "
-        "57× less than authored. Once T0-4.5 inserts math.degrees() at the "
-        "rotation-channel write path, this xfail flips to xpass→fail and "
-        "this decorator must be removed."
-    ),
-)
 def test_animation_rotation_yaml_value_field_is_degrees() -> None:
     """The Unity ``m_EulerCurves.value`` field must contain degrees.
 
