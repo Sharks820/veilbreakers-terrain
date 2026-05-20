@@ -1452,12 +1452,22 @@ def compute_road_network(
 
     # Auto-apply water cost penalty when water_level is supplied.
     # Routes around open water; adds 1e6 cost so A* bridges or bypasses.
+    #
+    # T0-5 round-2 (CE review PR103-C-01): the prior code unconditionally
+    # rebound the local ``water_mask`` from ``hmap < water_level``, silently
+    # overwriting any caller-supplied ``water_mask`` parameter (the exact
+    # 'parameter shadowing' bug the audit flagged at MASTER_FINAL.md:826).
+    # Renamed the local to ``auto_water_mask`` and gated the named-param
+    # rebind behind ``water_mask is None`` so callers can pass an explicit
+    # water mask without losing it.
     if water_level is not None and hmap is not None and hasattr(hmap, 'shape'):
         import numpy as np
-        water_mask = hmap < float(water_level)
-        if water_mask.any():
+        auto_water_mask = hmap < float(water_level)
+        if water_mask is None:
+            water_mask = auto_water_mask
+        if auto_water_mask.any():
             water_cost = np.zeros(hmap.shape, dtype=np.float32)
-            water_cost[water_mask] = 1e6
+            water_cost[auto_water_mask] = 1e6
             if cost_map is not None and hasattr(cost_map, 'shape') and cost_map.shape == water_cost.shape:
                 cost_map = cost_map + water_cost
             else:
@@ -1596,10 +1606,29 @@ def compute_road_network(
         if detect_hmap is not None and hasattr(detect_hmap, "tolist"):
             detect_hmap = detect_hmap.tolist()
             if detect_bounds is None:
-                # Recompute bounds for list-form hmap
-                rows_d = len(detect_hmap)
-                cols_d = len(detect_hmap[0]) if rows_d else 0
-                detect_bounds = (0.0, 0.0, float(cols_d), float(rows_d))
+                # T0-5 sub-defect #2 fix: bridge-bounds world-space conversion.
+                # OLD fallback was `(0.0, 0.0, cols, rows)` — pixel-space bounds
+                # while `segments` are world-space metres, so `_sample_heightmap_bilinear`
+                # in `_detect_bridges` sampled the wrong cells and the tile_offset
+                # was effectively lost.  Re-infer bounds from waypoints (same
+                # padded-bbox pattern used at lines 1430-1451 above) so the
+                # bridge sampler operates in the same world frame as segments.
+                if waypoints:
+                    xs_d = [wp[0] for wp in waypoints]
+                    ys_d = [wp[1] for wp in waypoints]
+                    detect_bounds = (
+                        min(xs_d) - 50.0,
+                        min(ys_d) - 50.0,
+                        max(xs_d) + 50.0,
+                        max(ys_d) + 50.0,
+                    )
+                else:
+                    # No waypoints, no resolved bounds — preserve prior fallback
+                    # so we don't break degenerate callers, but tag the pixel
+                    # interpretation explicitly so audits can spot it.
+                    rows_d = len(detect_hmap)
+                    cols_d = len(detect_hmap[0]) if rows_d else 0
+                    detect_bounds = (0.0, 0.0, float(cols_d), float(rows_d))
         bridges = _detect_bridges(
             segments,
             water_level=water_level,
@@ -1808,6 +1837,15 @@ def pass_road_network(
     # SIMD-vectorized -- typical 100-1000x speedup at 256^2 grids with
     # hundreds of segments. Output is byte-identical to the loop version
     # (same closest-point math, same half-width threshold).
+    #
+    # T0-5 sub-defect #3 fix: include shoulder width in road_mask footprint.
+    # OLD: threshold was `(seg_width * 0.5) ** 2` — only the travel lane was
+    # marked, so downstream scatter/texturing could place trees/grass on the
+    # shoulder strip even though it is paved road bed. The road cross-section
+    # at `_road_cross_section_z` (line ~1025) explicitly models a travel lane
+    # plus shoulders of `_SHOULDER_WIDTH_M` (1.5 m) on either side. Expand the
+    # rasterised half-width by the shoulder constant so road_mask covers the
+    # full road bed (`_ROAD_BED_WIDTH_M = travel + 2*shoulder`).
     road_mask = np.zeros((rows, cols), dtype=np.uint8)
     cell_size = float(stack.cell_size)
 
@@ -1820,7 +1858,12 @@ def pass_road_network(
         wy_grid = oy + (ri_idx + 0.5) * cell_size
 
         for seg_start, seg_end, seg_width, _ in segments:
-            half_w_sq = (seg_width * 0.5) ** 2
+            # T0-5 sub-defect #3: pad travel width with shoulder on each side.
+            # Falls back to a 1-cell pad when cell_size > shoulder so the mask
+            # is never one-pixel-too-narrow even on coarse grids.
+            shoulder_pad_m = max(_SHOULDER_WIDTH_M, cell_size)
+            full_half_w = seg_width * 0.5 + shoulder_pad_m
+            half_w_sq = full_half_w * full_half_w
             sx, sy = float(seg_start[0]), float(seg_start[1])
             ex, ey = float(seg_end[0]), float(seg_end[1])
             dx = ex - sx
