@@ -98,7 +98,12 @@ def kelvin_wake_mask(
     across = rel_x * (-dy_flow) + rel_y * dx_flow
 
     Fr_rock = flow_speed / max(math.sqrt(9.81 * cell_size), 1e-6)
-    wake_half_angle = math.asin(min(1.0, 1.0 / max(3.0 * Fr_rock, 1.0)))
+    # T1-40 fix (S09-P0-01): the prior clamp `max(3.0 * Fr_rock, 1.0)` collapsed
+    # to asin(1) == pi/2 for any Fr_rock < 1/3, producing a 90 deg half-plane
+    # "wake". Correct subcritical Kelvin half-angle is arcsin(1/3) = 19.47 deg
+    # (Lord Kelvin 1887); the cone narrows only as Fr_rock > 1.
+    inv = 1.0 / max(3.0 * Fr_rock, 1e-6)
+    wake_half_angle = math.asin(min(1.0 / 3.0, inv))
     tan_wake = math.tan(wake_half_angle)
 
     in_wake = (along > 0) & (np.abs(across) < along * tan_wake)
@@ -226,14 +231,23 @@ def generate_foam_mask(
     churn_foam = np.where(water_mask, churn_foam, 0.0)
 
     # E — Kelvin wakes behind explicit rock positions
+    #
+    # T1-43 fix (Wave-T03-NEW): previously this call passed the constant
+    # ``(1.0, 0.0)`` for ``flow_dir_xy``, so every shoreline wake pointed East
+    # regardless of the actual local flow field. We now sample the per-rock
+    # flow direction from ``flow_dir`` when supplied (the canonical pipeline
+    # feeds ``stack["waterfall_velocity"]`` shaped (H, W, 2) -- channel 0 is
+    # V_x/east, channel 1 is V_y/north per ``generate_velocity_field``), and
+    # fall back to East only when the local magnitude underflows.
     kelvin_foam = np.zeros((H, W), dtype=np.float32)
     if rock_positions:
         rows_g = np.arange(H)[:, None] * cell_size
         cols_g = np.arange(W)[None, :] * cell_size
         avg_speed = float(speed[water_mask].mean()) if water_mask.any() else 1.0
         for (r, c) in rock_positions:
+            local_dir = _local_flow_dir_at(flow_dir, r, c, fallback=(1.0, 0.0))
             wake = kelvin_wake_mask(
-                cols_g, rows_g, r, c, (1.0, 0.0), avg_speed, cell_size
+                cols_g, rows_g, r, c, local_dir, avg_speed, cell_size
             )
             kelvin_foam = np.maximum(kelvin_foam, wake)
     kelvin_extra = kelvin_foam * 0.10
@@ -266,16 +280,59 @@ def bake_flow_map(velocity_field: np.ndarray) -> np.ndarray:
     if vfield.ndim != 3 or vfield.shape[2] != 2:
         raise ValueError("velocity_field must be (H, W, 2)")
     mag = np.linalg.norm(vfield, axis=2)
-    vmax = float(np.percentile(mag, 99))
+    # T1-42 fix (S09-P0-03): the prior implementation clipped AFTER
+    # `*0.5 + 0.5`, which collapsed every cell with `mag > vmax` (top 1%) to
+    # the identical encoded value 255 -- losing direction in the most visually
+    # important Kelvin wakes / jets. Clip ``normalized`` to [-1, 1] FIRST so
+    # the post-clip encoding preserves sign on both axes and the [0, 255]
+    # range is guaranteed without a second clip. ``method='linear'`` is pinned
+    # to keep numpy>=1.22 behaviour deterministic across versions.
+    vmax = float(np.percentile(mag, 99, method="linear"))
     vmax = max(vmax, 0.01)
-    normalized = vfield / vmax
-    encoded = (normalized * 0.5 + 0.5)
-    return (encoded * 255.0).clip(0, 255).astype(np.uint8)
+    normalized = np.clip(vfield / vmax, -1.0, 1.0)
+    encoded = normalized * 0.5 + 0.5
+    return (encoded * 255.0).astype(np.uint8)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _local_flow_dir_at(
+    flow_field: np.ndarray | None,
+    rock_row: float,
+    rock_col: float,
+    fallback: tuple[float, float] = (1.0, 0.0),
+) -> tuple[float, float]:
+    """Sample a unit ``(vx, vy)`` flow direction at ``(row, col)``.
+
+    Used by ``generate_foam_mask`` for the T1-43 fix: per-rock Kelvin wakes
+    align with the local flow field rather than a hard-coded East vector.
+
+    Convention (matches ``generate_velocity_field`` in
+    ``handlers/terrain_waterfalls.py``): ``flow_field`` has shape
+    ``(H, W, 2)`` with channel 0 = ``V_x`` (east) and channel 1 = ``V_y``
+    (north). When ``flow_field`` is ``None`` / wrong shape / out of bounds /
+    too small in magnitude, the ``fallback`` direction is returned (unit
+    length not enforced on the fallback — the caller is responsible).
+    """
+    if flow_field is None:
+        return fallback
+    arr = np.asarray(flow_field)
+    if arr.ndim != 3 or arr.shape[-1] < 2:
+        return fallback
+    H, W = arr.shape[0], arr.shape[1]
+    r = int(round(float(rock_row)))
+    c = int(round(float(rock_col)))
+    if not (0 <= r < H and 0 <= c < W):
+        return fallback
+    vx = float(arr[r, c, 0])
+    vy = float(arr[r, c, 1])
+    mag = math.sqrt(vx * vx + vy * vy)
+    if mag < 1e-6:
+        return fallback
+    return (vx / mag, vy / mag)
+
 
 def _fbm_noise(H: int, W: int, octaves: int = 4, seed: int = 0) -> np.ndarray:
     """Fast FBM approximation via scipy zoom upsampling. Returns [0, 1]."""

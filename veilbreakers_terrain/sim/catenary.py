@@ -54,16 +54,43 @@ def solve_catenary(
             return float('inf') - target
         return 2.0 * a * math.sinh(arg) - target
 
-    # Find a bracket where the residual changes sign.
-    # Start lower bound at h/10 (avoids overflow) and walk down if needed.
-    lo = max(h / 20.0, 1e-4)
-    while lo > 1e-6 and _residual(lo) < 0:
-        lo *= 0.5
+    # T1-41 fix (S09-P0-02): walk the bracket OUTWARD on residual-sign mismatch
+    # rather than swallowing ``brentq``'s ValueError into the silent fallback
+    # ``a = h * 50``, which was never a root and produced impossibly large or
+    # zero sag downstream via cosh/sinh.
+    #
+    # The catenary residual ``2a sinh(h/2a) - target`` is monotonic in ``a`` on
+    # ``(0, inf)``: it tends to ``+inf`` as ``a -> 0`` (sinh blowup) and to
+    # ``h - target < 0`` as ``a -> inf`` (linear-rope limit, where target =
+    # sqrt(L^2 - vert^2) > h whenever ``L > d``). So a sign-changing bracket
+    # always exists; we just have to find it.
+    lo = max(h / 20.0, 1e-6)
     hi = h * 100.0
+    # Walk the LOWER bound DOWN until residual is positive (sinh dominates).
+    while lo > 1e-9 and _residual(lo) <= 0:
+        lo *= 0.5
+    # Walk the UPPER bound UP until residual is negative (linear-rope limit).
+    walks = 0
+    while _residual(hi) >= 0 and walks < 32:
+        hi *= 2.0
+        walks += 1
     try:
-        a = brentq(_residual, lo, hi, xtol=1e-6, maxiter=100)
-    except ValueError:
-        a = h * 50.0
+        # Note: brentq stub returns tuple[float, RootResults] when
+        # full_output=True; we don't pass that flag so it returns float.
+        # Pyright doesn't narrow on the kwarg so we use typing.cast to
+        # tell the type checker we're in the float-return branch.
+        from typing import cast
+        a = cast(float, brentq(_residual, lo, hi, xtol=1e-6, maxiter=100))
+    except ValueError as exc:
+        raise RuntimeError(
+            "catenary brentq failed to bracket; "
+            f"check inputs (h={h:.6f}, vert={vert:.6f}, "
+            f"rope_length={rope_length:.6f}, target={target:.6f}): {exc}"
+        ) from exc
+    if not (math.isfinite(a) and a > 0.0):
+        raise RuntimeError(
+            f"catenary solver returned non-finite or non-positive a={a!r}"
+        )
 
     log_arg = max((rope_length + vert) / max(rope_length - vert, 1e-12), 1e-12)
     p_shift = (h - a * math.log(log_arg)) / 2.0
