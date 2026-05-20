@@ -887,7 +887,10 @@ def pass_macro_world(
             src = _Path(heightmap_source)
             if src.exists():
                 try:
-                    loaded = np.load(str(src))
+                    # T0-7 (Y04 v3 §P.8.1 ord 0k, partial): allow_pickle=False
+                    # — heightmap_source is a user-supplied path; pickle
+                    # loads enable arbitrary code execution.
+                    loaded = np.load(str(src), allow_pickle=False)
                     if isinstance(loaded, np.ndarray):
                         hmap = np.asarray(loaded, dtype=np.float32)
                     else:

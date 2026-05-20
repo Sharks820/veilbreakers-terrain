@@ -429,7 +429,12 @@ def import_dem_tile(
         crs_hint = "synthetic"
     elif path.exists():
         if suffix == ".npy":
-            raw = np.load(str(path))
+            # T0-7 (Y04 v3 §P.8.1 ord 0k, partial — RCE chain close):
+            # allow_pickle=False — DEM imports come from user-supplied .npy
+            # paths; pickle loading would enable arbitrary code execution
+            # via a crafted .npy header. Full T0-7 (LRU + HMAC sidecar +
+            # uid pre-flight + from_npz format refactor) defers to follow-on.
+            raw = np.load(str(path), allow_pickle=False)
             if raw.ndim != 2:
                 raise ValueError(f"DEM {path} must be 2D, got shape {raw.shape}")
             raw = raw.astype(np.float32)
@@ -450,9 +455,10 @@ def import_dem_tile(
             crs_hint = "WGS84/EGM96"
 
         else:
-            # Unrecognised extension — attempt numpy load as last resort
+            # Unrecognised extension — attempt numpy load as last resort.
+            # T0-7 partial: allow_pickle=False — same RCE-class hazard.
             try:
-                raw = np.load(str(path)).astype(np.float32)
+                raw = np.load(str(path), allow_pickle=False).astype(np.float32)
                 if raw.ndim != 2:
                     raise ValueError(f"DEM {path} must be 2D, got shape {raw.shape}")
             except Exception as exc:
