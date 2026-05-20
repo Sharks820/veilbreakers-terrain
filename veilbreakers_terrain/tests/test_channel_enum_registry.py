@@ -270,8 +270,18 @@ def test_all_channels_have_canonical_unit() -> None:
 
 def test_channel_canonical_units_keys_all_exist_in_channel_enum() -> None:
     """Inverse cross-registry walk: every key in
-    ``_CHANNEL_CANONICAL_UNITS`` must resolve via
-    ``Channel.maybe_from_name`` (i.e. exist as a ``Channel`` enum value).
+    ``_CHANNEL_CANONICAL_UNITS`` must be a member of the set
+    ``{c.value for c in Channel}`` (i.e. exist as a ``Channel`` enum
+    value's string).
+
+    PR #114 round-2 (copilot thread T114-3): the assertion uses plain
+    set membership against the materialised value-set rather than
+    calling ``Channel.maybe_from_name(name)`` per key. The two are
+    semantically equivalent here (``maybe_from_name`` is itself a
+    ``_BY_NAME.get(name)`` lookup that returns ``None`` exactly when
+    ``name`` is not in the value-set), but the set-equality form is
+    O(N) rather than O(N) lookups and surfaces the entire
+    drift-set in the assertion message in one pass.
 
     Closes the V4-reported asymmetry surface (CHECKPOINT-OPUS-ULTRA
     P1-CCU-A2) where channels added to one registry without the other

@@ -607,12 +607,16 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     # per-lip scalar, not a mask-stack channel. Mismatching this would
     # produce silent wrong-unit verdicts at the assertion site.
     "flow_direction": "dimensionless",
-    # Degrees — degrees-native channels.
+    # Degrees — degrees-native CONTRACTS (the registry pins the contract,
+    # not the current implementation state).
     # NB: vb_aspect_deg (topographic aspect / compass direction at each cell,
     # 0..360°) and yaw_degrees (per-instance scatter/tree rotation at the
     # Unity export boundary) are TWO distinct degree-native channels — they
     # are NOT aliases. See the matching comment in handlers/_channels.py
-    # above Channel.YAW_DEG / Channel.VB_ASPECT_DEG.
+    # above Channel.YAW_DEG / Channel.VB_ASPECT_DEG for the full producer-
+    # mismatch disclosure on yaw_degrees (PR #114 round-2 copilot threads
+    # T114-1/T114-2 — Y04 v3 T0-4.5b producer fix is in flight). vb_aspect_deg
+    # is honest at both contract and implementation.
     "vb_aspect_deg": "deg",
     "yaw_degrees": "deg",
     # Per-cell counts and densities — dimensionless [0, 1] or counts.
@@ -641,7 +645,16 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     "curvature": "dimensionless",
     "bank_instability": "dimensionless",
     # Counts / accumulators — upstream cell-count integers, not
-    # dimensionless [0, 1]; gate distinguishes via the "count" tag.
+    # dimensionless [0, 1]. The "count" tag in the registry is
+    # informational ONLY: today's ``_assertion_unit_for_key`` /
+    # ``_ASSERTION_SUFFIX_TO_UNIT`` recognise only ``_m`` / ``_rad`` /
+    # ``_deg`` assertion-key suffixes, and ``_evaluate_channel_assertion``
+    # only evaluates ``max/min_value_{m,rad,deg}`` assertions. A future
+    # PR could add a ``_count`` suffix + ``max/min_value_count``
+    # assertion evaluator to make this tag load-bearing; until then the
+    # "count" tag prevents the channel from being silently misclassified
+    # as "dimensionless" in the registry's set view and documents
+    # producer intent. (PR #114 round-2 copilot thread T114-4.)
     "flow_accumulation": "count",
 }
 

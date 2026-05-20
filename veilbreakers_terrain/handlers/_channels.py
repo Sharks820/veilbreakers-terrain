@@ -86,23 +86,46 @@ class Channel(Enum):
     FLOW_DIRECTION = "flow_direction"
 
     # --- Degrees (export-side / Unity-bound) ---
-    # NB: YAW_DEG and VB_ASPECT_DEG are TWO distinct degree-native channels.
-    # They share the canonical unit "deg" but represent different physical
-    # axes and live on different surfaces:
+    # NB: YAW_DEG and VB_ASPECT_DEG are TWO distinct degree-native
+    # CONTRACTS. They represent different physical axes and live on
+    # different surfaces. The registry pins the CONTRACT, not the
+    # current implementation state.
     #
     #   - YAW_DEG ("yaw_degrees")     — per-instance scatter/tree/animation
     #     rotation around the world-up axis, written into the
     #     tree_instance_points export at the Unity boundary by
-    #     terrain_assets._build_tree_instance_array (PR #90 rad→deg anchor).
-    #     Lives on EXPORT-side; NOT a TerrainMaskStack field — see
+    #     terrain_assets._build_tree_instance_array (PR #90 rad->deg
+    #     anchor; PR #87 T0.5-4 boundary round-trip test pins the
+    #     post-fix degrees contract at the JSON hop). Lives on
+    #     EXPORT-side; NOT a TerrainMaskStack field — see
     #     test_channel_value_matches_terrain_mask_stack_field's
     #     _EXPORT_SIDE_CHANNELS exemption set.
+    #
+    #     KNOWN PRODUCER MISMATCH (copilot threads T114-1/T114-2 on
+    #     PR #114): the producer at terrain_assets.py:811 still writes
+    #     ``rng.uniform(0.0, 2.0 * math.pi)`` (RADIANS) into column 3
+    #     of tree_instance_points; the downstream
+    #     terrain_unity_export._tree_instances_json passes that value
+    #     through under the JSON field name "yaw_degrees". The producer
+    #     is what is wrong, not the registry — Unity's
+    #     TreeInstanceEntry.yaw_degrees field is degrees by contract
+    #     (Quaternion.Euler(0, yaw_degrees, 0)). The "deg" tag here
+    #     pins the contract that T0-4.5b will enforce by converting
+    #     the producer (Y04 v3 T0-4.5b — see Y04_v2_FIX_ORDER_2026_05_18.md
+    #     line ~12570: "terrain_assets.py:811 _build_tree_instance_array
+    #     writes RADIANS into column labelled yaw_degrees. Producer fix
+    #     + round-trip test"). PR #114's scope is the registry symmetry
+    #     surface; the producer fix is intentionally a separate PR.
+    #     test_unity_export_boundary_roundtrip already pins the
+    #     post-T0-4.5b degrees-at-JSON-hop contract.
     #
     #   - VB_ASPECT_DEG ("vb_aspect_deg") — topographic aspect (compass
     #     direction the slope faces) at each terrain cell in [0, 360),
     #     emitted by handlers.terrain_topographic_indices.pass_topographic_indices
     #     for foliage/scatter placement rules. Lives as a real
-    #     TerrainMaskStack field.
+    #     TerrainMaskStack field. Producer genuinely emits degrees
+    #     today via ``np.degrees(...)``; the "deg" tag is honest at
+    #     both contract and implementation.
     #
     # These two MUST NOT be unified — they represent different concepts
     # (rotation vs orientation, per-instance vs per-cell). Any future
