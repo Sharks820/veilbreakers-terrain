@@ -97,6 +97,7 @@ def kelvin_wake_mask(
     along = rel_x * dx_flow + rel_y * dy_flow
     across = rel_x * (-dy_flow) + rel_y * dx_flow
 
+    Fr_rock = flow_speed / max(math.sqrt(9.81 * cell_size), 1e-6)
     # T1-40 fix (S09-P0-01): the prior clamp `max(3.0 * Fr_rock, 1.0)` collapsed
     # to asin(1) == pi/2 for any Fr_rock < 1/3, producing a 90 deg half-plane
     # "wake". Correct subcritical Kelvin half-angle is arcsin(1/3) = 19.47 deg

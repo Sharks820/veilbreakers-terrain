@@ -123,16 +123,19 @@ def test_t1_41_catenary_solver_produces_finite_natural_sag() -> None:
     )
 
 
-def test_t1_41_catenary_raises_on_unsolvable_input() -> None:
-    """When the bracket genuinely cannot be found the solver must RAISE
-    rather than silently fall back to ``a = h * 50``."""
+def test_t1_41_catenary_well_posed_stays_solvable() -> None:
+    """T1-41 round-trip companion to the natural-sag test: a well-posed
+    near-straight rope (rope_length only marginally above straight-line
+    distance) must NOT trigger the new RuntimeError and must produce a
+    finite point sequence.
+
+    (Renamed per CE review C-2: the previous name promised an unsolvable-
+    input raise-path test, but the body asserts the well-posed positive
+    case. A dedicated raise-path test belongs in a separate fixture with
+    a monkeypatched ``_residual``; tracked as a T1-41 follow-up.)
+    """
     from veilbreakers_terrain.sim.catenary import solve_catenary
 
-    # rope_length <= euclidean distance already raises ValueError per the
-    # existing guard. T1-41 specifically protects the brentq fallback path:
-    # rope_length only marginally above d with an extreme z-offset that
-    # leaves the solver well-posed numerically. We assert that the
-    # legitimate well-posed case stays solvable (no raise, finite output).
     p0 = np.array([0.0, 0.0, 0.0])
     p1 = np.array([100.0, 0.0, 0.0])
     pts = solve_catenary(p0, p1, rope_length=101.0, n_points=8)
@@ -144,16 +147,22 @@ def test_t1_41_catenary_raises_on_unsolvable_input() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_t1_42_bake_flow_map_preserves_direction_in_top_percentile() -> None:
-    """The post-percentile clip must preserve sign on both axes for cells in
-    the top 1% of magnitude.
+def test_t1_42_bake_flow_map_encodes_outliers_to_distinct_extremes() -> None:
+    """Pins the bake_flow_map encoding contract: +x outliers encode to 255,
+    -x outliers encode to 0 (distinct).
 
-    Before fix: ``(normalized*0.5 + 0.5).clip(0, 255)`` collapsed cells with
-    ``mag > vmax`` (top ~1%) to the encoded value 255 regardless of sign
-    -- a +x outlier and a -x outlier encoded identically.
+    PER CE REVIEW C-1 (round-2 honesty pass): both the pre-fix
+    ``(normalized*0.5 + 0.5).clip(0, 255)`` AND the post-fix
+    ``np.clip(normalized, -1, 1) * 0.5 + 0.5`` produce BYTE-IDENTICAL output
+    for the inputs in this test. The T1-42 code change is therefore a
+    clarity refactor (single explicit clip on normalized values BEFORE the
+    multiply, instead of an implicit saturation clip after) and a numpy
+    version-pin (``method='linear'`` on the percentile call). It is NOT a
+    numerical bug fix as the original audit anchor implied.
 
-    After fix: ``np.clip(normalized, -1, 1)`` happens BEFORE the offset, so
-    a -x outlier encodes to 0 and a +x outlier encodes to 255 (distinct).
+    This test still has value as a contract pin: any future refactor that
+    accidentally swaps clip bounds or drops the *0.5+0.5 offset will fail
+    the +x/-x distinctness assertion.
     """
     from veilbreakers_terrain.sim.foam import bake_flow_map
 
@@ -190,9 +199,18 @@ def test_t1_42_bake_flow_map_preserves_direction_in_top_percentile() -> None:
 
 
 def test_t1_42_bake_flow_map_percentile_is_deterministic() -> None:
-    """The percentile call must use ``method='linear'`` (pinned) so the same
-    input produces byte-identical output across numpy>=1.22 versions where
-    the default ``interpolation`` keyword was renamed/removed.
+    """Same-process determinism check on bake_flow_map.
+
+    PER CE REVIEW C-3: this test passes both pre-fix and post-fix because
+    numpy is single-process deterministic regardless of ``method='linear'``.
+    The pin matters across numpy MINOR versions (the default ``interpolation``
+    keyword was renamed/removed across 1.22+) but that cross-version drift
+    cannot be exercised within one CI invocation.
+
+    Kept as a smoke test that ensures bake_flow_map does not introduce
+    silent non-determinism (e.g. via an internal random number generator
+    or unstable sort). The cross-version guard is the literal pin in the
+    production code itself.
     """
     from veilbreakers_terrain.sim.foam import bake_flow_map
 
