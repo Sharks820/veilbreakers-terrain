@@ -115,10 +115,29 @@ def _bake_single_cascade(
         sy = rr + sun_dy * dist_cells
 
         in_bounds = (sx >= 0) & (sx < cols - 1) & (sy >= 0) & (sy < rows - 1)
-        sxi = np.clip(sx.astype(np.int32), 0, cols - 1)
-        syi = np.clip(sy.astype(np.int32), 0, rows - 1)
 
-        sampled_h = h[syi, sxi]
+        # T1-29 fix (Y04 v3 / 2026-05-19): bilinear-interpolate the
+        # height-field sample instead of nearest-neighbor. Nearest-neighbor
+        # sampling along an oblique ray quantises the shadow boundary onto
+        # the grid lattice; rotating the camera makes shadow edges "swim"
+        # or stair-step. Bilinear interpolation smooths the height along
+        # the ray and removes the swim/staircase aliasing. Same 4-tap
+        # pattern as the module-local ``_resample_height`` helper.
+        sx_c = np.clip(sx, 0.0, cols - 1)
+        sy_c = np.clip(sy, 0.0, rows - 1)
+        x0 = np.floor(sx_c).astype(np.int32)
+        y0 = np.floor(sy_c).astype(np.int32)
+        x1 = np.clip(x0 + 1, 0, cols - 1)
+        y1 = np.clip(y0 + 1, 0, rows - 1)
+        fx = sx_c - x0
+        fy = sy_c - y0
+        sampled_h = (
+            h[y0, x0] * (1.0 - fx) * (1.0 - fy)
+            + h[y0, x1] * fx * (1.0 - fy)
+            + h[y1, x0] * (1.0 - fx) * fy
+            + h[y1, x1] * fx * fy
+        )
+
         np.maximum(running_max_h,
                    np.where(in_bounds, sampled_h, running_max_h),
                    out=running_max_h)

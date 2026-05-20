@@ -1922,22 +1922,23 @@ namespace VeilBreakers.TerrainImport.Editor
                 return existing;
             }
 
-            var shader = Shader.Find("HDRP/TerrainLit");
-            if (shader == null)
-            {
-                shader = Shader.Find("HDRP/Lit");
-            }
+            // T1-1 fix (Y04 v3 / 2026-05-19): project is URP 17.3 per
+            // project_urp_commitment_2026_05_07; HDRP shader references were
+            // vestigial and caused every URP/HDRP-clean Unity build to paint
+            // gray-flat terrain. Resolution order is now URP-first; if URP
+            // is missing we raise loud rather than silently falling back to
+            // Standard/Diffuse (which produces a flat default-grey material).
+            var shader = Shader.Find("Universal Render Pipeline/Terrain/Lit");
             if (shader == null)
             {
                 shader = Shader.Find("Universal Render Pipeline/Lit");
             }
             if (shader == null)
             {
-                shader = Shader.Find("Standard");
-            }
-            if (shader == null)
-            {
-                shader = Shader.Find("Diffuse");
+                throw new System.InvalidOperationException(
+                    "VbTerrainImporter: URP Terrain Lit / Universal Render Pipeline/Lit " +
+                    "shader not found. Project must have URP 17.3 installed; HDRP fallback " +
+                    "was removed per Y04 v3 T1-1 (URP commitment 2026-05-07).");
             }
 
             var material = new Material(shader)
@@ -2118,7 +2119,14 @@ namespace VeilBreakers.TerrainImport.Editor
                 importer.sRGBTexture = !normalMap;
                 importer.mipmapEnabled = true;
                 importer.wrapMode = TextureWrapMode.Repeat;
-                importer.filterMode = FilterMode.Bilinear;
+                // T1-22 fix (Y04 v3 / 2026-05-19): terrain layer textures need
+                // trilinear filtering + anisoLevel 8 to avoid moire / shimmer
+                // at grazing angles when the agent walks across terrain.
+                // Snowdrop and Anvil both default terrain textures to aniso
+                // 8-16 + trilinear. Previously this was Bilinear + default
+                // anisoLevel=1, producing visible aliasing in motion.
+                importer.filterMode = FilterMode.Trilinear;
+                importer.anisoLevel = 8;
                 importer.SaveAndReimport();
             }
 
@@ -2249,18 +2257,16 @@ namespace VeilBreakers.TerrainImport.Editor
             var material = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
             if (material == null)
             {
-                var shader = Shader.Find("HDRP/TerrainLit");
+                // T1-1 fix (Y04 v3 / 2026-05-19): URP-first lookup with loud
+                // failure on miss; removes vestigial HDRP references and the
+                // Standard-shader silent fallback that produced gray-flat
+                // prefab materials. See project_urp_commitment_2026_05_07.
+                var shader = Shader.Find("Universal Render Pipeline/Lit");
                 if (shader == null)
                 {
-                    shader = Shader.Find("HDRP/Lit");
-                }
-                if (shader == null)
-                {
-                    shader = Shader.Find("Universal Render Pipeline/Lit");
-                }
-                if (shader == null)
-                {
-                    shader = Shader.Find("Standard");
+                    throw new System.InvalidOperationException(
+                        "VbTerrainImporter: Universal Render Pipeline/Lit shader not " +
+                        "found. URP 17.3 is required (Y04 v3 T1-1).");
                 }
 
                 material = new Material(shader)
@@ -2410,22 +2416,21 @@ namespace VeilBreakers.TerrainImport.Editor
 
         private static Shader ResolveLitShader()
         {
-            var shader = Shader.Find("HDRP/TerrainLit");
-            if (shader == null)
-            {
-                shader = Shader.Find("HDRP/Lit");
-            }
+            // T1-1 fix (Y04 v3 / 2026-05-19): URP-first resolution; raise
+            // loud when URP is missing rather than silently substituting
+            // Standard or Diffuse (which produced unlit gray-flat terrain in
+            // URP-clean Unity builds). Project commitment: URP 17.3 per
+            // project_urp_commitment_2026_05_07.
+            var shader = Shader.Find("Universal Render Pipeline/Terrain/Lit");
             if (shader == null)
             {
                 shader = Shader.Find("Universal Render Pipeline/Lit");
             }
             if (shader == null)
             {
-                shader = Shader.Find("Standard");
-            }
-            if (shader == null)
-            {
-                shader = Shader.Find("Diffuse");
+                throw new System.InvalidOperationException(
+                    "VbTerrainImporter.ResolveLitShader: URP Terrain Lit / Universal " +
+                    "Render Pipeline/Lit shader not found. URP 17.3 required (Y04 v3 T1-1).");
             }
             return shader;
         }

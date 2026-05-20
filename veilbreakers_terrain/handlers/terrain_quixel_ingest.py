@@ -619,6 +619,17 @@ def apply_quixel_to_layer(
     layer_idx = stack.splatmap_weights_layer.shape[2] - 1
     layer_weight = stack.splatmap_weights_layer[:, :, layer_idx]  # (H, W)
 
+    # ------------------------------------------------------------------ #
+    # T1-28 fix (Y04 v3 / 2026-05-19): PBR layer blending must use LERP
+    # (linear interpolation), never additive. Previously 5 sites used
+    # ``base + sampled * layer_weight``; with several layers stacked the
+    # sum exceeded 1.0 and produced over-saturated highlights / blown-out
+    # PBR. The canonical Megascans / UE5 / URP Shader Graph blend is
+    # ``base * (1 - w) + sampled * w`` (Lerp node). N02 + T1-28 canonical
+    # over V04's text-grep refutation per MASTER_FINAL §B.4.2.
+    # ------------------------------------------------------------------ #
+    layer_weight_3 = layer_weight[:, :, np.newaxis]
+
     if albedo_array is not None:
         sampled_albedo = _srgb_to_linear(_bilinear_sample_texture(
             albedo_array.astype(np.float32), uv_y, uv_x
@@ -626,11 +637,15 @@ def apply_quixel_to_layer(
         if stack.macro_color is None:
             stack.set(
                 "macro_color",
-                (sampled_albedo * layer_weight[:, :, np.newaxis]).astype(np.float32),
+                (sampled_albedo * layer_weight_3).astype(np.float32),
                 "quixel_ingest",
             )
         else:
-            blended = stack.macro_color + sampled_albedo * layer_weight[:, :, np.newaxis]
+            # LERP (T1-28): macro_color * (1 - w) + sampled * w
+            blended = (
+                np.asarray(stack.macro_color, dtype=np.float32) * (1.0 - layer_weight_3)
+                + sampled_albedo * layer_weight_3
+            )
             stack.set("macro_color", blended.astype(np.float32), "quixel_ingest")
 
     if roughness_array is not None:
@@ -644,7 +659,11 @@ def apply_quixel_to_layer(
                 "quixel_ingest",
             )
         else:
-            blended_r = stack.roughness_variation + sampled_rough * layer_weight
+            # LERP (T1-28): roughness_variation * (1 - w) + sampled * w
+            blended_r = (
+                np.asarray(stack.roughness_variation, dtype=np.float32) * (1.0 - layer_weight)
+                + sampled_rough * layer_weight
+            )
             stack.set(
                 "roughness_variation",
                 blended_r.astype(np.float32),
@@ -666,8 +685,10 @@ def apply_quixel_to_layer(
             stack.set("terrain_normals", base_n, "quixel_ingest")
         base_n = np.asarray(stack.terrain_normals, dtype=np.float32)
 
+        # LERP (T1-28): base_n * (1 - w) + sampled_normal * w.  Re-normalise
+        # after blending so output stays unit-length per texel.
         blended_n = (
-            base_n + sampled_normal * layer_weight[:, :, np.newaxis]
+            base_n * (1.0 - layer_weight_3) + sampled_normal * layer_weight_3
         )
         norms = np.linalg.norm(blended_n, axis=2, keepdims=True)
         norms = np.where(norms < 1e-8, 1.0, norms)
@@ -700,7 +721,11 @@ def apply_quixel_to_layer(
                 "quixel_ingest",
             )
         else:
-            blended_ao = np.asarray(terrain_ao, dtype=np.float32) + sampled_ao * layer_weight
+            # LERP (T1-28): terrain_ao * (1 - w) + sampled_ao * w
+            blended_ao = (
+                np.asarray(terrain_ao, dtype=np.float32) * (1.0 - layer_weight)
+                + sampled_ao * layer_weight
+            )
             stack.set("terrain_ao", blended_ao.astype(np.float32), "quixel_ingest")
 
     # Load displacement if present in asset and not pre-supplied
@@ -729,7 +754,11 @@ def apply_quixel_to_layer(
                 "quixel_ingest",
             )
         else:
-            blended_disp = np.asarray(terrain_disp, dtype=np.float32) + sampled_disp * layer_weight
+            # LERP (T1-28): terrain_displacement * (1 - w) + sampled_disp * w
+            blended_disp = (
+                np.asarray(terrain_disp, dtype=np.float32) * (1.0 - layer_weight)
+                + sampled_disp * layer_weight
+            )
             stack.set("terrain_displacement", blended_disp.astype(np.float32), "quixel_ingest")
 
     # ------------------------------------------------------------------ #
