@@ -1365,6 +1365,89 @@ def _export_heightmap_raw(
     return np.ascontiguousarray(hmap_u16).tobytes()
 
 
+def _read_neighbor_heightmap_from_manifest(neighbor: dict[str, Any]) -> np.ndarray:
+    """Load a neighbor tile's raw uint16 heightmap and dequantize to metres.
+
+    Module-level helper extracted from the previously-nested
+    ``_read_neighbor_heightmap`` inside ``handle_generate_world_terrain``
+    so the production guard logic can be exercised directly by tests
+    (T122-1 round-2 / CodeRabbit Major).  The behaviour is unchanged
+    from the inline version it replaces.
+
+    Parameters
+    ----------
+    neighbor : dict
+        Tile-result dict with at minimum:
+          * ``heightmap_path`` — path to a uint16 little-endian raw blob
+            written by ``_write_tile_raw_files``.
+          * ``resolution`` (default 257) — N for an NxN heightmap.
+          * ``height_range`` — ``(hmin, hmax)`` metres used to dequantize
+            the uint16 values back to metres.  REQUIRED.
+
+    Returns
+    -------
+    np.ndarray
+        2D float64 heightmap in metres, after un-flipping the writer's
+        ``flip_vertical=True`` row order.
+
+    Raises
+    ------
+    ValueError
+        When the on-disk byte count does not match resolution², when
+        ``height_range`` is missing/wrong-length, or when its bounds are
+        non-finite.  These are the documented inputs that the calling
+        ``except`` tuple in ``handle_generate_world_terrain`` recovers
+        from (swapping to "no neighbor edge" with a warning).
+    OSError, FileNotFoundError
+        When the heightmap file is unreadable / missing.
+    KeyError, TypeError
+        When the ``neighbor`` dict is missing ``heightmap_path`` or other
+        required keys, or when its values are the wrong type.
+    """
+    res = int(neighbor.get("resolution", 257))
+    raw = np.fromfile(
+        neighbor["heightmap_path"],
+        dtype="<u2",
+    )
+    if raw.size != res * res:
+        raise ValueError(
+            f"neighbor heightmap size {raw.size} != resolution²={res * res}"
+        )
+    arr = raw.reshape((res, res))
+    # Writer used flip_vertical=True (default); undo it.
+    arr = np.flipud(arr)
+    # T1-17 round-4 (CodeRabbit CRITICAL): the on-disk format is uint16
+    # quantized to [0, 65535] via ``_export_heightmap_raw``.  Returning
+    # the raw uint16 values into seam locking would feed values in the
+    # [0, 65535] domain to logic that expects height-in-metres — silent
+    # seam corruption.  Dequantize back to metres using the neighbor's
+    # stored ``height_range`` (written verbatim into the tile manifest at
+    # ``_export_world_tile_artifacts``).
+    height_range = neighbor.get("height_range")
+    if (
+        height_range is None
+        or len(height_range) != 2
+    ):
+        raise ValueError(
+            "neighbor tile result missing 'height_range'; "
+            "cannot dequantize uint16 heightmap to metres"
+        )
+    hmin = float(height_range[0])
+    hmax = float(height_range[1])
+    if not (
+        np.isfinite(hmin) and np.isfinite(hmax)
+    ):
+        raise ValueError(
+            "neighbor 'height_range' has non-finite bounds"
+        )
+    if hmax - hmin > 1e-10:
+        return (
+            arr.astype(np.float64) / 65535.0
+        ) * (hmax - hmin) + hmin
+    # Degenerate case: flat tile — return constant hmin.
+    return np.full(arr.shape, hmin, dtype=np.float64)
+
+
 def _export_splatmap_raw(
     splatmap: np.ndarray,
     flip_vertical: bool = True,
@@ -2699,59 +2782,18 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
                 # The writer applies ``np.flipud`` (Unity row order); we
                 # invert that here before sampling the seam-adjacent
                 # column/row.
-                def _read_neighbor_heightmap(neighbor: dict[str, Any]) -> np.ndarray:
-                    res = int(neighbor.get("resolution", 257))
-                    raw = np.fromfile(
-                        neighbor["heightmap_path"],
-                        dtype="<u2",
-                    )
-                    if raw.size != res * res:
-                        raise ValueError(
-                            f"neighbor heightmap size {raw.size} != resolution²={res * res}"
-                        )
-                    arr = raw.reshape((res, res))
-                    # Writer used flip_vertical=True (default); undo it.
-                    arr = np.flipud(arr)
-                    # T1-17 round-4 (CodeRabbit CRITICAL): the on-disk format
-                    # is uint16 quantized to [0, 65535] via
-                    # ``_export_heightmap_raw`` (line 1362-1363:
-                    # ``hmap_u16 = np.rint(hmap * 65535.0)`` after
-                    # normalising to [0, 1] with ``(hmap - hmin) / (hmax - hmin)``).
-                    # Returning the raw uint16 values into seam locking
-                    # would feed values in the [0, 65535] domain to logic
-                    # that expects height-in-metres — silent seam corruption.
-                    # Dequantize back to metres using the neighbor's stored
-                    # ``height_range`` (written verbatim into the tile manifest
-                    # at ``_export_world_tile_artifacts``).
-                    height_range = neighbor.get("height_range")
-                    if (
-                        height_range is None
-                        or len(height_range) != 2
-                    ):
-                        raise ValueError(
-                            "neighbor tile result missing 'height_range'; "
-                            "cannot dequantize uint16 heightmap to metres"
-                        )
-                    hmin = float(height_range[0])
-                    hmax = float(height_range[1])
-                    if not (
-                        np.isfinite(hmin) and np.isfinite(hmax)
-                    ):
-                        raise ValueError(
-                            "neighbor 'height_range' has non-finite bounds"
-                        )
-                    if hmax - hmin > 1e-10:
-                        return (
-                            arr.astype(np.float64) / 65535.0
-                        ) * (hmax - hmin) + hmin
-                    # Degenerate case: flat tile — return constant hmin.
-                    return np.full(arr.shape, hmin, dtype=np.float64)
-
+                #
+                # T122-1 round-2 (CodeRabbit Major): the previously-
+                # nested ``_read_neighbor_heightmap`` was extracted to a
+                # module-level ``_read_neighbor_heightmap_from_manifest``
+                # so its guard logic (size check + height_range dequant
+                # rejection + finite-bounds check + flipud round-trip) is
+                # directly testable.  Inline behaviour is unchanged.
                 if west_tile is not None and "west" not in neighbor_edges:
-                    west_h = _read_neighbor_heightmap(west_tile)
+                    west_h = _read_neighbor_heightmap_from_manifest(west_tile)
                     neighbor_edges["west"] = west_h[:, -1].astype(np.float64).tolist()
                 if north_tile is not None and "north" not in neighbor_edges:
-                    north_h = _read_neighbor_heightmap(north_tile)
+                    north_h = _read_neighbor_heightmap_from_manifest(north_tile)
                     neighbor_edges["north"] = north_h[-1, :].astype(np.float64).tolist()
             except (FileNotFoundError, OSError, ValueError, KeyError, TypeError) as exc:
                 # WAVE-1 hotfix (2026-05-20) per FIX_PATTERN §C3: narrowed
