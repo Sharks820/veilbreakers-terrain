@@ -46,7 +46,10 @@ def test_unity_foliage_manifest_renderer_consumes_gpu_manifest_without_gameobjec
         "position_world",
         "ConvertTerrainXzyToUnityXyz",
         "PositionsAreWorldSpace",
-        "PositionsAreWorldSpace ? position : transform.TransformPoint(position)",
+        # PR #127 review: gate _originOffset on world-space input to avoid
+        # double-shifting positions that already moved via parent transform.
+        "if (PositionsAreWorldSpace)",
+        "transform.TransformPoint(position)",
         "MaximumInstances",
         "CullDistanceM",
         "1023",
@@ -104,7 +107,12 @@ def test_foliage_renderer_subscribes_to_floating_origin():
     assert "RemoveListener(HandleOriginShifted)" in source
     # Offset must actually be applied to world positions, not just stored.
     assert "_originOffset" in source
-    assert "worldPosition - _originOffset" in source
+    # PR #127 review fix: subtraction must be gated on PositionsAreWorldSpace,
+    # else local-space inputs (which already pass through transform.TransformPoint
+    # — and therefore the renderer's parent transform that ShiftRoots moves)
+    # get the offset applied twice and foliage drifts away from terrain.
+    assert "position - _originOffset" in source
+    assert "if (PositionsAreWorldSpace)" in source
     # Fallback for runtime-discovered origins (per Verifier A no-singleton constraint).
     assert "FindObjectOfType<VbFloatingOrigin>" in source
     assert "BindFloatingOrigin" in source
@@ -135,6 +143,13 @@ def test_streamer_unloads_terrain_data():
     assert "MaybeUnloadUnusedAssets" in source
     # Streaming loop must call the unload path after toggling tiles.
     assert "MaybeUnloadUnusedAssets()" in source
+    # PR #127 review fix: UnloadUnusedAssets only reclaims assets that are no
+    # longer strongly referenced. The Terrain component holds terrainData
+    # through SetActive(false), so we must explicitly drop the reference on
+    # deactivate and reattach it from a cached copy on reactivate.
+    assert "CachedTerrainData" in source
+    assert "TerrainDataDetached" in source
+    assert "terrain.terrainData = null" in source or "Terrain.terrainData = null" in source
 
 
 def test_runtime_streaming_documentation_is_wired():

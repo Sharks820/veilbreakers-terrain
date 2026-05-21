@@ -315,10 +315,19 @@ namespace VeilBreakers.TerrainImport
             var position = ConvertTerrainXzyToUnityXyz
                 ? new Vector3(raw[0], raw[2], raw[1])
                 : new Vector3(raw[0], raw[1], raw[2]);
-            var worldPosition = PositionsAreWorldSpace ? position : transform.TransformPoint(position);
-            // HOTFIX-7e: subtract accumulated floating-origin offset so GPU
-            // foliage tracks the same recentering applied to ShiftRoots.
-            return worldPosition - _originOffset;
+            // HOTFIX-7e (refined per PR #127 codex/copilot review):
+            // Only subtract _originOffset for absolute world-space positions.
+            // When PositionsAreWorldSpace == false, transform.TransformPoint
+            // already moves with this renderer's parent — if that parent is in
+            // ShiftRoots, the shift is already applied; if it is not, the
+            // renderer wasn't wired for floating-origin and subtracting here
+            // would double-shift. Either way the local-space branch must NOT
+            // re-subtract.
+            if (PositionsAreWorldSpace)
+            {
+                return position - _originOffset;
+            }
+            return transform.TransformPoint(position);
         }
 
         private void SubscribeFloatingOrigin()
