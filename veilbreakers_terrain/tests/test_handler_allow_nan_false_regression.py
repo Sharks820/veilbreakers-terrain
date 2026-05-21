@@ -109,7 +109,12 @@ _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # terrain_mask_cache.compute_cache_key — payload digest for cache key.
     ("handlers/terrain_mask_cache.py", 86),
     # terrain_pipeline.derive_pass_seed — payload digest for seed derivation.
-    ("handlers/terrain_pipeline.py", 490),
+    # Line offset shifted by T0-8 helpers (Y04 v2-ord 10, PR-15) — was 490
+    # at HEAD c8b750d3, now 616 after _snapshot_mask_stack_to_disk +
+    # _load_baseline_snapshot + _lightweight_water_network_copy module
+    # helpers added above ``build_default_pass_sequence`` AND subsequent
+    # main-branch additions (PR #117 LOD descriptor, PR #118 fixes).
+    ("handlers/terrain_pipeline.py", 616),
     # terrain_determinism_ci.hash_state — intent recursion for hash only.
     ("handlers/terrain_determinism_ci.py", 87),
     # terrain_io.atomic_write_json — passes allow_nan kwarg through the

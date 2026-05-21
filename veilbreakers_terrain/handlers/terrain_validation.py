@@ -2117,11 +2117,61 @@ def pass_validation_full(
     """
     t0 = time.perf_counter()
     active_controller = _get_active_controller()
-    baseline_stack = (
-        getattr(active_controller, "_pre_pipeline_baseline_stack", None)
-        if active_controller is not None
-        else None
-    )
+    # T0-8 (Y04 v2-ord 10) — the baseline mask_stack used to be held as a
+    # full in-memory ``copy.deepcopy`` snapshot on the controller as
+    # ``_pre_pipeline_baseline_stack`` (~6-7 GB on AAA tiles).  The
+    # controller now keeps only a SHA-256 content hash + a path to a temp
+    # .npz; we hydrate the baseline on demand here so the only memory cost
+    # is the lifetime of this single validation pass.
+    baseline_stack: Optional["TerrainMaskStack"] = None
+    # T121-8 + T121-10 (copilot + codex round-2): if the baseline loader
+    # raises an *unexpected* exception (not the well-known
+    # FileNotFoundError/OSError that ``_load_pre_pipeline_baseline_stack``
+    # already converts to ``None`` internally), record the failure as a
+    # validation warning so a corrupted/unreadable baseline does NOT
+    # silently disable the protected-zone diff.  Without this, the
+    # previous broad ``except Exception`` would swallow real bugs (e.g.
+    # AttributeError from a refactor) and only emit a benign info-level
+    # PROTECTED_BASELINE_ABSENT, masking regressions.
+    baseline_load_error: Optional[str] = None
+    if active_controller is not None:
+        # New path: lazy-hydrate from the on-disk snapshot.  The loader
+        # already swallows FileNotFoundError/OSError internally and
+        # returns ``None`` for the "no snapshot exists" case, so anything
+        # that escapes here is an unexpected failure worth surfacing.
+        loader = getattr(active_controller, "_load_pre_pipeline_baseline_stack", None)
+        if loader is not None:
+            try:
+                baseline_stack = loader()
+            except (FileNotFoundError, OSError) as exc:
+                # Defensive: the loader is supposed to convert these to
+                # ``None`` already, but if a future refactor lets one
+                # escape we still want a no-baseline fallback rather than
+                # crashing validation entirely.  Logged + recorded so the
+                # silent-skip is visible.
+                baseline_stack = None
+                baseline_load_error = (
+                    f"PROTECTED_BASELINE_LOAD_FAILED: {type(exc).__name__}: {exc!s}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Unexpected loader failure (AttributeError from a dropped
+                # attr, ValueError from npz corruption, MemoryError, etc.)
+                # — do NOT silently treat as "no baseline".  Surface as a
+                # warning issue so the protected-zone-diff skip is
+                # auditable and downstream gating can react.
+                baseline_stack = None
+                baseline_load_error = (
+                    f"PROTECTED_BASELINE_LOAD_FAILED: {type(exc).__name__}: {exc!s}"
+                )
+        # Backwards-compat fallback: if a (legacy) caller hasn't been
+        # migrated and still sets ``_pre_pipeline_baseline_stack`` directly,
+        # honour the eager attribute.  The controller writes ``None`` to
+        # this attribute as a sentinel so the getattr below short-circuits
+        # to None when no legacy caller is in play.
+        if baseline_stack is None:
+            baseline_stack = getattr(
+                active_controller, "_pre_pipeline_baseline_stack", None
+            )
     report = run_validation_suite(
         state.mask_stack,
         state.intent,
@@ -2136,6 +2186,11 @@ def pass_validation_full(
 
     metrics: Dict[str, Any] = dict(report.metrics)
     metrics["region_scoped"] = region is not None
+    # T121-8 + T121-10: surface baseline-loader failure in metrics so the
+    # protected-zone-diff skip is observable in PassResult logs and CI
+    # gating can detect a silent-skip regression at audit time.
+    if baseline_load_error is not None:
+        metrics["baseline_load_error"] = baseline_load_error
 
     triggered_rollback = False
     if status == "failed" and active_controller is not None:
@@ -2148,13 +2203,35 @@ def pass_validation_full(
                 metrics["rollback_error"] = repr(exc)
     metrics["triggered_rollback"] = triggered_rollback
 
+    # T121-8 + T121-10: if the baseline failed to load unexpectedly,
+    # append a soft ValidationIssue to the PassResult so the
+    # protected-zone-diff skip is part of the warnings list (auditable by
+    # downstream consumers) instead of being silently swallowed.
+    extra_warnings: List[ValidationIssue] = []
+    if baseline_load_error is not None:
+        extra_warnings.append(
+            ValidationIssue(
+                code="PROTECTED_BASELINE_LOAD_FAILED",
+                severity="soft",
+                message=baseline_load_error,
+                remediation=(
+                    "Inspect the baseline snapshot under checkpoint_dir; "
+                    "verify .npz integrity and TerrainMaskStack schema."
+                ),
+            )
+        )
+        # Promote pass status to "warning" so downstream gating reacts to
+        # the silent-skip, but never downgrade an existing "failed".
+        if status == "ok":
+            status = "warning"
+
     return PassResult(
         pass_name="validation_full",
         status=status,
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
         issues=list(report.hard_issues),
-        warnings=list(report.soft_issues) + list(report.info_issues),
+        warnings=list(report.soft_issues) + list(report.info_issues) + extra_warnings,
         metrics=metrics,
     )
 

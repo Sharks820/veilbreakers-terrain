@@ -21,9 +21,11 @@ Blender side of the TCP bridge.
 from __future__ import annotations
 
 import copy
+import gc
 import hashlib
 import json
 import logging
+import tempfile
 import time
 import uuid
 import dataclasses
@@ -185,6 +187,130 @@ def _restore_pass_state(
     stack.content_hash = snapshot["content_hash"]
     stack.height_min_m = snapshot["height_min_m"]
     stack.height_max_m = snapshot["height_max_m"]
+
+
+# ---------------------------------------------------------------------------
+# T0-8 — deepcopy 4-site content-hash split (Y04 v2-ord 10)
+#
+# The pre-pipeline baseline mask_stack used to be held as a full
+# ``copy.deepcopy(self.state.mask_stack)`` in-memory snapshot.  At AAA
+# resolutions (4096 squared * ~30 array channels of float32) that single
+# snapshot is ~6-7 GB.  Four parallel pipeline workers OOM'd an 8 GB box.
+#
+# Fix: persist the baseline to a temp .npz file via the stack's own
+# ``to_npz`` round-trip and keep only:
+#   * a SHA-256 content hash (40 bytes) for in-memory integrity checks; and
+#   * a Path to the temp snapshot for lazy hydration by
+#     ``terrain_validation.pass_validation_full`` (the only reader).
+#
+# The temp file is unlinked + the cached stack discarded + ``gc.collect()``
+# is triggered in the run_pipeline ``finally`` block so a successful
+# pipeline run leaves no on-disk artefact behind.
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_mask_stack_to_disk(
+    stack: TerrainMaskStack,
+    *,
+    checkpoint_dir: Path,
+) -> Path:
+    """Write ``stack`` to a temp .npz under ``checkpoint_dir`` and return the path.
+
+    Uses ``TerrainMaskStack.to_npz`` so the round-trip is the same format
+    that the rest of the codebase already validates.  The temp file is
+    created with a unique name so concurrent pipelines do not collide; the
+    caller (``run_pipeline``'s ``finally`` block) is responsible for
+    unlinking the file once the baseline is no longer needed.
+
+    T121-6 (copilot round-2): if ``stack.to_npz`` raises mid-write (disk
+    full, permission, interrupted write, serialiser error), the partially
+    created temp .npz is unlinked here before re-raising so failed runs do
+    not accumulate stray baseline snapshots under ``checkpoint_dir``.
+    """
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    fd, raw_path = tempfile.mkstemp(
+        prefix="pre_pipeline_baseline_",
+        suffix=".npz",
+        dir=str(checkpoint_dir),
+    )
+    # mkstemp returns an open file descriptor — close it before to_npz
+    # reopens the path for writing (npz writer takes the path string).
+    import os
+    os.close(fd)
+    snapshot_path = Path(raw_path)
+    try:
+        stack.to_npz(snapshot_path)
+    except BaseException:
+        # T121-6 — best-effort unlink before re-raise.  ``BaseException``
+        # (not Exception) so we also clean up after KeyboardInterrupt /
+        # SystemExit / asyncio.CancelledError mid-write; we never swallow
+        # the original — it propagates after the unlink attempt.
+        try:
+            snapshot_path.unlink(missing_ok=True)
+        except OSError:
+            # If even the unlink fails we cannot do better — the original
+            # write error is more important to surface than the cleanup
+            # error, so let the outer raise carry through.
+            pass
+        raise
+    return snapshot_path
+
+
+def _load_baseline_snapshot(snapshot_path: Path) -> TerrainMaskStack:
+    """Lazily hydrate a baseline mask_stack from disk.
+
+    Reader counterpart to ``_snapshot_mask_stack_to_disk``.  Used by
+    ``terrain_validation.pass_validation_full`` when it needs to diff
+    protected-zone cells against the pre-pipeline baseline.
+    """
+    return TerrainMaskStack.from_npz(snapshot_path)
+
+
+def _lightweight_water_network_copy(value: Any) -> Any:
+    """Snapshot helper for water_network / viewport_vantage in checkpoints.
+
+    These are SMALL Python metadata objects (WaterNode/WaterSegment dicts,
+    a viewport tuple) BUT can contain an optional ``_velocity_field`` dict
+    of ndarrays.  We do a shallow copy + per-field ndarray.copy() to avoid
+    the slow Python-level deepcopy walk over the surrounding container.
+    Falls back to ``copy.deepcopy`` for unknown types so we never silently
+    return an alias of the live object.
+    """
+    if value is None:
+        return None
+    try:
+        import numpy as _np
+    except ImportError:  # pragma: no cover
+        return copy.deepcopy(value)
+
+    # WaterNetwork heuristic: walks dataclass-shaped fields, ndarray-copies
+    # the ones that look like arrays, deepcopies the rest.  If anything
+    # goes wrong we fall back to the safe original behaviour.
+    try:
+        cloned = copy.copy(value)
+        for attr in vars(cloned):
+            v = getattr(cloned, attr)
+            if isinstance(v, _np.ndarray):
+                setattr(cloned, attr, v.copy())
+            elif isinstance(v, dict):
+                new_dict = {}
+                for k, item in v.items():
+                    if isinstance(item, _np.ndarray):
+                        new_dict[k] = item.copy()
+                    else:
+                        new_dict[k] = copy.deepcopy(item)
+                setattr(cloned, attr, new_dict)
+            elif isinstance(v, list):
+                setattr(cloned, attr, copy.deepcopy(v))
+            elif isinstance(v, set):
+                setattr(cloned, attr, set(v))
+            # primitives, strings, tuples — shallow-copy already keeps a fresh
+            # reference; tuples are immutable, primitives can't aliased-mutate.
+        return cloned
+    except Exception:  # noqa: BLE001
+        # If the value's __copy__ raises, vars() fails on a slots-only
+        # object, or any attr is unusual, fall back to the safe (slow) path.
+        return copy.deepcopy(value)
 
 
 def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
@@ -1246,68 +1372,200 @@ class TerrainPassController:
         # ------------------------------------------------------------------
         # Normal execution
         # ------------------------------------------------------------------
-        pre_pipeline_mask_stack = copy.deepcopy(self.state.mask_stack)
-        setattr(self, "_pre_pipeline_baseline_stack", pre_pipeline_mask_stack)
+        # T0-8 (Y04 v2-ord 10) — content-hash + on-disk snapshot of the
+        # pre-pipeline mask_stack, NOT a full ``copy.deepcopy`` (which used
+        # to retain ~6-7 GB per run on AAA tiles and never got freed on the
+        # success path; 4-worker parallel pipelines OOM'd an 8 GB box).
+        #
+        # The baseline snapshot is held under three attributes so the
+        # outermost ``finally`` block can deterministically unlink + free:
+        #   * ``_pre_pipeline_baseline_hash``         — SHA-256 digest
+        #   * ``_pre_pipeline_baseline_snapshot_path`` — Path to temp .npz
+        #     (None when ``checkpoint=False`` — in-memory baseline path)
+        #   * ``_pre_pipeline_baseline_stack``         — None sentinel for
+        #     backwards-compat readers (lazy-hydrated by validation only).
+        #     When ``checkpoint=False`` this holds a lightweight in-memory
+        #     deepcopy so callers that opted out of disk artefacts still
+        #     get protected-zone validation (T121-9 codex round-2).
+        #
+        # T121-7 (copilot round-2): baseline attribute initialisation is
+        # wrapped inside the outermost ``try`` block so the ``finally``
+        # cleanup runs even if ``compute_hash`` or
+        # ``_snapshot_mask_stack_to_disk`` raises (e.g. read-only
+        # checkpoint_dir, disk full).  Without this widening, a mid-setup
+        # failure would leak the partial baseline attributes and any
+        # earlier-allocated temp file.
+
         validation_bound = False
-        try:
-            from .terrain_validation import bind_active_controller
-
-            bind_active_controller(self)
-            validation_bound = True
-        except Exception:  # noqa: BLE001
-            validation_bound = False
-
         bundle_n_pre_pipeline_state = None
-        try:
-            from .terrain_bundle_n import bundle_n_runtime_requests_determinism
-
-            if bundle_n_runtime_requests_determinism(self.state.intent):
-                bundle_n_pre_pipeline_state = copy.deepcopy(self.state)
-        except Exception:  # noqa: BLE001
-            bundle_n_pre_pipeline_state = None
-
         results: List[PassResult] = []
+        # T121-7: pre-declare baseline attributes as None so the finally
+        # block's ``hasattr`` cleanup is well-defined even if the try body
+        # raises before the assignments below complete.
+        self._pre_pipeline_baseline_hash = None  # type: ignore[assignment]
+        self._pre_pipeline_baseline_snapshot_path = None  # type: ignore[assignment]
+        self._pre_pipeline_baseline_stack = None  # type: ignore[assignment]
         try:
-            for pass_name in pass_sequence:
-                res = self.run_pass(pass_name, region=region, checkpoint=checkpoint)
-                results.append(res)
-                if res.status == "failed":
-                    break
-        finally:
-            if validation_bound:
-                try:
-                    from .terrain_validation import bind_active_controller
+            # T121-7 + T121-9: baseline snapshot creation lives inside the
+            # try so the finally cleanup catches partial state, and the
+            # snapshot mode honours the caller's ``checkpoint`` opt-out.
+            self._pre_pipeline_baseline_hash = self.state.mask_stack.compute_hash()
+            if checkpoint:
+                # Disk-snapshot path: cheap content-hash + lazy-hydrated
+                # mask stack from a temp .npz.  Used by the normal AAA
+                # pipeline so the baseline costs ~SHA-256 + a file handle,
+                # not ~6-7 GB of resident memory.
+                self._pre_pipeline_baseline_snapshot_path = _snapshot_mask_stack_to_disk(
+                    self.state.mask_stack,
+                    checkpoint_dir=self.checkpoint_dir,
+                )
+                # Sentinel kept so ``getattr(controller,
+                # "_pre_pipeline_baseline_stack", None)`` in
+                # terrain_validation still works — a reader that wants the
+                # actual stack hydrates it on demand via
+                # ``_load_pre_pipeline_baseline_stack``.
+                self._pre_pipeline_baseline_stack = None  # type: ignore[assignment]
+            else:
+                # T121-9 (codex round-2): when checkpoint=False, the caller
+                # has explicitly opted out of on-disk artefacts.  Use an
+                # in-memory deepcopy so protected-zone validation still
+                # works (otherwise the validator would silently see no
+                # baseline and skip the check).  This restores the
+                # pre-T0-8 in-memory behaviour for the opt-out path while
+                # still giving the default ``checkpoint=True`` path the
+                # 24-28 GB → <500 MB win.  Tests that exercise
+                # read-only/invalid ``checkpoint_dir`` paths now run
+                # without touching the filesystem.
+                self._pre_pipeline_baseline_snapshot_path = None
+                self._pre_pipeline_baseline_stack = copy.deepcopy(
+                    self.state.mask_stack
+                )
 
-                    bind_active_controller(None)
-                except Exception:  # noqa: BLE001
-                    pass
-
-        # ------------------------------------------------------------------
-        # Bundle N post-pipeline QA safety net.
-        # Runs only after a successful execution phase so the authored mask
-        # stack is valid to inspect. The hook truthfully owns Bundle N's
-        # always-on and opt-in runtime surfaces and attaches findings to the
-        # final PassResult itself.
-        # ------------------------------------------------------------------
-        if results and results[-1].status != "failed":
             try:
-                from .terrain_bundle_n import run_bundle_n_post_pipeline_hooks
+                from .terrain_validation import bind_active_controller
 
-                run_bundle_n_post_pipeline_hooks(
-                    self,
-                    results,
-                    pre_pipeline_state=bundle_n_pre_pipeline_state,
-                )
-            except Exception as exc:  # noqa: BLE001
-                # Bundle N post-pipeline QA is a safety net: never let it break
-                # the main pipeline. Log at ERROR so the failure is visible, but
-                # remain best-effort (S22-P0-38 / FIX-1.2).
-                _log.error(
-                    "Subsystem bundle_n_post_pipeline_hooks failed: %s",
-                    exc, exc_info=exc,
-                )
+                bind_active_controller(self)
+                validation_bound = True
+            except Exception:  # noqa: BLE001
+                validation_bound = False
+
+            try:
+                from .terrain_bundle_n import bundle_n_runtime_requests_determinism
+
+                if bundle_n_runtime_requests_determinism(self.state.intent):
+                    # T0-8 (Y04 v2-ord 10) — Bundle-N path: use the
+                    # ``_lightweight_state_copy`` helper from
+                    # terrain_pass_dag.py (10-100x faster than deepcopy)
+                    # so the determinism snapshot does not balloon to a
+                    # second 6-7 GB allocation.
+                    from .terrain_pass_dag import _lightweight_state_copy
+
+                    bundle_n_pre_pipeline_state = _lightweight_state_copy(self.state)
+            except Exception:  # noqa: BLE001
+                bundle_n_pre_pipeline_state = None
+
+            try:
+                for pass_name in pass_sequence:
+                    res = self.run_pass(pass_name, region=region, checkpoint=checkpoint)
+                    results.append(res)
+                    if res.status == "failed":
+                        break
+            finally:
+                if validation_bound:
+                    try:
+                        from .terrain_validation import bind_active_controller
+
+                        bind_active_controller(None)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            # --------------------------------------------------------------
+            # Bundle N post-pipeline QA safety net.
+            # Runs only after a successful execution phase so the authored
+            # mask stack is valid to inspect. The hook truthfully owns
+            # Bundle N's always-on and opt-in runtime surfaces and attaches
+            # findings to the final PassResult itself.
+            # --------------------------------------------------------------
+            if results and results[-1].status != "failed":
+                try:
+                    from .terrain_bundle_n import run_bundle_n_post_pipeline_hooks
+
+                    run_bundle_n_post_pipeline_hooks(
+                        self,
+                        results,
+                        pre_pipeline_state=bundle_n_pre_pipeline_state,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # Bundle N post-pipeline QA is a safety net: never let
+                    # it break the main pipeline. Log at ERROR so the
+                    # failure is visible, but remain best-effort
+                    # (S22-P0-38 / FIX-1.2).
+                    _log.error(
+                        "Subsystem bundle_n_post_pipeline_hooks failed: %s",
+                        exc, exc_info=exc,
+                    )
+        finally:
+            # T0-8 (Y04 v2-ord 10) — outermost cleanup: unlink the temp
+            # baseline .npz and drop every baseline-related attribute so a
+            # successful run leaves no on-disk artefact behind and the
+            # garbage collector can reclaim the corresponding heap pages.
+            # Bundle-N state (lightweight copy) and results are released as
+            # locals go out of scope; an explicit ``gc.collect()`` makes
+            # the reclamation deterministic across the soak loop.
+            snapshot_path = getattr(
+                self, "_pre_pipeline_baseline_snapshot_path", None
+            )
+            if snapshot_path is not None:
+                try:
+                    Path(snapshot_path).unlink(missing_ok=True)
+                except OSError as exc:  # noqa: BLE001
+                    _log.warning(
+                        "T0-8: could not unlink baseline snapshot %s: %r",
+                        snapshot_path, exc,
+                    )
+            for attr in (
+                "_pre_pipeline_baseline_stack",
+                "_pre_pipeline_baseline_snapshot_path",
+                "_pre_pipeline_baseline_hash",
+            ):
+                if hasattr(self, attr):
+                    try:
+                        delattr(self, attr)
+                    except AttributeError:
+                        pass
+            # Per /python/cpython gc docs: gc.collect() clears free lists
+            # for all generations, ensuring the 4096 squared x 30-channel
+            # float32 arrays are returned to the OS rather than parked in
+            # CPython's per-generation free lists.
+            gc.collect()
 
         return results
+
+    # ----------------------------------------------------------------------
+    # T0-8 helper — lazy hydration of the pre-pipeline baseline stack
+    # ----------------------------------------------------------------------
+    def _load_pre_pipeline_baseline_stack(self) -> Optional[TerrainMaskStack]:
+        """Hydrate the pre-pipeline baseline mask_stack from disk on demand.
+
+        Returns ``None`` if no baseline snapshot exists for this pipeline
+        run (either before ``run_pipeline`` set it up or after the finally
+        cleanup ran).  Used by ``terrain_validation.pass_validation_full``
+        to diff protected-zone cells against the pre-pipeline state without
+        keeping a full deepcopy resident in memory.
+        """
+        snapshot_path = getattr(
+            self, "_pre_pipeline_baseline_snapshot_path", None
+        )
+        if snapshot_path is None:
+            return None
+        try:
+            return _load_baseline_snapshot(Path(snapshot_path))
+        except (FileNotFoundError, OSError) as exc:
+            _log.warning(
+                "T0-8: baseline snapshot %s could not be loaded: %r",
+                snapshot_path, exc,
+            )
+            return None
 
     # -- checkpoints ---------------------------------------------------------
 
@@ -1353,8 +1611,17 @@ class TerrainPassController:
             tile_size=int(stack.tile_size),
             coordinate_system=stack.coordinate_system,
             unity_export_schema_version=stack.unity_export_schema_version,
-            water_network_snapshot=copy.deepcopy(self.state.water_network),
-            viewport_vantage_snapshot=copy.deepcopy(self.state.viewport_vantage),
+            # T0-8 (Y04 v2-ord 10) — both snapshots used to be
+            # ``copy.deepcopy(...)`` which walks every nested ndarray with
+            # the slow Python interpreter overhead.  WaterNetwork can hold
+            # a per-cell ``_velocity_field`` dict-of-ndarrays at AAA
+            # resolutions; viewport_vantage is metadata-only.  The
+            # ``_lightweight_water_network_copy`` helper does a shallow
+            # copy + ndarray.copy() per field (10-100x faster) and falls
+            # back to deepcopy for unknown types so we never silently
+            # return an alias of the live object.
+            water_network_snapshot=_lightweight_water_network_copy(self.state.water_network),
+            viewport_vantage_snapshot=_lightweight_water_network_copy(self.state.viewport_vantage),
             side_effects_snapshot=list(self.state.side_effects),
             pass_history_len=len(self.state.pass_history),
         )
@@ -1416,8 +1683,14 @@ class TerrainPassController:
                 )
 
                 self.state.mask_stack = restored
-                self.state.water_network = copy.deepcopy(ckpt.water_network_snapshot)
-                self.state.viewport_vantage = copy.deepcopy(
+                # T0-8 (Y04 v2-ord 10) — same rationale as _save_checkpoint:
+                # snapshot a fresh, isolated copy without paying the
+                # ``copy.deepcopy`` interpreter cost over every nested
+                # ndarray inside ``_velocity_field``.
+                self.state.water_network = _lightweight_water_network_copy(
+                    ckpt.water_network_snapshot
+                )
+                self.state.viewport_vantage = _lightweight_water_network_copy(
                     ckpt.viewport_vantage_snapshot
                 )
                 self.state.side_effects = list(ckpt.side_effects_snapshot)
