@@ -49,18 +49,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # T0-6 (Y04 v2-ord 3): csharp DROPPED from matrix here — this repo
-        # contains 0 .cs source files (Unity workspace lives in a separate
-        # repo per project_urp_commitment_2026_05_07 memory). Adding csharp
-        # to the matrix while no source exists produces a "no source code
-        # seen" failure that gives a false-signal red on every PR. When the
-        # Unity workspace is consolidated into this repo, restore the
-        # ``- language: csharp`` line and update branch protection to require
-        # ``Analyze (csharp)``.
+        # T0-6 (Y04 v2-ord 3) + WAVE-1 hotfix (2026-05-20): csharp RESTORED.
+        # A prior comment claimed "0 .cs source files (Unity workspace lives
+        # in a separate repo)". CE WAVE-1 adversarial reviewer verified this
+        # is FALSE — ``git ls-tree -r origin/main --name-only | grep '\.cs$'``
+        # returns 6 files under ``unity_plugin/`` including the 99KB
+        # VbTerrainImporter.cs which performs JSON-driven Path.Combine on
+        # user-controlled tile sidecar paths. Dropping csharp left these
+        # files unscanned for CWE-22 (path traversal), CWE-918 (SSRF), and
+        # CWE-502 (insecure deserialization). build-mode: none lets CodeQL
+        # analyse the .cs sources without invoking Unity / msbuild on the
+        # runner. ``unity_plugin`` is allow-listed in
+        # ``.github/codeql/codeql-config.yml::paths`` so the analyzer sees
+        # the source.
         include:
         - language: actions
           build-mode: none
         - language: python
+          build-mode: none
+        - language: csharp
           build-mode: none
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
         # Use `c-cpp` to analyze code written in C, C++ or both

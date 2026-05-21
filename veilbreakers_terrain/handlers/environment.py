@@ -2753,7 +2753,17 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
                 if north_tile is not None and "north" not in neighbor_edges:
                     north_h = _read_neighbor_heightmap(north_tile)
                     neighbor_edges["north"] = north_h[-1, :].astype(np.float64).tolist()
-            except Exception as exc:
+            except (FileNotFoundError, OSError, ValueError, KeyError, TypeError) as exc:
+                # WAVE-1 hotfix (2026-05-20) per FIX_PATTERN §C3: narrowed
+                # from bare ``except Exception`` so legitimate bugs in
+                # ``_read_neighbor_heightmap`` (e.g. attribute errors from
+                # a refactor that drops the ``height_range`` manifest key)
+                # surface as crashes instead of being swallowed as warnings.
+                # The narrow tuple covers the exception classes that
+                # ``np.fromfile`` (FileNotFoundError, OSError), the size /
+                # height_range guard (ValueError), and dict access on the
+                # neighbor result (KeyError, TypeError) can legitimately
+                # raise on bad-but-recoverable inputs.
                 logger.warning(
                     "handle_generate_world_terrain: failed to load neighbor edge for tile (%d,%d): %s",
                     tile_x, tile_y, exc,

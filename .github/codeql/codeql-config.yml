@@ -4,6 +4,10 @@ queries:
 paths:
   - veilbreakers_terrain
   - scripts
+  # unity_plugin/*.cs scanned for csharp matrix entry (CWE-22 path traversal,
+  # CWE-918 SSRF, CWE-502 insecure deserialization in VbTerrainImporter.cs).
+  # Restored 2026-05-20 (WAVE-1 hotfix) — see codeql.yml csharp comment.
+  - unity_plugin
 paths-ignore:
   - output
   - graphify-out
