@@ -9,13 +9,20 @@ defaults in ``unity_plugin/VbTerrainTileMetadata.cs``. The
 discarded, capping the outer LOD ring at 400 m (5x too small — AAA-tier
 terrain detail vanished a quarter of the way out from where it should).
 
-This test file pins:
-1. All 3 keys are present in the emitted ``unity_import_descriptor.json``.
+This test file pins (PR #117 round-3, CHECKPOINT-4 V2):
+1. All 3 keys are present in the emitted ``unity_import_descriptor.json``
+   when a real quality profile resolves (aaa_open_world, high_fidelity,
+   standard, mobile, and the legacy aliases preview/low/production/hero_shot).
 2. The fan-out is exactly ``lod_max * (0.25, 0.75, 1.0)``.
 3. The ``aaa_open_world`` profile yields ``lod2_distance_m == 2000.0``
    (the key regression in the audit).
-4. Unknown / missing profile falls back to the literal 400 m C# default
-   (50 / 150 / 400 m fan-out) so existing deployments do not change shape.
+4. When the profile is unresolved (None / empty / ``"default"`` / unknown
+   name), the keys are ABSENT — the C# importer's literal-fallback path
+   (``VbTerrainImporter.cs:389-391`` ``> 0f`` gate against the struct-
+   default ``50f/150f/400f``) runs, exactly matching pre-T1-8 behaviour.
+   Round-2 (8b0d9d43) regressed this by emitting 100/300/400 m for the
+   default profile via ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M * (0.25,
+   0.75, 1.0)``, doubling LOD0 (50→100) and LOD1 (150→300) ring distances.
 5. The C# read path in ``VbTerrainImporter.cs`` is wired for these keys.
 
 Wave-ZZ-3 / B.4.14 — Cert-YES visible-defect class. AAA anchor: Decima and
@@ -101,44 +108,42 @@ class TestResolveLodMaxDistance:
     def test_mobile_resolves_to_200m(self) -> None:
         assert _resolve_lod_max_distance_m("mobile") == 200.0
 
-    def test_none_profile_falls_back_to_legacy(self) -> None:
-        assert (
-            _resolve_lod_max_distance_m(None)
-            == _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
-            == 400.0
-        )
+    def test_none_profile_returns_none(self) -> None:
+        """PR #117 round-3: ``None`` → ``None`` so the descriptor builder
+        OMITS the lod_*_distance_m keys and the C# importer falls back to
+        literal 50/150/400 m. Round-2 returned 400.0 here which caused
+        round-2 to emit 100/300/400 m, doubling LOD0 (50→100) and LOD1
+        (150→300) ring distances (silent perf regression)."""
+        assert _resolve_lod_max_distance_m(None) is None
 
-    def test_empty_string_falls_back_to_legacy(self) -> None:
-        assert (
-            _resolve_lod_max_distance_m("")
-            == _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
-            == 400.0
-        )
+    def test_empty_string_returns_none(self) -> None:
+        """PR #117 round-3: empty string → ``None`` → keys omitted → C#
+        literal 50/150/400 m fallback (pre-T1-8 behaviour preserved)."""
+        assert _resolve_lod_max_distance_m("") is None
 
-    def test_default_profile_name_falls_back_to_legacy(self) -> None:
-        # ``export_unity_manifest`` writes ``profile or "default"`` into the
-        # manifest; the resolver must treat ``"default"`` as "no profile"
-        # rather than crashing on the unknown key.
-        assert (
-            _resolve_lod_max_distance_m("default")
-            == _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
-            == 400.0
-        )
+    def test_default_profile_name_returns_none(self) -> None:
+        """PR #117 round-3: ``export_unity_manifest`` writes ``profile or
+        "default"`` into the manifest; the resolver must treat ``"default"``
+        as "no profile" and return ``None`` rather than crashing on the
+        unknown key or — round-2 regression — returning the 400 m fallback
+        and fan-out emitting 100/300/400 m."""
+        assert _resolve_lod_max_distance_m("default") is None
 
-    def test_unknown_profile_falls_back_to_legacy(self) -> None:
-        # An unknown profile name must NOT raise — Unity export is a
-        # production hot path; a profile-lookup miss should degrade to the
-        # historical literal-C# behaviour, not fail the entire export.
-        assert (
-            _resolve_lod_max_distance_m("cinematic_2050_unknown")
-            == _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
-            == 400.0
-        )
+    def test_unknown_profile_returns_none(self) -> None:
+        """PR #117 round-3: an unknown profile name must NOT raise — Unity
+        export is a production hot path. A profile-lookup miss returns
+        ``None``, the descriptor builder omits the lod_*_distance_m keys,
+        and the C# importer falls back to its literal 50/150/400 m
+        defaults rather than failing the entire export."""
+        assert _resolve_lod_max_distance_m("cinematic_2050_unknown") is None
 
-    def test_legacy_fallback_matches_csharp_default(self) -> None:
-        """The legacy fallback must mirror the literal C# default in
-        ``unity_plugin/VbTerrainTileMetadata.cs:38`` (``Lod2DistanceM = 400f``).
-        Drift here would cause silent visual regression vs. pre-T1-8 builds."""
+    def test_legacy_fallback_sentinel_matches_csharp_default(self) -> None:
+        """The ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M`` constant remains at
+        400.0 as a documentation anchor that pairs the Python-side absence-
+        of-keys decision with the literal C# default in
+        ``unity_plugin/VbTerrainTileMetadata.cs:48`` (``Lod2DistanceM = 400f``).
+        PR #117 round-3: this sentinel is NEVER emitted to the descriptor;
+        it exists only to document the alignment with the C# fallback."""
         assert _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M == 400.0
 
     # ------------------------------------------------------------------
@@ -257,35 +262,65 @@ class TestLodDescriptorEmission:
         assert descriptor["lod1_distance_m"] == pytest.approx(150.0)
         assert descriptor["lod2_distance_m"] == pytest.approx(200.0)
 
-    def test_no_profile_falls_back_to_400m_max_with_uniform_fanout(self) -> None:
-        """When no profile is supplied, ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M``
-        (400 m, matching the literal C# ``Lod2DistanceM = 400f`` default in
-        VbTerrainTileMetadata.cs:38) is used as ``lod_max`` and fanned out
-        uniformly: 100 / 300 / 400 m.
+    def test_no_profile_omits_keys_preserving_csharp_literal_fallback(self) -> None:
+        """PR #117 round-3 (CHECKPOINT-4 V2 regression fix): when no profile
+        is supplied, the descriptor MUST OMIT the ``lod{0,1,2}_distance_m``
+        keys so the C# importer's literal-fallback path runs.
 
-        Note: the historical C# literal triple (50 / 150 / 400 m) is NOT a
-        clean 0.25/0.75/1.0 fan-out of 400 m — the 50f / 150f defaults are
-        arbitrary historical values. The audit prescription (B.4.14) is an
-        explicit ``lod_max * (0.25, 0.75, 1.0)`` fan-out, so a missing-profile
-        emit yields 100 / 300 / 400 m, not the literal C# triple. Callers
-        without a profile get a slightly larger lod0 ring than the old C#
-        default — which is an improvement, not a regression: the lod2 outer
-        radius (the only one users actually notice when terrain detail
-        vanishes) remains 400 m, matching the historical behaviour.
+        Read-side wiring (validated):
+        - ``unity_plugin/Editor/VbTerrainImporter.cs:78-80`` declares the
+          struct fields with defaults ``50f / 150f / 400f``.
+        - ``VbTerrainImporter.cs:389-391`` gate ``descriptor.lodN_distance_m
+          > 0f`` — when JSON keys are absent, JsonUtility leaves the fields
+          at their struct defaults (50/150/400), all > 0, so the gate
+          passes through and ``metadata.LodNDistanceM`` ends up at the
+          literal C# defaults from ``VbTerrainTileMetadata.cs:46-48``
+          (also ``50f / 150f / 400f``). Exactly the pre-T1-8 behaviour.
 
-        The literal C# 50f/150f/400f triple remains in
-        ``VbTerrainTileMetadata.cs:36-38`` as defense-in-depth for the
-        case where the JSON keys go missing entirely (legacy bundle,
-        partial migration, third-party re-export).
+        Round-2 (8b0d9d43) regressed this: ``_resolve_lod_max_distance_m``
+        returned the 400 m legacy fallback, and the builder fanned out
+        ``400 * (0.25, 0.75, 1.0) = 100/300/400`` into the descriptor —
+        doubling LOD0 (50→100) and LOD1 (150→300) ring distances vs.
+        pre-T1-8. Silent perf regression: more terrain rendered at
+        LOD0/LOD1 detail than the C# defaults intended.
         """
         descriptor = _export_and_load_descriptor(None)
-        assert descriptor["lod0_distance_m"] == pytest.approx(100.0)
-        assert descriptor["lod1_distance_m"] == pytest.approx(300.0)
-        assert descriptor["lod2_distance_m"] == pytest.approx(400.0)
-        # lod2 outer radius must match the historical C# Lod2DistanceM = 400f.
-        assert descriptor["lod2_distance_m"] == pytest.approx(
-            _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
+        assert "lod0_distance_m" not in descriptor, (
+            "PR #117 round-3: lod0_distance_m must be ABSENT for unresolved "
+            "profile so VbTerrainImporter.cs:389 falls back to literal 50f. "
+            "Round-2 emitted 100.0 here (LOD0 ring doubled — silent regression)."
         )
+        assert "lod1_distance_m" not in descriptor, (
+            "PR #117 round-3: lod1_distance_m must be ABSENT for unresolved "
+            "profile so VbTerrainImporter.cs:390 falls back to literal 150f. "
+            "Round-2 emitted 300.0 here (LOD1 ring doubled — silent regression)."
+        )
+        assert "lod2_distance_m" not in descriptor, (
+            "PR #117 round-3: lod2_distance_m must be ABSENT for unresolved "
+            "profile so VbTerrainImporter.cs:391 falls back to literal 400f."
+        )
+
+    def test_default_profile_does_not_emit_keys_preserving_csharp_50_150_400_fallback(self) -> None:
+        """PR #117 round-3: explicit absence-of-keys pin across every
+        unresolved-profile spelling (None / "" / "default" / unknown).
+
+        ``export_unity_manifest`` writes ``profile or "default"`` into the
+        manifest; round-2 regressed all 4 spellings to emit 100/300/400 m
+        via the 400 m sentinel fan-out. Round-3 must omit the keys in all
+        4 cases so the C# importer (VbTerrainImporter.cs:389-391) sees
+        the JSON keys missing, JsonUtility leaves the descriptor struct
+        fields at their default 50/150/400, all pass the ``> 0f`` gate,
+        and ``metadata.LodNDistanceM`` lands at the literal C# defaults.
+        """
+        for profile_arg in (None, "", "default", "cinematic_2050_unknown"):
+            descriptor = _export_and_load_descriptor(profile_arg)
+            for key in ("lod0_distance_m", "lod1_distance_m", "lod2_distance_m"):
+                assert key not in descriptor, (
+                    f"PR #117 round-3: profile={profile_arg!r} must NOT emit "
+                    f"{key!r} so the C# importer falls back to the literal "
+                    f"50/150/400 m defaults in VbTerrainTileMetadata.cs:46-48. "
+                    f"Found key with value {descriptor.get(key)!r}."
+                )
 
     def test_lod_fanout_invariant_across_profiles(self) -> None:
         """The 0.25 / 0.75 / 1.0 ratio must hold for every named profile."""

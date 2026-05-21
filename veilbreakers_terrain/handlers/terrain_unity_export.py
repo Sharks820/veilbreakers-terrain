@@ -1659,32 +1659,45 @@ def _write_unity_mesh_attributes(
 
 
 _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M: float = 400.0
-"""Legacy LOD max-distance fallback when no profile is supplied.
+"""Internal sentinel — NEVER emitted to the descriptor (PR #117 round-3).
 
-Mirrors the literal C# defaults in ``unity_plugin/VbTerrainTileMetadata.cs``
-(``Lod0DistanceM=50f``, ``Lod1DistanceM=150f``, ``Lod2DistanceM=400f``) so a
-descriptor emitted without a profile still produces the historic per-LOD
-distances (50/150/400 m) via the 0.25 / 0.75 / 1.0 fan-out below.
+Retained ONLY as a documentation anchor that pairs the Python-side absence-
+of-keys decision with the literal C# fallback in
+``unity_plugin/VbTerrainTileMetadata.cs`` (``Lod0DistanceM=50f``,
+``Lod1DistanceM=150f``, ``Lod2DistanceM=400f``) and the read-side gate in
+``unity_plugin/Editor/VbTerrainImporter.cs:389-391`` (``descriptor.lod*_distance_m > 0f``).
 
-T1-8 (Y04 v2-ord 25 / Cert-YES B.4.14): the descriptor builder used to
-emit NO ``lod{0,1,2}_distance_m`` keys at all, so Unity's
-``VbTerrainImporter`` always fell back to the literal C# defaults. The
-``aaa_open_world`` profile's ``lod_max_distance_m=2000.0`` was silently
-discarded — terrain detail vanished at 400 m instead of 2000 m (5x undersize).
+T1-8 v3 contract (PR #117 round-3, CHECKPOINT-4 V2 regression fix): the
+descriptor builder MUST emit ``lod{0,1,2}_distance_m`` ONLY when a real
+quality profile resolves with a positive ``lod_max_distance_m``. When the
+profile is unresolved (None / empty / ``"default"`` / unknown name /
+``load_quality_profile`` raises / non-positive lod_max), the keys MUST be
+absent so the C# importer's literal-fallback path runs (50 / 150 / 400 m),
+exactly matching pre-T1-8 behaviour.
+
+Round-2 (8b0d9d43) regressed this by emitting 100 / 300 / 400 m for the
+default profile via ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M * (0.25, 0.75, 1.0)``,
+doubling LOD0 (50→100) and LOD1 (150→300) ring distances — silent perf
+regression because more terrain rendered at LOD0/LOD1 detail.
 """
 
 
-def _resolve_lod_max_distance_m(profile_name: Optional[str]) -> float:
-    """Resolve ``lod_max_distance_m`` for ``profile_name`` (T1-8).
+def _resolve_lod_max_distance_m(profile_name: Optional[str]) -> Optional[float]:
+    """Resolve ``lod_max_distance_m`` for ``profile_name`` (T1-8, v3).
 
     Returns the profile's configured LOD-ring outer radius in metres so the
-    descriptor builder can fan out per-LOD distances via 0.25 / 0.75 / 1.0.
+    descriptor builder can fan out per-LOD distances via 0.25 / 0.75 / 1.0,
+    OR ``None`` when no real profile contributes a value — in which case the
+    descriptor builder MUST omit the ``lod{0,1,2}_distance_m`` keys so the
+    C# importer's literal-fallback path (50 / 150 / 400 m) runs.
 
-    - ``None`` / empty / ``"default"`` / unknown name → legacy 400 m fallback
-      (matches the C# literal default in ``VbTerrainTileMetadata.cs:38``).
-    - Known profile name (e.g. ``"aaa_open_world"`` → 2000 m,
-      ``"high_fidelity"`` → 1000 m, ``"standard"`` → 500 m, ``"mobile"`` → 200 m)
-      → that profile's ``lod_max_distance_m`` after inheritance merge.
+    - ``None`` / empty / ``"default"`` / unknown name / inheritance error /
+      lock-preset error / non-positive ``lod_max_distance_m`` → ``None``
+      (descriptor omits keys; C# falls back to literal 50/150/400 m).
+    - Known profile name with positive ``lod_max_distance_m`` (e.g.
+      ``"aaa_open_world"`` → 2000 m, ``"high_fidelity"`` → 1000 m,
+      ``"standard"`` → 500 m, ``"mobile"`` → 200 m) → that profile's
+      ``lod_max_distance_m`` after inheritance merge, as ``float``.
 
     Imported lazily to avoid a hard import-time cycle between
     ``terrain_unity_export`` (Bundle J) and ``terrain_quality_profiles``
@@ -1692,7 +1705,7 @@ def _resolve_lod_max_distance_m(profile_name: Optional[str]) -> float:
     export time.
     """
     if not profile_name or profile_name == "default":
-        return _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
+        return None
     # Lazy import — see docstring. Hoisted out of the try/except so
     # ``PresetLocked`` is statically bound before the except clause names
     # it (pyright reportPossiblyUnboundVariable). The import itself is
@@ -1709,20 +1722,23 @@ def _resolve_lod_max_distance_m(profile_name: Optional[str]) -> float:
     except (ValueError, PresetLocked):
         # PR #117 round-2 (CE verifier): narrowed from `except Exception`
         # so DeprecationWarning under ``python -W error::DeprecationWarning``
-        # escapes rather than being silently downgraded to the 400 m
-        # legacy fallback.  ``load_quality_profile`` declares exactly two
+        # escapes rather than being silently downgraded to the legacy
+        # fallback.  ``load_quality_profile`` declares exactly two
         # exception families:
         #   - ValueError (unknown name) and ProfileValidationError
         #     (cycle in extends chain — subclass of ValueError)
         #   - PresetLocked (lock_preset=True on resolved profile)
         # Both indicate "no usable profile" and degrade safely to the
         # historical literal-C# behaviour rather than fail the entire
-        # Unity export. The C# importer will see the legacy 50/150/400 m
-        # fan-out (identical to its hard-coded fallback).
-        return _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
+        # Unity export. PR #117 round-3 (CHECKPOINT-4 V2): return ``None``
+        # so the descriptor builder OMITS the lod_*_distance_m keys; the
+        # C# importer (VbTerrainImporter.cs:389-391) sees the keys
+        # missing/zero and falls back to its literal 50/150/400 m defaults,
+        # exactly matching pre-T1-8 behaviour.
+        return None
     lod_max = getattr(profile, "lod_max_distance_m", None)
     if lod_max is None or not isinstance(lod_max, (int, float)) or lod_max <= 0.0:
-        return _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M
+        return None
     return float(lod_max)
 
 
@@ -1742,17 +1758,25 @@ def _build_unity_import_descriptor(
     height_rows = int(height_shape[0]) if len(height_shape) >= 1 else 0
     height_cols = int(height_shape[1]) if len(height_shape) >= 2 else 0
 
-    # T1-8 (Y04 v2-ord 25): pull ``lod_max_distance_m`` from the active
-    # quality profile and fan it out to 3 per-LOD distance descriptor keys.
+    # T1-8 (Y04 v2-ord 25, v3 PR #117 round-3): pull ``lod_max_distance_m``
+    # from the active quality profile and fan it out to 3 per-LOD distance
+    # descriptor keys ONLY when a real profile resolves. When the profile
+    # is unresolved (None / "default" / unknown / load_quality_profile
+    # raises / non-positive lod_max), ``_resolve_lod_max_distance_m``
+    # returns ``None`` and the keys MUST be absent from the descriptor so
+    # the C# importer (VbTerrainImporter.cs:389-391) falls back to its
+    # literal 50f/150f/400f defaults — exactly matching pre-T1-8 behaviour.
+    #
+    # Round-2 regression: emitted 100/300/400 m for the default profile by
+    # fanning out a 400 m fallback, doubling LOD0 (50→100) and LOD1
+    # (150→300) ring distances vs. pre-T1-8 (silent perf regression).
+    #
     # ``profile_name`` may be passed explicitly by the caller or read from
     # the manifest (which is the same value ``export_unity_manifest`` set).
     _profile_name = profile_name or manifest.get("profile")
     _lod_max = _resolve_lod_max_distance_m(
         _profile_name if isinstance(_profile_name, str) else None
     )
-    _lod0_distance_m = _lod_max * 0.25
-    _lod1_distance_m = _lod_max * 0.75
-    _lod2_distance_m = _lod_max * 1.0
 
     splatmaps: List[Dict[str, Any]] = []
     for filename in splatmap_files:
@@ -1796,7 +1820,7 @@ def _build_unity_import_descriptor(
             }
         )
 
-    return {
+    descriptor: Dict[str, Any] = {
         "schema_version": "1.0",
         "world_id": str(manifest.get("world_id", "unknown")),
         "tile_x": int(manifest["tile_x"]),
@@ -1859,18 +1883,6 @@ def _build_unity_import_descriptor(
         "water_level_unity_units": manifest.get("water_level_unity_units"),
         "has_water_surface": bool(manifest.get("has_water_surface", False)),
         "scatter_count": int(manifest.get("scatter_count", 0) or 0),
-        # T1-8 (Y04 v2-ord 25 / Cert-YES B.4.14): emit per-LOD distance
-        # descriptor keys from the resolved profile's lod_max_distance_m so
-        # Unity's VbTerrainImporter binds the configured outer radius (e.g.
-        # aaa_open_world -> 2000 m -> lod0=500/lod1=1500/lod2=2000) instead
-        # of falling through to the literal 50/150/400 m defaults in
-        # VbTerrainTileMetadata.cs. C# read path:
-        #   unity_plugin/Editor/VbTerrainImporter.cs:389-391
-        # AAA anchor: Decima and Snowdrop both ship per-LOD distance
-        # descriptors; never default-only.
-        "lod0_distance_m": float(_lod0_distance_m),
-        "lod1_distance_m": float(_lod1_distance_m),
-        "lod2_distance_m": float(_lod2_distance_m),
         "snow_line_factor": float(manifest.get("snow_line_factor", 0.0) or 0.0),
         "light_placements_file": (
             "light_placements.json"
@@ -1919,6 +1931,27 @@ def _build_unity_import_descriptor(
             f"/TerrainTile_{manifest['tile_x']}_{manifest['tile_y']}.asset"
         ),
     }
+
+    # T1-8 (Y04 v2-ord 25 / Cert-YES B.4.14, PR #117 round-3): emit per-LOD
+    # distance descriptor keys from the resolved profile's
+    # ``lod_max_distance_m`` so Unity's ``VbTerrainImporter`` binds the
+    # configured outer radius (e.g. aaa_open_world -> 2000 m ->
+    # lod0=500 / lod1=1500 / lod2=2000). When no profile resolves
+    # (``_lod_max is None``), the keys are OMITTED so the C# importer
+    # falls back to its literal 50/150/400 m defaults in
+    # ``VbTerrainTileMetadata.cs:46-48`` via the gate at
+    # ``unity_plugin/Editor/VbTerrainImporter.cs:389-391`` — exactly
+    # matching pre-T1-8 behaviour for the default-profile path.
+    # AAA anchor: Decima and Snowdrop both ship per-LOD distance
+    # descriptors; never default-only.
+    if _lod_max is not None:
+        descriptor["lod0_distance_m"] = float(_lod_max * 0.25)
+        descriptor["lod1_distance_m"] = float(_lod_max * 0.75)
+        descriptor["lod2_distance_m"] = float(_lod_max * 1.0)
+    # else: keys absent — VbTerrainImporter.cs:389-391 falls back to
+    # literal 50f/150f/400f defaults in VbTerrainTileMetadata.cs.
+
+    return descriptor
 
 
 def _zup_to_unity_vector(vec: Sequence[float]) -> list[float]:
