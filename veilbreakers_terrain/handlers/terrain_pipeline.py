@@ -988,7 +988,19 @@ class TerrainPassController:
         # channel state is not part of the success contract. Integer and
         # boolean channels are skipped automatically by ``assert_finite_array``
         # because those dtypes cannot represent NaN/Inf.
-        if result.status == "ok":
+        #
+        # T0-4b (WAVE-1 hotfix 2026-05-20): widened gate from ``status == "ok"``
+        # to ``status in ("ok", "warning")``. PR #91 (commit ae463d7f)
+        # explicitly deferred this with the note: "warning-bypass flip
+        # portion of T0-4: passes a pass with soft gate issues + NaN
+        # production silently passes NaN through. Defer to T0-4b once a
+        # regression net is authored." The regression net lives in
+        # ``veilbreakers_terrain/tests/test_t0_4b_warning_nan_bypass.py``.
+        # A pass that reports ``status="warning"`` is still claiming its
+        # produced channels are valid — only the quality-gate severity is
+        # soft. NaN/Inf in the buffer is *never* acceptable regardless of
+        # gate severity, so the finite-array assertion must run.
+        if result.status in ("ok", "warning"):
             # T0-4 (Y04 v3 §P.8.1 ord 0g): wrap both NaN/Inf check loops
             # in try/except so assert_finite_array raises propagate WITH
             # rollback to pre-pass state. Without rollback, a pass that
@@ -1035,7 +1047,14 @@ class TerrainPassController:
             )
 
         # Run quality gate if defined (§agent protocol rule 4)
-        if definition.quality_gate is not None and result.status == "ok":
+        #
+        # T0-4b (WAVE-1 hotfix 2026-05-20): widened from ``status == "ok"``
+        # to ``status in ("ok", "warning")`` so that a pass which downgraded
+        # itself to warning (e.g. via prior-iteration soft-gate flag) still
+        # has its declared quality gate executed. Otherwise a pass that
+        # *requested* warning status as a deliberate soft-fail signal would
+        # silently skip the very gate it set itself to warn about.
+        if definition.quality_gate is not None and result.status in ("ok", "warning"):
             gate = definition.quality_gate
             try:
                 gate_issues = gate.check(result, self.state.mask_stack)

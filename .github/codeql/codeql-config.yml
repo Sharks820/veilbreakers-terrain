@@ -4,6 +4,19 @@ queries:
 paths:
   - veilbreakers_terrain
   - scripts
+  # unity_plugin/*.cs scanned for csharp matrix entry (CWE-22 path traversal,
+  # CWE-918 SSRF, CWE-502 insecure deserialization in VbTerrainImporter.cs).
+  # Restored 2026-05-20 (WAVE-1 hotfix) — see codeql.yml csharp comment.
+  - unity_plugin
+  # T122-3 round-3 (copilot review of PR #122): without this entry the
+  # ``actions`` matrix entry in codeql.yml has nothing to scan — when
+  # ``paths:`` is set, it's an allow-list, so workflow files are
+  # excluded by default.  Verified against github/codeql CLI changelog
+  # 2.21.1 (Context7 2026-05-21): the safe "extract only workflow YAMLs"
+  # default only kicks in when ``paths:`` is OMITTED.  This entry
+  # restores GitHub Actions security analysis (CWE-77 / CWE-78 / CWE-94
+  # injection patterns in workflow files) for our 7 workflows.
+  - .github/workflows
 paths-ignore:
   - output
   - graphify-out
