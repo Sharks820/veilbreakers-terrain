@@ -1651,6 +1651,18 @@ def mesh_from_spec(
         obj.parent = parent
 
     # Auto-assign procedural material based on generator category
+    #
+    # ADV-CP4-04 (CHECKPOINT-4 V2 hotfix): PR #110 allocated ``num_slots``
+    # placeholder ``None`` slots and per-face ``material_index`` assignment
+    # for genuine multi-material meshes. The category-material block below
+    # previously only wrote ``obj.data.materials[0] = mat`` — slots [1..N-1]
+    # stayed ``None``, and any face with ``material_index >= 1`` rendered
+    # as Blender's magenta debug material. Fill EVERY slot with the same
+    # category material; downstream consumers (Unity importer, per-slot
+    # overrides) can still swap individual slots after this hop. The bridge
+    # carries only a single ``metadata["category"]`` per spec — the
+    # all-slots-same-material choice mirrors how Blender's auto-import
+    # populates placeholder slots for multi-submesh objects.
     category = spec.get("metadata", {}).get("category", "")
     if category:
         material_type = CATEGORY_MATERIAL_MAP.get(category)
@@ -1664,7 +1676,12 @@ def mesh_from_spec(
                     mat_name = f"{obj_name}_{material_type}"
                     mat = create_procedural_material(mat_name, material_type)
                     if obj.data.materials:
-                        obj.data.materials[0] = mat
+                        # Fill every allocated slot — including PR #110
+                        # placeholder ``None`` slots — so faces with
+                        # ``material_index >= 1`` no longer reference
+                        # missing materials and render as magenta debug.
+                        for slot_idx in range(len(obj.data.materials)):
+                            obj.data.materials[slot_idx] = mat
                     else:
                         obj.data.materials.append(mat)
             except Exception:

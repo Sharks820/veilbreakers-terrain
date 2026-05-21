@@ -823,14 +823,41 @@ def carve_cliff_system(
     component_sizes.sort(key=lambda x: x[1], reverse=True)
 
     # Strata orientation from stack
+    #
+    # ADV-CP4-01 (CHECKPOINT-4 V2 hotfix): Channel.STRATA_ORIENTATION_XYZ is
+    # retagged ``unit_normal_xyz`` post PR #113 — the producer
+    # (``compute_strata_orientation``) writes an (H, W, 3) array of bedding-
+    # plane unit normals where ``nx = sin(dip)*cos(az)``,
+    # ``ny = sin(dip)*sin(az)``, ``nz = cos(dip)``. Direction-cosine
+    # components live in [-1, 1] with a typical mean ≈ 0 on the X/Y axes,
+    # so the prior scalar-degrees consumer
+    # (``math.radians(float(_arr.mean()))``) silently degraded to
+    # ``cos(0)=1, sin(0)=0`` → cliff strata tilt was nil regardless of the
+    # actual bedding orientation. Compute the planar azimuth via
+    # ``atan2(ny_mean, nx_mean)`` so the strata band-projection in Stage 6
+    # actually follows the bedding direction. Shape assertion mirrors the
+    # geology_validator ``STRATA_BAD_SHAPE`` check (per ``_channels.py``
+    # ``unit_normal_xyz`` contract).
     _strata_orient_deg = 0.0
+    strata_cos = 1.0
+    strata_sin = 0.0
     _strata_raw = stack.get("strata_orientation")
     if _strata_raw is not None:
-        _arr = np.asarray(_strata_raw)
-        _strata_orient_deg = float(_arr.mean()) if _arr.size else 0.0
-    strata_tilt_rad = math.radians(_strata_orient_deg)
-    strata_cos = math.cos(strata_tilt_rad)
-    strata_sin = math.sin(strata_tilt_rad)
+        _arr = np.asarray(_strata_raw, dtype=np.float64)
+        if _arr.ndim != 3 or _arr.shape[-1] != 3:
+            raise ValueError(
+                f"strata_orientation must be (H, W, 3) direction-cosine "
+                f"array per Channel.STRATA_ORIENTATION_XYZ unit_normal_xyz "
+                f"contract; got shape {_arr.shape}"
+            )
+        if _arr.size:
+            nx_mean = float(_arr[..., 0].mean())
+            ny_mean = float(_arr[..., 1].mean())
+            # atan2 returns 0 when both components are 0 (horizontal beds)
+            azimuth_rad = math.atan2(ny_mean, nx_mean)
+            _strata_orient_deg = math.degrees(azimuth_rad)
+            strata_cos = math.cos(azimuth_rad)
+            strata_sin = math.sin(azimuth_rad)
 
     # Slope array (optional — used for face refinement + overhang + erosion)
     slope_arr = stack.get("slope")
@@ -2370,15 +2397,34 @@ def insert_hero_cliff_meshes(
         cz = float(cliff.min_height_m)
 
         # Strata → style hint
+        #
+        # ADV-CP4-01 (CHECKPOINT-4 V2 hotfix, hero-cliff site): see the
+        # ``carve_cliff_system`` consumer at line ~825 for the full root-cause
+        # writeup. The producer writes (H, W, 3) direction-cosine vectors;
+        # the prior code expected (H, W) scalar radians and silently
+        # collapsed to ``style = "granite"`` for every cliff. The dip
+        # magnitude (rather than azimuth) is the right signal for the
+        # shale/granite style hint, so we recover dip via
+        # ``dip = acos(nz_mean)`` (nz = cos(dip), so dip = acos(nz)).
         style = "granite"
         strata_angle_deg = 0.0
         if strata_arr is not None:
             sa = np.asarray(strata_arr, dtype=np.float64)
-            if sa.shape == cliff.face_mask.shape:
+            if sa.ndim != 3 or sa.shape[-1] != 3:
+                raise ValueError(
+                    f"strata_orientation must be (H, W, 3) direction-cosine "
+                    f"array per Channel.STRATA_ORIENTATION_XYZ unit_normal_xyz "
+                    f"contract; got shape {sa.shape}"
+                )
+            if sa.shape[:2] == cliff.face_mask.shape:
+                # Slice (H, W, 3) by (H, W) mask → (N, 3)
                 face_strata = sa[cliff.face_mask]
-                if face_strata.size > 0:
-                    mean_angle = float(np.mean(face_strata))
-                    strata_angle_deg = float(math.degrees(mean_angle)) % 180.0
+                if face_strata.size > 0 and face_strata.ndim == 2 and face_strata.shape[1] == 3:
+                    # nz component (axis 2 in (H,W,3)) is cos(dip); recover
+                    # dip angle in degrees from the mean nz over the face.
+                    nz_mean = float(np.clip(face_strata[:, 2].mean(), -1.0, 1.0))
+                    dip_rad = math.acos(nz_mean)
+                    strata_angle_deg = float(math.degrees(dip_rad)) % 180.0
                     if strata_angle_deg > 60.0:
                         style = "layered_shale"
                     elif strata_angle_deg > 30.0:

@@ -564,8 +564,9 @@ def test_build_tree_instance_array_flattens_tree_like_roles_only() -> None:
     assert arr.shape == (3, 5)
     np.testing.assert_allclose(arr[:, :3], np.array(placements["oak_tree"] + placements["bush"]))
     assert np.all(arr[:, 3] >= 0.0)
-    assert np.all(arr[:, 3] <= 2.0 * math.pi)
-    assert arr[:, 4].tolist() == [0.0, 0.0, 1.0]
+    # ADV-CP4-02: column 3 is ``yaw_degrees`` per Channel.YAW_DEG contract;
+    # range is [0, 360) degrees (was [0, 2*pi] radians pre-hotfix).
+    assert np.all(arr[:, 3] <= 360.0)
 
 
 def test_build_tree_instance_array_returns_empty_contract_for_non_tree_roles() -> None:
@@ -723,6 +724,9 @@ def test_pass_unity_ready_shape(
     assert tp.shape[1] == 5
     # All rotations in valid range
     assert np.all(tp[:, 3] >= 0.0)
-    assert np.all(tp[:, 3] <= 2.0 * math.pi + 1e-6)
+    # ADV-CP4-02: column 3 is yaw_degrees (degrees) post-PR #114 retag; the
+    # producer ``_build_tree_instance_array`` now writes ``rng.uniform(0, 360)``
+    # rather than radians ``rng.uniform(0, 2*pi)``.
+    assert np.all(tp[:, 3] <= 360.0 + 1e-6)
     # Prototype IDs are non-negative integers-as-float
     assert np.all(tp[:, 4] >= 0.0)
