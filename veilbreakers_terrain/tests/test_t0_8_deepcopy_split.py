@@ -44,12 +44,83 @@ _VALIDATION_SRC = Path(
 _PIPELINE_TREE = ast.parse(_PIPELINE_SRC)
 
 
+def _is_deepcopy_call(node: ast.AST) -> bool:
+    """True iff ``node`` is a ``copy.deepcopy(...)`` call."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "deepcopy"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "copy"
+    )
+
+
+def _is_checkpoint_optout_branch(if_node: ast.If) -> bool:
+    """True iff ``if_node`` is the ``if checkpoint:`` / ``else:`` guard
+    that protects the in-memory baseline fallback added in T121-9.
+
+    The fallback is on the ``orelse`` branch of an ``if checkpoint:``
+    expression — so we accept any deepcopy located in that orelse so long
+    as the test was a bare ``Name('checkpoint')`` or ``Name('checkpoint')``
+    against ``not``.  This deliberately rejects broader patterns so a
+    future regression that puts ``copy.deepcopy`` outside the opt-out
+    branch still fires.
+    """
+    test = if_node.test
+    if isinstance(test, ast.Name) and test.id == "checkpoint":
+        return True
+    if (
+        isinstance(test, ast.UnaryOp)
+        and isinstance(test.op, ast.Not)
+        and isinstance(test.operand, ast.Name)
+        and test.operand.id == "checkpoint"
+    ):
+        return True
+    return False
+
+
+def _deepcopy_is_inside_checkpoint_optout(
+    func_node: ast.FunctionDef, dc_node: ast.Call
+) -> bool:
+    """True iff ``dc_node`` is nested inside an ``if checkpoint:`` orelse
+    (or an ``if not checkpoint:`` body) inside ``func_node``.
+
+    Walks every ``If`` in the function and uses ast.walk on the relevant
+    branch to find the ``dc_node`` by identity.
+    """
+    for sub in ast.walk(func_node):
+        if not isinstance(sub, ast.If):
+            continue
+        if not _is_checkpoint_optout_branch(sub):
+            continue
+        # ``if checkpoint:`` — opt-out branch is ``orelse``
+        if isinstance(sub.test, ast.Name) and sub.test.id == "checkpoint":
+            branch = sub.orelse
+        else:  # ``if not checkpoint:`` — opt-out is the ``body``
+            branch = sub.body
+        for stmt in branch:
+            for descendant in ast.walk(stmt):
+                if descendant is dc_node:
+                    return True
+    return False
+
+
 def test_no_deepcopy_in_run_pipeline_or_save_checkpoint_or_rollback() -> None:
     """The 4 historic T0-8 leak call sites must no longer call copy.deepcopy.
 
     We walk each function body individually so the test is robust to line
     shifts from future refactors — what matters is the *function*, not the
     physical line number.
+
+    T121-9 exemption: ``copy.deepcopy(self.state.mask_stack)`` is allowed
+    in ``run_pipeline`` if it lives on the opt-out branch of an
+    ``if checkpoint:`` / ``else:`` guard.  This is the in-memory baseline
+    fallback that preserves pre-T0-8 behaviour for callers that
+    explicitly passed ``checkpoint=False`` (codex round-2 finding —
+    without this, ``checkpoint=False`` would silently skip protected-zone
+    validation since the on-disk snapshot path is short-circuited).
     """
     offenders: dict[str, list[int]] = {}
     for node in ast.walk(_PIPELINE_TREE):
@@ -58,20 +129,23 @@ def test_no_deepcopy_in_run_pipeline_or_save_checkpoint_or_rollback() -> None:
         if node.name not in {"run_pipeline", "_save_checkpoint", "rollback_to"}:
             continue
         for sub in ast.walk(node):
-            if not isinstance(sub, ast.Call):
+            if not _is_deepcopy_call(sub):
                 continue
-            func = sub.func
+            assert isinstance(sub, ast.Call)  # narrow for type checker
+            # T121-9 exemption — allow the checkpoint=False fallback path.
             if (
-                isinstance(func, ast.Attribute)
-                and func.attr == "deepcopy"
-                and isinstance(func.value, ast.Name)
-                and func.value.id == "copy"
+                node.name == "run_pipeline"
+                and _deepcopy_is_inside_checkpoint_optout(node, sub)
             ):
-                offenders.setdefault(node.name, []).append(sub.lineno)
+                continue
+            offenders.setdefault(node.name, []).append(sub.lineno)
     assert not offenders, (
         f"copy.deepcopy still present in T0-8 leak sites: {offenders}. "
         "Use _snapshot_mask_stack_to_disk / _lightweight_state_copy / "
-        "_lightweight_water_network_copy instead."
+        "_lightweight_water_network_copy instead.  (The checkpoint=False "
+        "opt-out branch in run_pipeline is exempt — it preserves the "
+        "pre-T0-8 in-memory baseline for callers that explicitly opted out "
+        "of disk artefacts; see T121-9.)"
     )
 
 

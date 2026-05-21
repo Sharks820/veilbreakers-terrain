@@ -221,6 +221,11 @@ def _snapshot_mask_stack_to_disk(
     created with a unique name so concurrent pipelines do not collide; the
     caller (``run_pipeline``'s ``finally`` block) is responsible for
     unlinking the file once the baseline is no longer needed.
+
+    T121-6 (copilot round-2): if ``stack.to_npz`` raises mid-write (disk
+    full, permission, interrupted write, serialiser error), the partially
+    created temp .npz is unlinked here before re-raising so failed runs do
+    not accumulate stray baseline snapshots under ``checkpoint_dir``.
     """
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     fd, raw_path = tempfile.mkstemp(
@@ -233,7 +238,21 @@ def _snapshot_mask_stack_to_disk(
     import os
     os.close(fd)
     snapshot_path = Path(raw_path)
-    stack.to_npz(snapshot_path)
+    try:
+        stack.to_npz(snapshot_path)
+    except BaseException:
+        # T121-6 — best-effort unlink before re-raise.  ``BaseException``
+        # (not Exception) so we also clean up after KeyboardInterrupt /
+        # SystemExit / asyncio.CancelledError mid-write; we never swallow
+        # the original — it propagates after the unlink attempt.
+        try:
+            snapshot_path.unlink(missing_ok=True)
+        except OSError:
+            # If even the unlink fails we cannot do better — the original
+            # write error is more important to surface than the cleanup
+            # error, so let the outer raise carry through.
+            pass
+        raise
     return snapshot_path
 
 
@@ -1362,25 +1381,66 @@ class TerrainPassController:
         # outermost ``finally`` block can deterministically unlink + free:
         #   * ``_pre_pipeline_baseline_hash``         — SHA-256 digest
         #   * ``_pre_pipeline_baseline_snapshot_path`` — Path to temp .npz
+        #     (None when ``checkpoint=False`` — in-memory baseline path)
         #   * ``_pre_pipeline_baseline_stack``         — None sentinel for
-        #     backwards-compat readers (lazy-hydrated by validation only)
-        self._pre_pipeline_baseline_hash = self.state.mask_stack.compute_hash()
-        self._pre_pipeline_baseline_snapshot_path = _snapshot_mask_stack_to_disk(
-            self.state.mask_stack,
-            checkpoint_dir=self.checkpoint_dir,
-        )
-        # Sentinel attribute kept so ``getattr(controller,
-        # "_pre_pipeline_baseline_stack", None)`` in terrain_validation
-        # still works — a reader that wants the actual stack hydrates it on
-        # demand via ``_load_pre_pipeline_baseline_stack`` (see method on
-        # controller below).  The sentinel here is set to None so the
-        # ``hasattr`` cleanup branch in the finally still fires uniformly.
-        self._pre_pipeline_baseline_stack = None  # type: ignore[assignment]
+        #     backwards-compat readers (lazy-hydrated by validation only).
+        #     When ``checkpoint=False`` this holds a lightweight in-memory
+        #     deepcopy so callers that opted out of disk artefacts still
+        #     get protected-zone validation (T121-9 codex round-2).
+        #
+        # T121-7 (copilot round-2): baseline attribute initialisation is
+        # wrapped inside the outermost ``try`` block so the ``finally``
+        # cleanup runs even if ``compute_hash`` or
+        # ``_snapshot_mask_stack_to_disk`` raises (e.g. read-only
+        # checkpoint_dir, disk full).  Without this widening, a mid-setup
+        # failure would leak the partial baseline attributes and any
+        # earlier-allocated temp file.
 
         validation_bound = False
         bundle_n_pre_pipeline_state = None
         results: List[PassResult] = []
+        # T121-7: pre-declare baseline attributes as None so the finally
+        # block's ``hasattr`` cleanup is well-defined even if the try body
+        # raises before the assignments below complete.
+        self._pre_pipeline_baseline_hash = None  # type: ignore[assignment]
+        self._pre_pipeline_baseline_snapshot_path = None  # type: ignore[assignment]
+        self._pre_pipeline_baseline_stack = None  # type: ignore[assignment]
         try:
+            # T121-7 + T121-9: baseline snapshot creation lives inside the
+            # try so the finally cleanup catches partial state, and the
+            # snapshot mode honours the caller's ``checkpoint`` opt-out.
+            self._pre_pipeline_baseline_hash = self.state.mask_stack.compute_hash()
+            if checkpoint:
+                # Disk-snapshot path: cheap content-hash + lazy-hydrated
+                # mask stack from a temp .npz.  Used by the normal AAA
+                # pipeline so the baseline costs ~SHA-256 + a file handle,
+                # not ~6-7 GB of resident memory.
+                self._pre_pipeline_baseline_snapshot_path = _snapshot_mask_stack_to_disk(
+                    self.state.mask_stack,
+                    checkpoint_dir=self.checkpoint_dir,
+                )
+                # Sentinel kept so ``getattr(controller,
+                # "_pre_pipeline_baseline_stack", None)`` in
+                # terrain_validation still works — a reader that wants the
+                # actual stack hydrates it on demand via
+                # ``_load_pre_pipeline_baseline_stack``.
+                self._pre_pipeline_baseline_stack = None  # type: ignore[assignment]
+            else:
+                # T121-9 (codex round-2): when checkpoint=False, the caller
+                # has explicitly opted out of on-disk artefacts.  Use an
+                # in-memory deepcopy so protected-zone validation still
+                # works (otherwise the validator would silently see no
+                # baseline and skip the check).  This restores the
+                # pre-T0-8 in-memory behaviour for the opt-out path while
+                # still giving the default ``checkpoint=True`` path the
+                # 24-28 GB → <500 MB win.  Tests that exercise
+                # read-only/invalid ``checkpoint_dir`` paths now run
+                # without touching the filesystem.
+                self._pre_pipeline_baseline_snapshot_path = None
+                self._pre_pipeline_baseline_stack = copy.deepcopy(
+                    self.state.mask_stack
+                )
+
             try:
                 from .terrain_validation import bind_active_controller
 
