@@ -2119,14 +2119,29 @@ namespace VeilBreakers.TerrainImport.Editor
                 importer.sRGBTexture = !normalMap;
                 importer.mipmapEnabled = true;
                 importer.wrapMode = TextureWrapMode.Repeat;
-                // T1-22 fix (Y04 v3 / 2026-05-19): terrain layer textures need
-                // trilinear filtering + anisoLevel 8 to avoid moire / shimmer
-                // at grazing angles when the agent walks across terrain.
-                // Snowdrop and Anvil both default terrain textures to aniso
-                // 8-16 + trilinear. Previously this was Bilinear + default
-                // anisoLevel=1, producing visible aliasing in motion.
+                // T1-22 fix (Y04 v3 / 2026-05-19): every imported terrain
+                // texture routed through ImportTextureAsset — terrain layer
+                // diffuse/albedo textures AND terrain normal maps (via
+                // ImportTerrainNormalMapAsset, which delegates here with
+                // normalMap: true) — needs trilinear filtering + anisoLevel 16
+                // to avoid moire / shimmer at grazing angles when the agent
+                // walks across terrain. Snowdrop and Anvil both default
+                // terrain textures to aniso 8-16 + trilinear. Previously
+                // this was Bilinear + default anisoLevel=1, producing
+                // visible aliasing in motion.
+                //
+                // CHECKPOINT-OPUS-ULTRA V5 followup (2026-05-19): bumped 8 -> 16
+                // to hit hero-AAA bar. Witcher 3 / Snowdrop / Anvil ship ground
+                // textures at 16; Unity max is 16
+                // (https://docs.unity3d.com/ScriptReference/Texture-anisoLevel.html);
+                // modern desktop GPUs (PS5 / XSX / RTX) have no perf cost for
+                // 16 vs 8 on terrain. aniso 8 was mobile-AAA bar.
+                //
+                // PR #115 round-2 (copilot thread T115-2): scope reworded to
+                // reflect that this importer is shared between layer and
+                // normal-map paths, not just terrain-layer textures.
                 importer.filterMode = FilterMode.Trilinear;
-                importer.anisoLevel = 8;
+                importer.anisoLevel = 16;
                 importer.SaveAndReimport();
             }
 
