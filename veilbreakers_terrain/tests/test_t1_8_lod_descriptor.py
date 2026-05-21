@@ -9,7 +9,8 @@ defaults in ``unity_plugin/VbTerrainTileMetadata.cs``. The
 discarded, capping the outer LOD ring at 400 m (5x too small — AAA-tier
 terrain detail vanished a quarter of the way out from where it should).
 
-This test file pins (PR #117 round-3, CHECKPOINT-4 V2):
+This test file pins (PR #117 round-3, CHECKPOINT-4 V2; round-4 docstring
+sweep):
 1. All 3 keys are present in the emitted ``unity_import_descriptor.json``
    when a real quality profile resolves (aaa_open_world, high_fidelity,
    standard, mobile, and the legacy aliases preview/low/production/hero_shot).
@@ -17,12 +18,20 @@ This test file pins (PR #117 round-3, CHECKPOINT-4 V2):
 3. The ``aaa_open_world`` profile yields ``lod2_distance_m == 2000.0``
    (the key regression in the audit).
 4. When the profile is unresolved (None / empty / ``"default"`` / unknown
-   name), the keys are ABSENT — the C# importer's literal-fallback path
-   (``VbTerrainImporter.cs:389-391`` ``> 0f`` gate against the struct-
-   default ``50f/150f/400f``) runs, exactly matching pre-T1-8 behaviour.
-   Round-2 (8b0d9d43) regressed this by emitting 100/300/400 m for the
-   default profile via ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M * (0.25,
-   0.75, 1.0)``, doubling LOD0 (50→100) and LOD1 (150→300) ring distances.
+   name), the descriptor OMITS the keys entirely. The Python side never
+   emits 50 / 150 / 400 m itself; those numbers are observable only on the
+   C# side as the struct defaults in ``VbTerrainTileMetadata.cs:46-48``
+   (``Lod0DistanceM=50f``, ``Lod1DistanceM=150f``, ``Lod2DistanceM=400f``).
+   When the JSON keys are absent JsonUtility leaves the C# struct fields
+   at those defaults, all pass the > 0f gate at
+   ``VbTerrainImporter.cs:389-391``, and Unity binds the literal C# values
+   — exactly matching pre-T1-8 behaviour. The Python and C# sides AGREE on
+   the fallback by KEY ABSENCE on the JSON hop, not by Python mirroring
+   the C# literals. Round-2 (8b0d9d43) regressed this by emitting
+   100/300/400 m for the default profile via a 400 m sentinel fan-out
+   ``400 * (0.25, 0.75, 1.0)``, doubling LOD0 (50→100) and LOD1 (150→300)
+   ring distances. Round-3 deleted the sentinel; round-4 deleted the
+   ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M`` global (CodeQL unused-symbol).
 5. The C# read path in ``VbTerrainImporter.cs`` is wired for these keys.
 
 Wave-ZZ-3 / B.4.14 — Cert-YES visible-defect class. AAA anchor: Decima and
@@ -43,10 +52,20 @@ from veilbreakers_terrain.handlers.terrain_quality_profiles import (
 )
 from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 from veilbreakers_terrain.handlers.terrain_unity_export import (
-    _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M,
     _resolve_lod_max_distance_m,
     export_unity_manifest,
 )
+
+# C# struct-default LOD distances are the canonical source of truth for the
+# no-profile fallback path. They live in
+# ``unity_plugin/VbTerrainTileMetadata.cs:46-48``
+# (``Lod0DistanceM=50f``, ``Lod1DistanceM=150f``, ``Lod2DistanceM=400f``).
+# Python never emits these numbers itself; the tests below assert key ABSENCE
+# from the descriptor on the unresolved-profile path so that JsonUtility on
+# the C# side falls through to these defaults. The literal is reproduced here
+# only as a test-side proxy for the regression bound (e.g. the
+# ``aaa_open_world`` ``lod2 == 5x C# default == 2000.0`` witness).
+_CSHARP_LOD2_DEFAULT_M = 400.0
 
 
 _TILE_SIZE = 32  # 33x33 heightmap = 2^5 + 1, Unity-valid for direct RAW import.
@@ -137,14 +156,29 @@ class TestResolveLodMaxDistance:
         defaults rather than failing the entire export."""
         assert _resolve_lod_max_distance_m("cinematic_2050_unknown") is None
 
-    def test_legacy_fallback_sentinel_matches_csharp_default(self) -> None:
-        """The ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M`` constant remains at
-        400.0 as a documentation anchor that pairs the Python-side absence-
-        of-keys decision with the literal C# default in
-        ``unity_plugin/VbTerrainTileMetadata.cs:48`` (``Lod2DistanceM = 400f``).
-        PR #117 round-3: this sentinel is NEVER emitted to the descriptor;
-        it exists only to document the alignment with the C# fallback."""
-        assert _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M == 400.0
+    def test_legacy_fallback_sentinel_removed(self) -> None:
+        """PR #117 round-4 (CodeQL ``py/unused-global-variable``): the
+        historic ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M = 400.0`` sentinel
+        was removed because no production code path uses it after round-3
+        deleted the 400 m fan-out. The C# struct defaults in
+        ``unity_plugin/VbTerrainTileMetadata.cs:46-48`` (``Lod0DistanceM=50f``,
+        ``Lod1DistanceM=150f``, ``Lod2DistanceM=400f``) are now the single
+        source of truth for the no-profile fallback; the Python side
+        expresses that fallback by key absence on the JSON hop, not by
+        carrying a duplicate constant.
+
+        Pin: the module MUST NOT re-introduce the sentinel (regression net
+        for the CodeQL finding and for any future drift that would tempt
+        a contributor to start emitting 50/150/400 from Python again)."""
+        from veilbreakers_terrain.handlers import terrain_unity_export
+        assert not hasattr(
+            terrain_unity_export, "_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M"
+        ), (
+            "PR #117 round-4 removed _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M as "
+            "dead code (CodeQL py/unused-global-variable). Reintroducing it "
+            "risks Python re-emitting 50/150/400 m and drifting from the "
+            "absence-of-keys contract documented in VbTerrainTileMetadata.cs:36-49."
+        )
 
     # ------------------------------------------------------------------
     # PR #117 round-2 — legacy alias pins
@@ -238,10 +272,13 @@ class TestLodDescriptorEmission:
             "aaa_open_world profile sets lod_max_distance_m=2000.0; "
             "the emitted lod2_distance_m must NOT be the legacy 400f default."
         )
-        # The bug-shape explicitly: descriptor lod2 must be 5x the legacy
-        # C# default for the AAA profile.
+        # The bug-shape explicitly: descriptor lod2 must be 5x the C# struct
+        # default (VbTerrainTileMetadata.cs:48 ``Lod2DistanceM=400f``) for the
+        # AAA profile. PR #117 round-4 inlined the literal here after the
+        # ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M`` constant was removed as dead
+        # code; the cross-language source of truth is the C# struct field.
         assert descriptor["lod2_distance_m"] == pytest.approx(
-            _LOD_LEGACY_FALLBACK_MAX_DISTANCE_M * 5.0
+            _CSHARP_LOD2_DEFAULT_M * 5.0
         )
 
     def test_high_fidelity_emits_250_750_1000m_fanout(self) -> None:

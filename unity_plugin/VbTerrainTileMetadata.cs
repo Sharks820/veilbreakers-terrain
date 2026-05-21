@@ -33,16 +33,22 @@ namespace VeilBreakers.TerrainImport
         public bool WaterPresent;
         public float WaterSurfaceElevationM;
         public int ScatterCount;
-        // T1-8 (Y04 v2-ord 25): Python now emits per-LOD distance keys in
-        // unity_import_descriptor.json from the active TerrainQualityProfile's
-        // lod_max_distance_m (fan-out 0.25 / 0.75 / 1.0). VbTerrainImporter
+        // T1-8 (Y04 v2-ord 25, PR #117 round-3 + round-4): Python emits the
+        // per-LOD distance keys in unity_import_descriptor.json from the
+        // active TerrainQualityProfile's lod_max_distance_m (fan-out 0.25 /
+        // 0.75 / 1.0) ONLY when a real profile resolves; VbTerrainImporter
         // binds them at import time
-        // (unity_plugin/Editor/VbTerrainImporter.cs:389-391). These literal
-        // 50/150/400f defaults are kept as defense-in-depth: if the JSON keys
-        // ever go missing (legacy bundle, partial migration, third-party
-        // re-export), the runtime still picks up the historic distances
-        // instead of zero-radius LOD rings. The Python legacy fallback in
-        // terrain_unity_export._resolve_lod_max_distance_m mirrors these.
+        // (unity_plugin/Editor/VbTerrainImporter.cs:389-391). When the Python
+        // profile is unresolved (None / "default" / unknown name / lookup
+        // error / non-positive lod_max), terrain_unity_export OMITS the
+        // lod0/1/2_distance_m keys from the descriptor entirely. JsonUtility
+        // then leaves these struct defaults in place, all > 0f, so the gate
+        // passes them through and the runtime ends up at these literal
+        // 50/150/400f distances. That is how Python and C# AGREE on the
+        // fallback: by KEY ABSENCE on the JSON hop, not by Python emitting
+        // 50/150/400f itself. These literals are therefore the canonical
+        // single source of truth for the no-profile fallback — Python never
+        // duplicates the numbers.
         public float Lod0DistanceM = 50f;
         public float Lod1DistanceM = 150f;
         public float Lod2DistanceM = 400f;

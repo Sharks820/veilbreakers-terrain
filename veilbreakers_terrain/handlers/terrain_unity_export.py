@@ -1658,28 +1658,32 @@ def _write_unity_mesh_attributes(
     return sorted(attrs)
 
 
-_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M: float = 400.0
-"""Internal sentinel — NEVER emitted to the descriptor (PR #117 round-3).
-
-Retained ONLY as a documentation anchor that pairs the Python-side absence-
-of-keys decision with the literal C# fallback in
-``unity_plugin/VbTerrainTileMetadata.cs`` (``Lod0DistanceM=50f``,
-``Lod1DistanceM=150f``, ``Lod2DistanceM=400f``) and the read-side gate in
-``unity_plugin/Editor/VbTerrainImporter.cs:389-391`` (``descriptor.lod*_distance_m > 0f``).
-
-T1-8 v3 contract (PR #117 round-3, CHECKPOINT-4 V2 regression fix): the
-descriptor builder MUST emit ``lod{0,1,2}_distance_m`` ONLY when a real
-quality profile resolves with a positive ``lod_max_distance_m``. When the
-profile is unresolved (None / empty / ``"default"`` / unknown name /
-``load_quality_profile`` raises / non-positive lod_max), the keys MUST be
-absent so the C# importer's literal-fallback path runs (50 / 150 / 400 m),
-exactly matching pre-T1-8 behaviour.
-
-Round-2 (8b0d9d43) regressed this by emitting 100 / 300 / 400 m for the
-default profile via ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M * (0.25, 0.75, 1.0)``,
-doubling LOD0 (50→100) and LOD1 (150→300) ring distances — silent perf
-regression because more terrain rendered at LOD0/LOD1 detail.
-"""
+# T1-8 v3 contract (PR #117 round-3, CHECKPOINT-4 V2 regression fix; round-4
+# CodeQL dead-symbol cleanup): the descriptor builder MUST emit
+# ``lod{0,1,2}_distance_m`` ONLY when a real quality profile resolves with a
+# positive ``lod_max_distance_m`` (see ``_resolve_lod_max_distance_m`` below).
+# When the profile is unresolved (None / empty / ``"default"`` / unknown name
+# / ``load_quality_profile`` raises / non-positive lod_max), the keys MUST be
+# absent from the descriptor. The C# importer
+# (``unity_plugin/Editor/VbTerrainImporter.cs:389-391``) gates each value with
+# ``descriptor.lodN_distance_m > 0f`` and, when the JSON keys are absent,
+# JsonUtility leaves the fields at their struct defaults
+# (``unity_plugin/VbTerrainTileMetadata.cs:46-48``: ``50f / 150f / 400f``),
+# so the literal C# defaults flow through — exactly matching pre-T1-8 behaviour.
+#
+# Cross-language contract: 50 / 150 / 400 m is ONLY observable on the Unity
+# side (C# literal defaults). The Python side does NOT itself emit those
+# numbers; it expresses the same fallback by KEY ABSENCE, not by value match.
+# Any attempt to "mirror" the C# literals from Python (e.g. emitting
+# ``400 * (0.25, 0.75, 1.0) = 100 / 300 / 400``) is a silent regression — it
+# doubles LOD0 (50→100) and LOD1 (150→300) ring distances vs. the C# literal
+# defaults. This was the round-2 (8b0d9d43) bug fixed by round-3.
+#
+# Round-4 (PR #117 round-4): the historic ``_LOD_LEGACY_FALLBACK_MAX_DISTANCE_M``
+# sentinel (400.0) was removed because no production code path used it (CodeQL
+# flagged it as unused after round-3 deleted the fan-out). The C# literals
+# remain the single source of truth for the fallback distances, owned by
+# ``VbTerrainTileMetadata.cs:46-48``.
 
 
 def _resolve_lod_max_distance_m(profile_name: Optional[str]) -> Optional[float]:
@@ -1688,16 +1692,31 @@ def _resolve_lod_max_distance_m(profile_name: Optional[str]) -> Optional[float]:
     Returns the profile's configured LOD-ring outer radius in metres so the
     descriptor builder can fan out per-LOD distances via 0.25 / 0.75 / 1.0,
     OR ``None`` when no real profile contributes a value — in which case the
-    descriptor builder MUST omit the ``lod{0,1,2}_distance_m`` keys so the
-    C# importer's literal-fallback path (50 / 150 / 400 m) runs.
+    descriptor builder MUST omit the ``lod{0,1,2}_distance_m`` keys entirely
+    so that the C# importer's struct-default path takes over and Unity ends
+    up at the literal 50 / 150 / 400 m C# defaults (the pre-T1-8 behaviour).
 
-    - ``None`` / empty / ``"default"`` / unknown name / inheritance error /
-      lock-preset error / non-positive ``lod_max_distance_m`` → ``None``
-      (descriptor omits keys; C# falls back to literal 50/150/400 m).
-    - Known profile name with positive ``lod_max_distance_m`` (e.g.
-      ``"aaa_open_world"`` → 2000 m, ``"high_fidelity"`` → 1000 m,
-      ``"standard"`` → 500 m, ``"mobile"`` → 200 m) → that profile's
-      ``lod_max_distance_m`` after inheritance merge, as ``float``.
+    Cross-language contract (PR #117 round-3, reinforced round-4): the
+    Python side NEVER emits 50 / 150 / 400 m itself. Those numbers are
+    observable only on the Unity side as the C# struct-default values in
+    ``unity_plugin/VbTerrainTileMetadata.cs:46-48`` (``Lod0DistanceM=50f``,
+    ``Lod1DistanceM=150f``, ``Lod2DistanceM=400f``). When this resolver
+    returns ``None``, the descriptor builder omits the JSON keys, JsonUtility
+    leaves the struct fields at their C# defaults, the read gate at
+    ``unity_plugin/Editor/VbTerrainImporter.cs:389-391`` (``> 0f``) passes,
+    and Unity binds the literal C# values. The Python and C# sides AGREE on
+    the fallback distances via absence-of-keys, not via value match.
+
+    Returns:
+        - ``None`` if ``profile_name`` is ``None`` / empty / ``"default"`` /
+          unknown name / inheritance error / lock-preset error / non-positive
+          ``lod_max_distance_m``. Caller MUST omit the lod_*_distance_m keys
+          so the C# struct defaults (50 / 150 / 400 m) are used.
+        - The profile's positive ``lod_max_distance_m`` (e.g.
+          ``"aaa_open_world"`` → 2000 m, ``"high_fidelity"`` → 1000 m,
+          ``"standard"`` → 500 m, ``"mobile"`` → 200 m) after inheritance
+          merge, as ``float``, when a real profile resolves. Caller fans out
+          to ``lod_max * (0.25, 0.75, 1.0)`` and emits all 3 keys.
 
     Imported lazily to avoid a hard import-time cycle between
     ``terrain_unity_export`` (Bundle J) and ``terrain_quality_profiles``
@@ -1758,18 +1777,24 @@ def _build_unity_import_descriptor(
     height_rows = int(height_shape[0]) if len(height_shape) >= 1 else 0
     height_cols = int(height_shape[1]) if len(height_shape) >= 2 else 0
 
-    # T1-8 (Y04 v2-ord 25, v3 PR #117 round-3): pull ``lod_max_distance_m``
-    # from the active quality profile and fan it out to 3 per-LOD distance
-    # descriptor keys ONLY when a real profile resolves. When the profile
-    # is unresolved (None / "default" / unknown / load_quality_profile
-    # raises / non-positive lod_max), ``_resolve_lod_max_distance_m``
-    # returns ``None`` and the keys MUST be absent from the descriptor so
-    # the C# importer (VbTerrainImporter.cs:389-391) falls back to its
-    # literal 50f/150f/400f defaults — exactly matching pre-T1-8 behaviour.
+    # T1-8 (Y04 v2-ord 25, v3 PR #117 round-3, round-4 docstring sweep): pull
+    # ``lod_max_distance_m`` from the active quality profile and fan it out
+    # to 3 per-LOD distance descriptor keys ONLY when a real profile resolves.
+    # When the profile is unresolved (None / "default" / unknown /
+    # load_quality_profile raises / non-positive lod_max),
+    # ``_resolve_lod_max_distance_m`` returns ``None`` and the keys MUST be
+    # absent from the descriptor — JsonUtility on the C# side then leaves
+    # the descriptor struct fields at their default 50f/150f/400f (from
+    # VbTerrainTileMetadata.cs:46-48), all pass the > 0f gate at
+    # VbTerrainImporter.cs:389-391, and Unity binds the literal C# defaults.
+    # That is how Python and C# AGREE on the 50/150/400 m fallback: by KEY
+    # ABSENCE on the JSON hop, not by Python emitting those numbers itself.
     #
-    # Round-2 regression: emitted 100/300/400 m for the default profile by
-    # fanning out a 400 m fallback, doubling LOD0 (50→100) and LOD1
-    # (150→300) ring distances vs. pre-T1-8 (silent perf regression).
+    # Round-2 regression (8b0d9d43): emitted 100/300/400 m for the default
+    # profile by fanning out a 400 m fallback, doubling LOD0 (50→100) and
+    # LOD1 (150→300) ring distances vs. pre-T1-8 (silent perf regression).
+    # That codepath is gone — Python now emits NO numbers for unresolved
+    # profiles, so there is no way to drift from the C# literals.
     #
     # ``profile_name`` may be passed explicitly by the caller or read from
     # the manifest (which is the same value ``export_unity_manifest`` set).
@@ -1932,24 +1957,28 @@ def _build_unity_import_descriptor(
         ),
     }
 
-    # T1-8 (Y04 v2-ord 25 / Cert-YES B.4.14, PR #117 round-3): emit per-LOD
-    # distance descriptor keys from the resolved profile's
-    # ``lod_max_distance_m`` so Unity's ``VbTerrainImporter`` binds the
-    # configured outer radius (e.g. aaa_open_world -> 2000 m ->
-    # lod0=500 / lod1=1500 / lod2=2000). When no profile resolves
-    # (``_lod_max is None``), the keys are OMITTED so the C# importer
-    # falls back to its literal 50/150/400 m defaults in
-    # ``VbTerrainTileMetadata.cs:46-48`` via the gate at
-    # ``unity_plugin/Editor/VbTerrainImporter.cs:389-391`` — exactly
-    # matching pre-T1-8 behaviour for the default-profile path.
+    # T1-8 (Y04 v2-ord 25 / Cert-YES B.4.14, PR #117 round-3, round-4
+    # docstring sweep): when a real profile resolves, emit per-LOD distance
+    # descriptor keys from its ``lod_max_distance_m`` (fan-out 0.25 / 0.75 /
+    # 1.0) so Unity's ``VbTerrainImporter`` binds the configured outer
+    # radius (e.g. aaa_open_world -> 2000 m -> lod0=500 / lod1=1500 /
+    # lod2=2000). When no profile resolves (``_lod_max is None``), the keys
+    # are OMITTED entirely — JsonUtility then leaves the C# struct fields
+    # at their literal 50f/150f/400f defaults in VbTerrainTileMetadata.cs:46-48,
+    # they pass the > 0f gate at VbTerrainImporter.cs:389-391, and Unity
+    # binds the literal C# values. The Python side NEVER emits 50/150/400 m;
+    # those numbers are an artefact of the C# struct defaults observable only
+    # after the JSON hop, and that absence-of-keys handshake is the entire
+    # cross-language fallback contract.
     # AAA anchor: Decima and Snowdrop both ship per-LOD distance
     # descriptors; never default-only.
     if _lod_max is not None:
         descriptor["lod0_distance_m"] = float(_lod_max * 0.25)
         descriptor["lod1_distance_m"] = float(_lod_max * 0.75)
         descriptor["lod2_distance_m"] = float(_lod_max * 1.0)
-    # else: keys absent — VbTerrainImporter.cs:389-391 falls back to
-    # literal 50f/150f/400f defaults in VbTerrainTileMetadata.cs.
+    # else: keys absent — JsonUtility leaves VbTerrainTileMetadata.cs:46-48
+    # struct defaults (50f/150f/400f) in place; > 0f gate at
+    # VbTerrainImporter.cs:389-391 passes them through to Unity unchanged.
 
     return descriptor
 
