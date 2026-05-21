@@ -2983,18 +2983,20 @@ def _execute_terrain_pipeline(params: dict[str, Any]) -> dict[str, Any]:
         if pass_name:
             requested_passes = [str(pass_name)]
         else:
-            _qp_name = str(params.get("quality_profile", "aaa_open_world"))
-            _is_preview_qp = _qp_name in ("preview", "mobile", "low")
-            requested_passes = [
-                "pass_generate_low_freq_hmap",
-                "terrain_labels",
-                "structural_masks",
-                "pass_generate_high_freq_detail",
-                "pass_composite_hmap",
-                "validation_minimal" if _is_preview_qp else "validation_full",
-            ]
-            if params.get("scene_read") is not None:
-                requested_passes[3:3] = ["pass_hydrology", "erosion"]
+            # V8 architectural fix (2026-05-20): the headless registration
+            # pre-warm list is now sourced from ``_default_pass_sequences``
+            # (single source of truth) rather than duplicated inline.
+            # The actual pipeline that runs is still derived from
+            # ``build_default_pass_sequence(intent)`` below — this list is
+            # only used to ensure the pass registry is loaded before
+            # intent construction.
+            from ._default_pass_sequences import build_registration_prewarm
+            requested_passes = list(
+                build_registration_prewarm(
+                    quality_profile=str(params.get("quality_profile", "aaa_open_world")),
+                    has_scene_read=params.get("scene_read") is not None,
+                )
+            )
 
     # Ensure all requested passes are registered even for direct callers
     # importing this module without the handlers package side effects.
