@@ -2421,10 +2421,20 @@ def insert_hero_cliff_meshes(
                 face_strata = sa[cliff.face_mask]
                 if face_strata.size > 0 and face_strata.ndim == 2 and face_strata.shape[1] == 3:
                     # nz component (axis 2 in (H,W,3)) is cos(dip); recover
-                    # dip angle in degrees from the mean nz over the face.
-                    nz_mean = float(np.clip(face_strata[:, 2].mean(), -1.0, 1.0))
-                    dip_rad = math.acos(nz_mean)
-                    strata_angle_deg = float(math.degrees(dip_rad)) % 180.0
+                    # dip angle in degrees from the per-cell dips, then
+                    # average the degrees.
+                    #
+                    # ADV-CP4-01 round-2 (P2 — mean-of-cosines bias): the
+                    # prior ``acos(mean(nz))`` is biased on faces with mixed
+                    # dips near the style threshold boundaries because acos
+                    # is non-linear (a face with half cells at dip=0° and
+                    # half at dip=80° has mean(nz)=0.587 → acos → 54° even
+                    # though the true mean dip is 40°). Clip per cell then
+                    # take mean over the per-cell dip degrees so the style
+                    # bucket reflects the real average dip.
+                    nz_clipped = np.clip(face_strata[:, 2], -1.0, 1.0)
+                    per_cell_dip_deg = np.degrees(np.arccos(nz_clipped))
+                    strata_angle_deg = float(per_cell_dip_deg.mean()) % 180.0
                     if strata_angle_deg > 60.0:
                         style = "layered_shale"
                     elif strata_angle_deg > 30.0:

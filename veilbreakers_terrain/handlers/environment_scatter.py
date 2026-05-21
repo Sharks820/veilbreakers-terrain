@@ -3456,10 +3456,28 @@ def handle_scatter_vegetation(params: dict[str, Any]) -> dict[str, Any]:
                 _in_excluded = True
 
         if not _in_excluded:
-            # Fix 9.5: compute wind-field rotation_y for foliage orientation
+            # Fix 9.5: compute wind-field rotation_y for foliage orientation.
+            #
+            # ADV-CP4-02 round-2 (T0-4.5b yaw_degrees column contract):
+            # ``_wind_rotation_y`` returns RADIANS (pinned by
+            # test_environment_scatter_handlers.py:975), but ``p["rotation_y"]``
+            # flows downstream into ``tree_instance_points[:, 3]`` via
+            # ``_write_tree_instance_points``, and the Unity exporter at
+            # ``terrain_unity_export.py:3374`` labels that column
+            # ``yaw_degrees``. Forests faced ~north in production because
+            # column 3 carried radians (≈ [0, 6.28]) where Unity's
+            # ``Quaternion.Euler(0, yaw_degrees, 0)`` interprets it as
+            # degrees. Convert at the assignment site so the
+            # ``_wind_rotation_y`` radians contract is preserved while the
+            # column-3 ``yaw_degrees`` contract is honored. Modulo 360 keeps
+            # the value in the canonical [0, 360) range even if upstream
+            # math.degrees() returns negative values from atan2.
             _lx = p["position"][0]
             _ly = p["position"][1]
-            p["rotation_y"] = _wind_rotation_y(_wind, _lx, _ly, terrain_width, terrain_height)
+            _wind_rot_rad = _wind_rotation_y(
+                _wind, _lx, _ly, terrain_width, terrain_height
+            )
+            p["rotation_y"] = math.degrees(_wind_rot_rad) % 360.0
             _filtered.append(p)
     placements = _filtered
 

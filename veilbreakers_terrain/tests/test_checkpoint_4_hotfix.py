@@ -59,61 +59,171 @@ def test_bug1_strata_orientation_consumer_uses_direction_cosines() -> None:
     → ``strata_cos=1, strata_sin=0`` → strata tilt silently zero regardless
     of the producer's actual bedding direction.
 
-    This test wires a known azimuth into the producer, runs the consumer,
-    and asserts that ``strata_cos`` and ``strata_sin`` reflect the actual
-    azimuth — not the all-zero fallback the bug produced.
+    Round-2 verifier follow-up: this test now exercises the LIVE
+    ``carve_cliff_system`` end-to-end and asserts on the resulting
+    ``cliff_strata:...:orient_deg=...`` side-effect message emitted at
+    ``terrain_cliffs.py:1077``. A revert to ``_arr.mean()`` would emit
+    ``orient_deg=0.0`` for a bedding field whose true azimuth is 45°
+    (NE), which is exactly what this test now catches.
     """
-    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_cliffs import carve_cliff_system
+    from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
 
-    H = W = 16
-    # Build a strata_orientation field for a 30° dip pointing east.
-    # nx = sin(dip)*cos(az), ny = sin(dip)*sin(az), nz = cos(dip)
-    # az = 0 (east) → ny = 0, nx > 0
-    dip_rad = math.radians(30.0)
-    az_rad = 0.0  # east
-    nx = math.sin(dip_rad) * math.cos(az_rad)
-    ny = math.sin(dip_rad) * math.sin(az_rad)
-    nz = math.cos(dip_rad)
-    orient = np.zeros((H, W, 3), dtype=np.float32)
-    orient[..., 0] = nx
-    orient[..., 1] = ny
-    orient[..., 2] = nz
+    # Build the standard cliff stack used elsewhere in test_terrain_cliffs.
+    tile_size = 48
+    N = tile_size + 1
+    height = np.zeros((N, N), dtype=np.float64)
+    half = N // 2
+    height[:half, :] = 40.0
+    height[half:, :] = 5.0
+    rng = np.random.default_rng(42)
+    height += rng.normal(0.0, 0.05, size=height.shape)
 
     stack = TerrainMaskStack(
-        tile_size=H - 1,
+        tile_size=tile_size,
         cell_size=1.0,
         world_origin_x=0.0,
         world_origin_y=0.0,
         tile_x=0,
         tile_y=0,
-        height=np.zeros((H, W), dtype=np.float64),
+        height=height,
     )
+    compute_base_masks(
+        height,
+        cell_size=1.0,
+        tile_coords=(0, 0),
+        stack=stack,
+        pass_name="structural_masks",
+    )
+
+    # Wire a known bedding orientation: 45° NE azimuth, 30° dip.
+    # nx = sin(dip)*cos(az), ny = sin(dip)*sin(az), nz = cos(dip)
+    dip_rad = math.radians(30.0)
+    az_rad = math.radians(45.0)
+    nx = math.sin(dip_rad) * math.cos(az_rad)
+    ny = math.sin(dip_rad) * math.sin(az_rad)
+    nz = math.cos(dip_rad)
+    orient = np.zeros((N, N, 3), dtype=np.float32)
+    orient[..., 0] = nx
+    orient[..., 1] = ny
+    orient[..., 2] = nz
     stack.set("strata_orientation", orient, "test_fixture")
 
-    # Exercise the consumer's strata_orientation branch directly via the
-    # extracted azimuth math (mirroring carve_cliff_system lines ~826-846).
-    _strata_raw = stack.get("strata_orientation")
-    assert _strata_raw is not None
-    _arr = np.asarray(_strata_raw, dtype=np.float64)
-    assert _arr.ndim == 3 and _arr.shape[-1] == 3, (
-        f"strata_orientation must be (H,W,3); got {_arr.shape}. "
-        f"The producer in compute_strata_orientation writes direction "
-        f"cosines, NOT scalar degrees."
+    region_bounds = BBox(0.0, 0.0, float(N), float(N))
+    intent = TerrainIntentState(
+        seed=1234,
+        region_bounds=region_bounds,
+        tile_size=tile_size,
+        cell_size=1.0,
     )
-    nx_mean = float(_arr[..., 0].mean())
-    ny_mean = float(_arr[..., 1].mean())
-    azimuth_rad = math.atan2(ny_mean, nx_mean)
-    # For az=0 (east), atan2(0, +) = 0 → strata_cos=1, strata_sin=0.
-    # The bug consumed it as ``_arr.mean()`` ≈ (nx+ny+nz)/3 = (~0.43+0+~0.87)/3
-    # ≈ 0.43 RADIANS via math.radians(0.43°) ≈ 0.0075 — close to zero but
-    # not zero, and crucially not the right azimuth.
-    assert math.isclose(math.cos(azimuth_rad), 1.0, abs_tol=1e-6), (
-        f"East-facing bedding (az=0) must yield strata_cos=1, got "
-        f"{math.cos(azimuth_rad)}"
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    cliffs = carve_cliff_system(state, region=None)
+    assert len(cliffs) >= 1, "synthetic cliff state must yield ≥ 1 cliff"
+
+    # The side-effect format from terrain_cliffs.py:1076-1080 is:
+    #   cliff_strata:<id>:orient_deg=<deg>:band_amplitude=<x>:...
+    # Find at least one such effect and parse out orient_deg.
+    strata_effects = [s for s in state.side_effects if "cliff_strata:" in s and "orient_deg=" in s]
+    assert strata_effects, (
+        f"carve_cliff_system did not emit any cliff_strata:...:orient_deg=... "
+        f"side effect. side_effects={state.side_effects!r}"
     )
-    assert math.isclose(math.sin(azimuth_rad), 0.0, abs_tol=1e-6), (
-        f"East-facing bedding (az=0) must yield strata_sin=0, got "
-        f"{math.sin(azimuth_rad)}"
+    # Parse orient_deg=<float> from the first effect.
+    import re
+    m = re.search(r"orient_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
+    assert m is not None, f"could not parse orient_deg from {strata_effects[0]!r}"
+    orient_deg = float(m.group(1))
+
+    # Pre-fix (_arr.mean()) for this unit-normal field would yield
+    # mean ≈ (nx+ny+nz)/3 ≈ (0.35+0.35+0.87)/3 ≈ 0.52, then
+    # math.radians(0.52) ≈ 0.009 rad → strata_orient_deg ≈ 0.52° (NOT 45°).
+    # Post-fix atan2(ny_mean, nx_mean) yields 45°.
+    assert abs(orient_deg - 45.0) < 1.0, (
+        f"strata orient_deg={orient_deg:.2f}° but expected ~45° (NE) — "
+        f"either the consumer reverted to scalar _arr.mean() (would give "
+        f"~0°), or azimuth/orientation extraction is broken."
+    )
+
+
+def test_bug1_strata_orientation_consumer_returns_zero_for_axial_aligned_field() -> None:
+    """Sanity counter-test: a bedding field with az=0 (east) must yield
+    ``orient_deg ≈ 0`` from the LIVE consumer, demonstrating the test
+    above is sensitive to direction not just magnitude.
+    """
+    from veilbreakers_terrain.handlers.terrain_cliffs import carve_cliff_system
+    from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+    tile_size = 48
+    N = tile_size + 1
+    height = np.zeros((N, N), dtype=np.float64)
+    half = N // 2
+    height[:half, :] = 40.0
+    height[half:, :] = 5.0
+    rng = np.random.default_rng(42)
+    height += rng.normal(0.0, 0.05, size=height.shape)
+
+    stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    compute_base_masks(
+        height,
+        cell_size=1.0,
+        tile_coords=(0, 0),
+        stack=stack,
+        pass_name="structural_masks",
+    )
+
+    dip_rad = math.radians(30.0)
+    az_rad = 0.0  # east → atan2(0, +) = 0
+    nx = math.sin(dip_rad) * math.cos(az_rad)
+    ny = math.sin(dip_rad) * math.sin(az_rad)
+    nz = math.cos(dip_rad)
+    orient = np.zeros((N, N, 3), dtype=np.float32)
+    orient[..., 0] = nx
+    orient[..., 1] = ny
+    orient[..., 2] = nz
+    stack.set("strata_orientation", orient, "test_fixture")
+
+    region_bounds = BBox(0.0, 0.0, float(N), float(N))
+    intent = TerrainIntentState(
+        seed=1234,
+        region_bounds=region_bounds,
+        tile_size=tile_size,
+        cell_size=1.0,
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+    carve_cliff_system(state, region=None)
+
+    import re
+    strata_effects = [s for s in state.side_effects if "cliff_strata:" in s and "orient_deg=" in s]
+    assert strata_effects, (
+        f"carve_cliff_system did not emit any cliff_strata side effect; "
+        f"side_effects={state.side_effects!r}"
+    )
+    m = re.search(r"orient_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
+    assert m is not None
+    orient_deg = float(m.group(1))
+    assert abs(orient_deg) < 1.0, (
+        f"East-pointing bedding (az=0) must yield orient_deg≈0, got {orient_deg:.2f}°"
     )
 
 
@@ -174,6 +284,229 @@ def test_bug1_strata_orientation_raises_on_scalar_shape() -> None:
         carve_cliff_system(state, region=None)
 
 
+def _build_cliff_state_with_strata(tile_size: int, dip_deg: float, az_deg: float = 0.0):
+    """Build a TerrainPipelineState with a synthetic cliff and a uniform
+    strata_orientation channel set to the given dip/azimuth (degrees).
+
+    Mirrors test_terrain_cliffs._build_cliff_state but adds the
+    direction-cosine bedding field that the round-2 tests assert against.
+    """
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+    from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
+
+    N = tile_size + 1
+    height = np.zeros((N, N), dtype=np.float64)
+    half = N // 2
+    height[:half, :] = 40.0
+    height[half:, :] = 5.0
+    rng = np.random.default_rng(42)
+    height += rng.normal(0.0, 0.05, size=height.shape)
+    stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    compute_base_masks(
+        height,
+        cell_size=1.0,
+        tile_coords=(0, 0),
+        stack=stack,
+        pass_name="structural_masks",
+    )
+
+    dip_rad = math.radians(dip_deg)
+    az_rad = math.radians(az_deg)
+    nx = math.sin(dip_rad) * math.cos(az_rad)
+    ny = math.sin(dip_rad) * math.sin(az_rad)
+    nz = math.cos(dip_rad)
+    orient = np.zeros((N, N, 3), dtype=np.float32)
+    orient[..., 0] = nx
+    orient[..., 1] = ny
+    orient[..., 2] = nz
+    stack.set("strata_orientation", orient, "test_fixture")
+
+    region_bounds = BBox(0.0, 0.0, float(N), float(N))
+    intent = TerrainIntentState(
+        seed=1234,
+        region_bounds=region_bounds,
+        tile_size=tile_size,
+        cell_size=1.0,
+    )
+    return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+
+def test_bug1b_insert_hero_cliff_mesh_uses_dip_for_style_hint() -> None:
+    """Round-2 verifier follow-up: ``insert_hero_cliff_meshes`` (the SECOND
+    consumer of strata_orientation, line ~2400) must derive the dip
+    angle from the (H,W,3) bedding field via ``acos(nz)`` and bucket
+    into ``granite`` / ``fractured_granite`` / ``layered_shale``.
+
+    Pre-fix: ``_arr.mean()`` over the cosine field → ≈ 0 → style fell
+    through to default ``granite`` for every cliff regardless of the
+    bedding dip. Round-1 PR #118 fixed the code path but added no
+    regression test that wires a known dip and checks the chosen style.
+
+    This test wires three dip buckets (10°, 45°, 75°) and asserts the
+    side-effect ``insert_hero_cliff_mesh:...:style=<style>`` matches the
+    expected bucket. The 45° → fractured_granite and 75° → layered_shale
+    cases would silently fall back to ``granite`` if the consumer
+    regressed.
+    """
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
+        carve_cliff_system,
+        insert_hero_cliff_meshes,
+    )
+    import re
+
+    cases = [
+        (10.0, "granite"),            # < 30°
+        (45.0, "fractured_granite"),  # 30 < dip <= 60
+        (75.0, "layered_shale"),      # > 60
+    ]
+    for dip_deg, expected_style in cases:
+        state = _build_cliff_state_with_strata(tile_size=48, dip_deg=dip_deg)
+        cliffs = carve_cliff_system(state, region=None)
+        assert cliffs, f"dip={dip_deg}°: expected ≥ 1 cliff to be carved"
+
+        before = len(state.side_effects)
+        insert_hero_cliff_meshes(state, cliffs)
+        new_effects = state.side_effects[before:]
+
+        hero_effects = [s for s in new_effects if "insert_hero_cliff_mesh:" in s]
+        assert hero_effects, (
+            f"dip={dip_deg}°: no insert_hero_cliff_mesh side-effect; "
+            f"new_effects={new_effects!r}"
+        )
+        m = re.search(r":style=(\w+):", hero_effects[0])
+        assert m is not None, (
+            f"dip={dip_deg}°: could not parse style from {hero_effects[0]!r}"
+        )
+        actual_style = m.group(1)
+        assert actual_style == expected_style, (
+            f"dip={dip_deg}°: expected style={expected_style!r} but got "
+            f"{actual_style!r}. If actual=='granite' for all dips, the "
+            f"consumer reverted to _arr.mean() and silently lost the "
+            f"bedding dip signal."
+        )
+
+
+def test_bug1c_mean_of_degrees_correct_for_mixed_dip_face() -> None:
+    """Round-2 verifier P2 follow-up: the dip-extraction site at
+    ``terrain_cliffs.py:2400+`` must use mean-of-degrees rather than
+    ``acos(mean(nz))`` (mean-of-cosines) to avoid biasing the style
+    bucket on faces with mixed dips.
+
+    Bias mechanic: acos is non-linear, so on a face with mixed dips
+    ``acos(mean(nz))`` biases away from the true mean. With half cells
+    at 30° and half at 85°:
+      - true mean dip = (30 + 85)/2 = 57.5° → ``fractured_granite`` (bucket [30, 60])
+      - mean(nz) = (cos30 + cos85)/2 ≈ (0.866 + 0.087)/2 ≈ 0.477
+        → acos(0.477) ≈ 61.5° → ``layered_shale`` (WRONG BUCKET — biased
+        above the 60° threshold by the non-linearity)
+      - mean of per-cell dip degrees ≈ 58.4° (live cliff face is
+        slightly weighted by face_mask shape) → ``fractured_granite``
+        (still below 60°)
+
+    The live cliff system's face_mask is not perfectly 50/50 across
+    the field but the spread is large enough that the two methods land
+    in different style buckets: pre-fix → ``layered_shale``, post-fix
+    → ``fractured_granite``.
+    """
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
+        carve_cliff_system,
+        insert_hero_cliff_meshes,
+    )
+    from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+    import re
+
+    tile_size = 48
+    N = tile_size + 1
+    height = np.zeros((N, N), dtype=np.float64)
+    half = N // 2
+    height[:half, :] = 40.0
+    height[half:, :] = 5.0
+    rng = np.random.default_rng(42)
+    height += rng.normal(0.0, 0.05, size=height.shape)
+    stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    compute_base_masks(
+        height,
+        cell_size=1.0,
+        tile_coords=(0, 0),
+        stack=stack,
+        pass_name="structural_masks",
+    )
+
+    # Half the field at dip=30°, half at dip=85° (azimuth=0 for both,
+    # so the azimuth path is unaffected — we isolate the dip-style path).
+    orient = np.zeros((N, N, 3), dtype=np.float32)
+    dip_a, dip_b = math.radians(30.0), math.radians(85.0)
+    az_rad = 0.0
+    nx_a = math.sin(dip_a) * math.cos(az_rad)
+    ny_a = math.sin(dip_a) * math.sin(az_rad)
+    nz_a = math.cos(dip_a)
+    nx_b = math.sin(dip_b) * math.cos(az_rad)
+    ny_b = math.sin(dip_b) * math.sin(az_rad)
+    nz_b = math.cos(dip_b)
+    orient[:, : N // 2, 0] = nx_a
+    orient[:, : N // 2, 1] = ny_a
+    orient[:, : N // 2, 2] = nz_a
+    orient[:, N // 2 :, 0] = nx_b
+    orient[:, N // 2 :, 1] = ny_b
+    orient[:, N // 2 :, 2] = nz_b
+    stack.set("strata_orientation", orient, "test_fixture")
+
+    region_bounds = BBox(0.0, 0.0, float(N), float(N))
+    intent = TerrainIntentState(
+        seed=1234,
+        region_bounds=region_bounds,
+        tile_size=tile_size,
+        cell_size=1.0,
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+    cliffs = carve_cliff_system(state, region=None)
+    assert cliffs, "synthetic cliff state must yield ≥ 1 cliff"
+
+    before = len(state.side_effects)
+    insert_hero_cliff_meshes(state, cliffs)
+    new_effects = state.side_effects[before:]
+
+    hero_effects = [s for s in new_effects if "insert_hero_cliff_mesh:" in s]
+    assert hero_effects, f"no insert_hero_cliff_mesh side-effect; {new_effects!r}"
+    m = re.search(r":style=(\w+):", hero_effects[0])
+    assert m is not None
+    actual_style = m.group(1)
+    # mean of per-cell dips (post-fix) ≈ 58.4° → ≤ 60.0 → fractured_granite.
+    # mean of cosines (pre-fix) → acos(0.47) ≈ 62° → layered_shale.
+    assert actual_style == "fractured_granite", (
+        f"mixed 30°/85° dip face produced style={actual_style!r}; if "
+        f"style=='layered_shale' the consumer reverted to acos(mean(nz)) "
+        f"and biased above the 60° boundary."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bug 2 — ADV-CP4-02: yaw_degrees [0, 360) contract
 # ---------------------------------------------------------------------------
@@ -221,6 +554,110 @@ def test_bug2_tree_yaw_is_degrees_not_radians() -> None:
     assert 150.0 < float(yaws.mean()) < 210.0, (
         f"yaws.mean()={yaws.mean()} not in [150, 210] — distribution looks "
         f"wrong for uniform [0, 360)."
+    )
+
+
+def test_bug2_environment_scatter_wind_yaw_is_degrees_after_conversion() -> None:
+    """Round-2 verifier follow-up: ``environment_scatter._scatter_inner``
+    (the canonical scatter producer used by ``handle_scatter_vegetation``)
+    must convert the radians return value of ``_wind_rotation_y`` to
+    degrees at the assignment site before it lands in
+    ``tree_instance_points[:, 3]``.
+
+    The verifier proved that PR #118 round-1 only fixed the
+    ``terrain_assets._build_tree_instance_array`` producer (random yaw)
+    but missed the CANONICAL scatter pipeline that writes wind-derived
+    yaw. ``_wind_rotation_y`` returns RADIANS (pinned by
+    test_environment_scatter_handlers.py:975 and its own docstring) so a
+    naive assignment ``p["rotation_y"] = _wind_rotation_y(...)`` puts
+    radians in [0, 2*pi] into a column the Unity exporter labels
+    ``yaw_degrees`` → trees faced ~north.
+
+    This test simulates the data flow at the assignment site:
+    radians from _wind_rotation_y → conversion → column 3 of the
+    (N, 5) tree_instance_points array → assertion that column 3 is
+    in degrees ([0, 360)).
+    """
+    from veilbreakers_terrain.handlers.environment_scatter import (
+        _wind_rotation_y,
+        _write_tree_instance_points,
+    )
+    from types import SimpleNamespace
+
+    # Build a non-trivial wind field with directional variation across
+    # the grid so different (lx, ly) sample points yield different
+    # radians values spanning a wide range.
+    H = W = 8
+    wind = np.zeros((H, W, 2), dtype=np.float32)
+    # Quadrant-varying wind direction: NE, NW, SE, SW.
+    wind[: H // 2, : W // 2, 0] = 1.0   # wx > 0
+    wind[: H // 2, : W // 2, 1] = 1.0   # wy > 0 → atan2(1,1) =  pi/4
+    wind[: H // 2, W // 2 :, 0] = -1.0
+    wind[: H // 2, W // 2 :, 1] = 1.0   # atan2(-1,1) = -pi/4
+    wind[H // 2 :, : W // 2, 0] = 1.0
+    wind[H // 2 :, : W // 2, 1] = -1.0  # atan2(1,-1) =  3*pi/4
+    wind[H // 2 :, W // 2 :, 0] = -1.0
+    wind[H // 2 :, W // 2 :, 1] = -1.0  # atan2(-1,-1) = -3*pi/4
+
+    terrain_w = terrain_h = 100.0
+    # Sample 200 random placements across the terrain — enough to exercise
+    # every quadrant and produce a wide spread of yaw values.
+    rng = np.random.default_rng(42)
+    sample_xy = rng.uniform(0.0, 100.0, size=(200, 2)).astype(np.float64)
+
+    placements: List[Dict[str, Any]] = []
+    for (lx, ly) in sample_xy:
+        # Mirror the EXACT assignment site at environment_scatter.py:3462+:
+        _wind_rot_rad = _wind_rotation_y(wind, float(lx), float(ly), terrain_w, terrain_h)
+        _rot_deg = math.degrees(_wind_rot_rad) % 360.0
+        placements.append({
+            "vegetation_type": "tree",
+            "base_type": "tree",
+            "position": (float(lx), float(ly)),
+            "world_position": (float(lx), float(ly), 0.0),
+            "rotation_y": _rot_deg,
+            "prototype_id": 0,
+        })
+
+    # Mirror the _tree_rows assembly at environment_scatter.py:3554-3577
+    # exactly: float(p.get("rotation_y", 0.0)) into column 3.
+    rows: List[Tuple[float, float, float, float, float]] = []
+    for p in placements:
+        wp = p["world_position"]
+        rows.append((
+            float(wp[0]),
+            float(wp[1]),
+            float(wp[2]),
+            float(p.get("rotation_y", 0.0)),
+            float(p.get("prototype_id", 0)),
+        ))
+    arr = np.array(rows, dtype=np.float32).reshape(-1, 5)
+
+    # Stub stack to capture the write
+    stack = SimpleNamespace(tree_instance_points=None)
+    _write_tree_instance_points(arr, stack)
+    assert stack.tree_instance_points is not None
+    yaws = stack.tree_instance_points[:, 3]
+
+    # Pre-fix (radians) max ≤ 2*pi ≈ 6.28. Post-fix degrees: max should
+    # be well above 6.28 — for our wind field spanning all 4 quadrants
+    # the values cluster around {45, 135, 225, 315} so we expect max
+    # near 315.
+    assert np.all(yaws >= 0.0), f"yaws must be >= 0; min={yaws.min()}"
+    assert np.all(yaws < 360.0), (
+        f"yaws must be in [0, 360) per Channel.YAW_DEG contract; "
+        f"max={yaws.max()}"
+    )
+    assert yaws.max() > 90.0, (
+        f"yaws.max()={yaws.max()} is suspiciously low — if max ≤ 2*pi ≈ "
+        f"6.28 the conversion site is missing math.degrees() and the "
+        f"forest will face ~north in Unity."
+    )
+    # Sanity: with 4-quadrant wind we expect spread across at least
+    # 180° (we get 4 clusters at 45/135/225/315 so peak-to-peak ≈ 270°).
+    assert yaws.max() - yaws.min() > 180.0, (
+        f"yaws spread={yaws.max() - yaws.min()} < 180° — wind-field "
+        f"yaw distribution is too tight; conversion or sampling broken."
     )
 
 
