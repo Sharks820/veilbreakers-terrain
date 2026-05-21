@@ -1047,6 +1047,15 @@ namespace VeilBreakers.TerrainImport.Editor
                         prototypeIndex = prototypeIndex,
                         widthScale = Mathf.Max(0.1f, tree.width_scale),
                         heightScale = Mathf.Max(0.1f, tree.height_scale),
+                        // Verifier A #18 (HOTFIX-7a): Unity's TreeInstance.rotation
+                        // is in RADIANS; producer emits yaw_degrees per
+                        // `_tree_instances_json` in terrain_unity_export.py.
+                        // Without this assignment, every tree faced north
+                        // (rotation defaults to 0.0f) regardless of the
+                        // per-instance yaw value flowing through the JSON
+                        // manifest. PR #114+#118 fixed the Python side;
+                        // this closes the consumer-side leg of the cascade.
+                        rotation = tree.yaw_degrees * Mathf.Deg2Rad,
                         color = ToColor(tree.color),
                         lightmapColor = ToColor(tree.lightmap_color),
                     }

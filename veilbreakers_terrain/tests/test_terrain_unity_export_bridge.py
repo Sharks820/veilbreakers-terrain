@@ -728,10 +728,64 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         "FlowAccumulation",
         "GeneratedTrees",
         "NavMeshDataAssetPath",
+        # Verifier A #18 (HOTFIX-7a): TreeInstance.rotation must be wired
+        # using yaw_degrees * Mathf.Deg2Rad. PR #114+#118 fixed the Python
+        # producer to emit yaw_degrees correctly, but the Unity consumer
+        # constructed TreeInstance without setting rotation, so every tree
+        # faced north (Unity defaults the field to 0.0f). The producer-side
+        # contract is degrees (`_tree_instances_json` in
+        # terrain_unity_export.py) and Unity expects radians.
+        "rotation = tree.yaw_degrees * Mathf.Deg2Rad",
     ):
         assert token in source
     assert "new int[descriptor.height, descriptor.width]" in source
     assert "counts[y, x]" in source
+
+
+def test_unity_importer_treeinstance_rotation_field_is_wired_degrees_to_radians():
+    """Verifier A #18 (HOTFIX-7a) regression guard.
+
+    Unity's `TreeInstance.rotation` field is in radians (around the Y axis).
+    Our JSON manifest emits `yaw_degrees` for tree instances via
+    `_tree_instances_json` in `terrain_unity_export.py`. Prior to this fix
+    the `new TreeInstance { ... }` struct-initializer in `VbTerrainImporter.cs`
+    never assigned `rotation`, so Unity defaulted it to 0.0f — every terrain
+    tree faced north regardless of the manifest. This guard asserts the
+    `rotation = ... Mathf.Deg2Rad` conversion is present near the
+    `SetTreeInstances` call so the regression cannot silently return.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    importer_path = repo_root / "unity_plugin" / "Editor" / "VbTerrainImporter.cs"
+    source = importer_path.read_text(encoding="utf-8")
+
+    # The rotation assignment must be on the producer-side field
+    # (yaw_degrees) and must convert degrees -> radians for Unity.
+    assert "rotation = tree.yaw_degrees * Mathf.Deg2Rad" in source, (
+        "TreeInstance.rotation must be wired from tree.yaw_degrees * Mathf.Deg2Rad "
+        "(Verifier A #18; PR #114+#118 fixed producer-side, this closes consumer)."
+    )
+
+    # The rotation assignment must live in the same struct-initializer as
+    # widthScale/heightScale to ensure it actually targets the
+    # `SetTreeInstances` codepath (not a stray comment in a docblock).
+    setheights_idx = source.find(".SetTreeInstances(")
+    assert setheights_idx > 0, "expected .SetTreeInstances( in VbTerrainImporter.cs"
+    rotation_idx = source.find("rotation = tree.yaw_degrees * Mathf.Deg2Rad")
+    assert 0 < rotation_idx < setheights_idx, (
+        "rotation assignment must appear before .SetTreeInstances(...) (same loop body)"
+    )
+    width_scale_idx = source.find("widthScale = Mathf.Max(0.1f, tree.width_scale)")
+    height_scale_idx = source.find("heightScale = Mathf.Max(0.1f, tree.height_scale)")
+    assert 0 < width_scale_idx < setheights_idx
+    assert 0 < height_scale_idx < setheights_idx
+    # rotation must be co-located within ~1500 chars of the widthScale/heightScale
+    # assignment block — i.e. in the same TreeInstance struct initializer. The
+    # bound is loose (rather than tight) because the assignment carries a
+    # multi-line docblock explaining the degrees->radians conversion contract.
+    assert abs(rotation_idx - width_scale_idx) < 1500, (
+        "rotation assignment must be in the same TreeInstance struct-initializer "
+        "as widthScale (proximity guard)."
+    )
 
 
 def test_public_unity_export_handler_writes_bundle():
