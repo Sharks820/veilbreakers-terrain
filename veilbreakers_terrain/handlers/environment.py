@@ -1393,11 +1393,13 @@ def _read_neighbor_heightmap_from_manifest(neighbor: dict[str, Any]) -> np.ndarr
     Raises
     ------
     ValueError
-        When the on-disk byte count does not match resolution², when
-        ``height_range`` is missing/wrong-length, or when its bounds are
-        non-finite.  These are the documented inputs that the calling
-        ``except`` tuple in ``handle_generate_world_terrain`` recovers
-        from (swapping to "no neighbor edge" with a warning).
+        When the on-disk uint16 element count does not match resolution²
+        (note: ``np.fromfile(..., dtype="<u2")`` returns *elements*, not
+        bytes — each element is 2 bytes), when ``height_range`` is
+        missing/wrong-length, or when its bounds are non-finite.  These
+        are the documented inputs that the calling ``except`` tuple in
+        ``handle_generate_world_terrain`` recovers from (swapping to
+        "no neighbor edge" with a warning).
     OSError, FileNotFoundError
         When the heightmap file is unreadable / missing.
     KeyError, TypeError
@@ -1409,9 +1411,15 @@ def _read_neighbor_heightmap_from_manifest(neighbor: dict[str, Any]) -> np.ndarr
         neighbor["heightmap_path"],
         dtype="<u2",
     )
+    # T122-4 (copilot round-3): ``raw.size`` is the uint16 *element* count
+    # (each element = 2 bytes), not the byte count.  Phrasing the error
+    # in terms of elements vs resolution² avoids the confusion of
+    # comparing ``raw.size`` to ``raw.nbytes`` when diagnosing failures.
     if raw.size != res * res:
         raise ValueError(
-            f"neighbor heightmap size {raw.size} != resolution²={res * res}"
+            f"neighbor heightmap uint16 element count {raw.size} "
+            f"({raw.nbytes} bytes) does not match resolution²={res * res} "
+            f"({res * res * 2} expected bytes)"
         )
     arr = raw.reshape((res, res))
     # Writer used flip_vertical=True (default); undo it.

@@ -45,6 +45,7 @@ locally"). The fix:
 
 from __future__ import annotations
 
+import ast
 import tempfile
 from pathlib import Path
 
@@ -236,11 +237,13 @@ def test_dequant_raises_value_error_when_height_range_non_finite():
 
 def test_dequant_raises_value_error_when_resolution_mismatches_file_size():
     """The production helper must reject a manifest whose declared
-    ``resolution`` does not match the byte count of the on-disk file.
+    ``resolution`` does not match the on-disk uint16 element count.
 
-    A mismatched resolution would either truncate or run off the end of
-    the array, producing silent edge corruption. Added in T122-1 round-2
-    to exercise a third production guard branch.
+    T122-4 round-3 (copilot): wording corrected — ``np.fromfile(..., dtype="<u2")``
+    returns an array of uint16 *elements* (each 2 bytes), so the
+    comparison is element-count vs resolution², not byte-count vs
+    resolution². A mismatched resolution would either truncate or run
+    off the end of the array, producing silent edge corruption.
     """
     side = 17
     hmap = _make_synthetic_heightmap(side=side, seed=4242)
@@ -256,10 +259,11 @@ def test_dequant_raises_value_error_when_resolution_mismatches_file_size():
 
 
 def test_neighbor_loader_except_is_narrow_not_bare():
-    """Static check: the outer ``except`` around _read_neighbor_heightmap_from_manifest
-    must NOT be ``except Exception`` (bare). Narrowing surfaces real
-    refactor bugs (AttributeError, ImportError, RuntimeError) as crashes
-    instead of swallowing them as harmless warnings.
+    """Static check: the ``except`` around any call to
+    ``_read_neighbor_heightmap_from_manifest`` in environment.py must NOT
+    be ``except Exception`` (bare). Narrowing surfaces real refactor bugs
+    (AttributeError, ImportError, RuntimeError) as crashes instead of
+    swallowing them as harmless warnings.
 
     Implements FIX_PATTERN §C3 "broad-except hygiene" for this site.
 
@@ -267,17 +271,114 @@ def test_neighbor_loader_except_is_narrow_not_bare():
     on the production helper itself rather than re-importing the module
     under a separate alias (which previously triggered CodeQL's
     py/import-statement-mixed-with-from-import-statement rule).
+
+    T122-5 (copilot round-3): replaced the brittle string-containment
+    check ``narrow_marker in src`` with a structural AST walk. The
+    previous form failed on harmless formatting changes (line breaks,
+    reordered exception tuple, additional exceptions). The new check:
+      1. Parses the production module with ``ast``.
+      2. Walks every ``Try`` whose body contains a Call to
+         ``_read_neighbor_heightmap_from_manifest`` (the live consumer).
+      3. For each such Try, asserts at least one handler matches:
+         (a) handler.type is a Tuple, AND
+         (b) every element in the tuple is a Name node (i.e. an
+             explicit exception class, not bare ``Exception``), AND
+         (c) the *names* superset our REQUIRED_NARROW set so the
+             dequant-relevant exceptions are all covered.
+      Reordering / adding more narrow classes / wrapping across lines is
+      now invisible to the check. Bare ``except Exception`` or
+      ``except (Exception, ...)`` still trips it.
     """
     import inspect
 
     src_path = inspect.getsourcefile(_read_neighbor_heightmap_from_manifest)
     assert src_path is not None, "production helper has no source file?"
     src = Path(src_path).read_text(encoding="utf-8")
-    # The narrow tuple must include the dequant-relevant exceptions.
-    narrow_marker = "except (FileNotFoundError, OSError, ValueError, KeyError, TypeError) as exc:"
-    assert narrow_marker in src, (
-        "Expected narrow except tuple at neighbor-edge loader; the WAVE-1 "
-        "hotfix narrowed this from 'except Exception'. If you intentionally "
-        "broadened it back, document why in a docstring above the except "
-        "clause and update this test."
+    tree = ast.parse(src)
+
+    # Required narrow exception names — every dequant-relevant exception
+    # that the WAVE-1 hotfix's narrowing must keep covering.  Adding more
+    # narrow classes (e.g. RuntimeError if a future refactor introduces
+    # one) is fine — they just need to also be Names, not bare Exception.
+    required_narrow: set[str] = {
+        "FileNotFoundError",
+        "OSError",
+        "ValueError",
+        "KeyError",
+        "TypeError",
+    }
+    target_call_name = "_read_neighbor_heightmap_from_manifest"
+
+    def _try_body_calls_target(try_node: ast.Try) -> bool:
+        """True iff ``try_node.body`` contains a Call to the target."""
+        for stmt in try_node.body:
+            for sub in ast.walk(stmt):
+                if not isinstance(sub, ast.Call):
+                    continue
+                f = sub.func
+                if isinstance(f, ast.Name) and f.id == target_call_name:
+                    return True
+                if isinstance(f, ast.Attribute) and f.attr == target_call_name:
+                    return True
+        return False
+
+    def _handler_is_narrow(handler: ast.ExceptHandler) -> tuple[bool, set[str]]:
+        """Return (is_narrow_tuple_of_names, set_of_class_names)."""
+        t = handler.type
+        if t is None:
+            # bare ``except:`` — definitely not narrow
+            return (False, set())
+        if isinstance(t, ast.Name):
+            # ``except SomeException`` — narrow only if not bare Exception
+            return (t.id != "Exception" and t.id != "BaseException", {t.id})
+        if isinstance(t, ast.Tuple):
+            names: set[str] = set()
+            for elt in t.elts:
+                if not isinstance(elt, ast.Name):
+                    # ``except (mod.SomeError, ...)`` — Attribute, not Name —
+                    # treat as non-narrow for the strict check
+                    return (False, set())
+                if elt.id in {"Exception", "BaseException"}:
+                    return (False, names)
+                names.add(elt.id)
+            return (True, names)
+        # ``except some_expression`` — not a static narrow form
+        return (False, set())
+
+    narrow_handlers_found: list[set[str]] = []
+    enclosing_target_tries = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        if not _try_body_calls_target(node):
+            continue
+        enclosing_target_tries += 1
+        for handler in node.handlers:
+            is_narrow, names = _handler_is_narrow(handler)
+            if is_narrow:
+                narrow_handlers_found.append(names)
+
+    assert enclosing_target_tries > 0, (
+        f"No try/except block found enclosing a call to "
+        f"{target_call_name} in {src_path}. Either the helper is no "
+        f"longer called or this test has drifted out of sync with the "
+        f"production wiring."
+    )
+    assert narrow_handlers_found, (
+        f"No narrow ``except (NameA, NameB, ...)`` handler found around "
+        f"any call to {target_call_name}. The WAVE-1 hotfix narrowed "
+        f"this from 'except Exception'; if you intentionally broadened "
+        f"it back, document why in a docstring above the except clause "
+        f"and update this test."
+    )
+    # At least one narrow handler must be a superset of the required
+    # dequant-relevant exception names.
+    covering = [h for h in narrow_handlers_found if required_narrow.issubset(h)]
+    assert covering, (
+        f"Found narrow handlers {narrow_handlers_found} but none cover "
+        f"the required dequant-relevant exceptions {required_narrow}. "
+        f"The narrow tuple must include at least these names so a "
+        f"corrupted manifest / IO error / type mismatch still falls into "
+        f"the recoverable warn-and-skip-neighbor-edge branch instead of "
+        f"crashing the tile bake."
     )
