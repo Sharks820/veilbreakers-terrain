@@ -2803,21 +2803,38 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
                 if north_tile is not None and "north" not in neighbor_edges:
                     north_h = _read_neighbor_heightmap_from_manifest(north_tile)
                     neighbor_edges["north"] = north_h[-1, :].astype(np.float64).tolist()
-            except (FileNotFoundError, OSError, ValueError, KeyError, TypeError) as exc:
-                # WAVE-1 hotfix (2026-05-20) per FIX_PATTERN §C3: narrowed
-                # from bare ``except Exception`` so legitimate bugs in
-                # ``_read_neighbor_heightmap`` (e.g. attribute errors from
-                # a refactor that drops the ``height_range`` manifest key)
-                # surface as crashes instead of being swallowed as warnings.
-                # The narrow tuple covers the exception classes that
-                # ``np.fromfile`` (FileNotFoundError, OSError), the size /
-                # height_range guard (ValueError), and dict access on the
-                # neighbor result (KeyError, TypeError) can legitimately
-                # raise on bad-but-recoverable inputs.
+            # V2 P2 PR-FOLLOWUP-6 (rebased on PR #122 narrowing): narrowed
+            # from bare ``except Exception`` so the precise ``ValueError``
+            # raises that PR #111 added inside ``_read_neighbor_heightmap``
+            # (corrupt size, missing/non-finite ``height_range`` metadata)
+            # propagate as loud failures instead of being silently downgraded
+            # to "no stitch" log warnings. Same anti-pattern that PR #113
+            # closed for the catenary loud-fail (FIX_PATTERN_v1 §C3 — narrow
+            # except to legitimate I/O conditions only; let semantic / contract
+            # failures bubble).
+            #
+            # ``FileNotFoundError`` and ``OSError`` remain expected at world
+            # edges (no neighbor on the seam), so they keep the warning-only
+            # path. ``KeyError`` covers a degenerate ``neighbor`` dict missing
+            # ``"heightmap_path"`` (which is filtered by the ``next(...)``
+            # predicates above but kept as belt-and-braces for the inner
+            # ``np.fromfile`` call).
+            #
+            # ValueError and TypeError are INTENTIONALLY excluded — both are
+            # corrupt-manifest signals that PR #111 loud-fails (size mismatch,
+            # non-finite height_range, non-sequence height_range). Re-adding
+            # either here re-introduces the silent-seam-corruption regression
+            # that PR-FOLLOWUP-6 was authored to close. Pinned by
+            # tests/test_t1_17_environment_narrow_except.py.
+            except (FileNotFoundError, OSError, KeyError) as exc:
                 logger.warning(
-                    "handle_generate_world_terrain: failed to load neighbor edge for tile (%d,%d): %s",
+                    "handle_generate_world_terrain: neighbor heightmap unavailable for tile (%d,%d): %s",
                     tile_x, tile_y, exc,
                 )
+            # Note: ValueError from _read_neighbor_heightmap (corrupt metadata,
+            # non-finite height_range, size mismatch) propagates per PR #111
+            # loud-fail intent — silent seam corruption is worse than an early
+            # crash that surfaces the bad manifest.
             if neighbor_edges:
                 tile_params["neighbor_edges"] = neighbor_edges
             if tiles_x > 1 or tiles_y > 1:
