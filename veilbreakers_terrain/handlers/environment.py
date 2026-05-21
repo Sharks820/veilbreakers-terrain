@@ -295,61 +295,14 @@ def _coerce_optional_grid_channel(
     return np.ascontiguousarray(cleaned, dtype=np.float32)
 
 
-def _resolve_protected_zone_aabb(
-    pz: Any,
-) -> tuple[float, float, float, float]:
-    """Resolve a protected_zone dict into a world-space AABB tuple.
-
-    Accepts BOTH historic schemas without silently dropping either:
-
-    Schema A (nested-bounds, the canonical form built by
-    ``_resolve_terrain_tile_params`` and consumed by terrain merge / glacial
-    crater / structure placement)::
-
-        {"zone_id": "...", "bounds": {"min_x": ..., "min_y": ...,
-                                       "max_x": ..., "max_y": ...}}
-
-    Schema B (flat-AABB, the form used by the road network reform handler
-    and the seasonal-water basin clipper — also accepts ``x0/x1/y0/y1``
-    aliases shipped by some emitter-side callers)::
-
-        {"zone_id": "...", "x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}
-        {"zone_id": "...", "x0": ..., "y0": ..., "x1": ..., "y1": ...}
-
-    Returns:
-        ``(min_x, min_y, max_x, max_y)`` tuple suitable for use in either an
-        inclusion test (``min_x <= wx <= max_x and min_y <= wy <= max_y``) or
-        a mask broadcast.  The defaults — ``+/-1e18`` for the nested-bounds
-        path, ``+/-1e9`` for the flat path — match the prior call-site
-        sentinels and were preserved so downstream comparisons that relied
-        on a "no-clip" zone (e.g. when only one axis was provided) continue
-        to behave the same. WAVE-1-HOTFIX-2 Bug 3 (FIX_PATTERN_v1 §C3
-        contract / schema unification): two of the six handler sites used
-        the flat schema; calling them with a nested-bounds zone silently
-        no-op'd the zone (every coord returned the +/-1e9 sentinel range),
-        causing protected geometry to be paved through. Centralising the
-        resolver here closes the divergence so every handler honours both
-        schemas.
-    """
-    if not isinstance(pz, dict):
-        # Defensive: caller passed something other than a dict — treat as
-        # an open zone so downstream logic falls through to its existing
-        # "no zone" branch instead of crashing.
-        return (-1e18, -1e18, 1e18, 1e18)
-    bounds = pz.get("bounds")
-    if isinstance(bounds, dict):
-        return (
-            float(bounds.get("min_x", -1e18)),
-            float(bounds.get("min_y", -1e18)),
-            float(bounds.get("max_x",  1e18)),
-            float(bounds.get("max_y",  1e18)),
-        )
-    return (
-        float(pz.get("x_min", pz.get("x0", -1e9))),
-        float(pz.get("y_min", pz.get("y0", -1e9))),
-        float(pz.get("x_max", pz.get("x1",  1e9))),
-        float(pz.get("y_max", pz.get("y1",  1e9))),
-    )
+# HOTFIX-7d (Verifier A #13 2026-05-21): the schema-tolerant resolver moved
+# into the leaf module ``_protected_zones`` so the five sibling handlers
+# (terrain_assets, _terrain_world, terrain_caves, terrain_cliffs,
+# terrain_delta_integrator) that consume ProtectedZoneSpec dataclasses
+# can import it without creating cycles back through environment.py.
+# Re-exported here to preserve PR #123's existing call sites that import
+# ``_resolve_protected_zone_aabb`` from this module.
+from ._protected_zones import _resolve_protected_zone_aabb  # noqa: F401
 
 
 def _resolve_road_cost_context(

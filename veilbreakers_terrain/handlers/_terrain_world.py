@@ -801,6 +801,9 @@ def _protected_mask(
     pass_name: str,
 ) -> np.ndarray:
     """Build a boolean mask of cells under a protected zone that forbids this pass."""
+    # HOTFIX-7d (Verifier A #13): unified schema-tolerant resolver.
+    from ._protected_zones import _resolve_protected_zone_aabb
+
     stack = state.mask_stack
     mask = np.zeros(shape, dtype=bool)
     if not state.intent.protected_zones:
@@ -814,11 +817,12 @@ def _protected_mask(
     for zone in state.intent.protected_zones:
         if zone.permits(pass_name):
             continue
+        min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
         inside = (
-            (xg >= zone.bounds.min_x)
-            & (xg <= zone.bounds.max_x)
-            & (yg >= zone.bounds.min_y)
-            & (yg <= zone.bounds.max_y)
+            (xg >= min_x)
+            & (xg <= max_x)
+            & (yg >= min_y)
+            & (yg <= max_y)
         )
         mask |= inside
     return mask

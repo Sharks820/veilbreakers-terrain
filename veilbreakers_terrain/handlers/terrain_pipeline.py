@@ -1844,7 +1844,14 @@ def pass_compute_biome_channels(
     # canonical biome name to translate via ``BIOME_BUCKET_MAP_18_TO_14``
     # to the 14-bucket render palette. Stamp the ordered name list onto
     # the stack so consumers can do ``biome_names[biome_id_value]``.
-    setattr(stack, "biome_names", list(spec.biome_names))
+    #
+    # HOTFIX-7c (Verifier A #7 / 2026-05-21): use ``stack.set`` instead of
+    # raw ``setattr`` so the list participates in compute_hash / to_npz /
+    # from_npz round-trip via ``_OPAQUE_CHANNELS``. Prior code path was
+    # silently dropped on checkpoint restore — downstream macro-color
+    # and Unity-export consumers reverted to the legacy "raw biome_id as
+    # palette index" branch after any rollback.
+    stack.set("biome_names", list(spec.biome_names), "biome_channels")
 
     return PassResult(
         pass_name="biome_channels",
