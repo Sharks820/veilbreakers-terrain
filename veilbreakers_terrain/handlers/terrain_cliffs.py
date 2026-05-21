@@ -824,21 +824,40 @@ def carve_cliff_system(
 
     # Strata orientation from stack
     #
-    # ADV-CP4-01 (CHECKPOINT-4 V2 hotfix): Channel.STRATA_ORIENTATION_XYZ is
-    # retagged ``unit_normal_xyz`` post PR #113 — the producer
-    # (``compute_strata_orientation``) writes an (H, W, 3) array of bedding-
-    # plane unit normals where ``nx = sin(dip)*cos(az)``,
-    # ``ny = sin(dip)*sin(az)``, ``nz = cos(dip)``. Direction-cosine
-    # components live in [-1, 1] with a typical mean ≈ 0 on the X/Y axes,
-    # so the prior scalar-degrees consumer
-    # (``math.radians(float(_arr.mean()))``) silently degraded to
-    # ``cos(0)=1, sin(0)=0`` → cliff strata tilt was nil regardless of the
-    # actual bedding orientation. Compute the planar azimuth via
-    # ``atan2(ny_mean, nx_mean)`` so the strata band-projection in Stage 6
-    # actually follows the bedding direction. Shape assertion mirrors the
-    # geology_validator ``STRATA_BAD_SHAPE`` check (per ``_channels.py``
-    # ``unit_normal_xyz`` contract).
-    _strata_orient_deg = 0.0
+    # ADV-CP4-01 (CHECKPOINT-4 V2 hotfix; round-3 dip/azimuth split): the
+    # producer (``compute_strata_orientation``) writes an (H, W, 3) array of
+    # bedding-plane unit normals per Channel.STRATA_ORIENTATION_XYZ
+    # (``unit_normal_xyz``) where
+    #     ``nx = sin(dip) * cos(az)``,
+    #     ``ny = sin(dip) * sin(az)``,
+    #     ``nz = cos(dip)``.
+    # Two scalar quantities are needed downstream:
+    #   1. ``strata_dip_deg`` — magnitude of bedding tilt, used by
+    #      ``_build_strata_layers`` as the BASE DIP angle for every layer
+    #      (each layer gets ±8° noise on top, see line ~660). Computed as
+    #      ``degrees(acos(clip(nz_mean, -1, 1)))``.
+    #   2. azimuth — horizontal direction of the bedding-plane gradient,
+    #      used for the strata band-projection in Stage 6 via the
+    #      ``strata_cos`` / ``strata_sin`` direction-vector. Computed as
+    #      ``atan2(ny_mean, nx_mean)``.
+    #
+    # Round-2 (PR #118 hotfix) collapsed both into a single
+    # ``_strata_orient_deg = degrees(atan2(ny_mean, nx_mean))`` and passed
+    # the AZIMUTH into ``_build_strata_layers`` as the dip angle. For
+    # E-facing beds (azimuth ≈ 90°) this produced near-vertical
+    # ``dip_angle_rad`` values regardless of the actual bedding tilt —
+    # silent strata_layers metadata corruption flagged by copilot
+    # (PRRT_kwDOSDBoMs6DpwYS) and codex (PRRT_kwDOSDBoMs6DpwdH).
+    #
+    # Round-3 (PR #118 round-3) separates the two and feeds
+    # ``_build_strata_layers`` its proper dip angle. The original
+    # ``_strata_orient_deg`` symbol is preserved for the side_effects log
+    # but now holds the DIP scalar (semantically what
+    # ``_build_strata_layers`` consumes) so the manifest matches what was
+    # actually baked. Shape assertion mirrors the geology_validator
+    # ``STRATA_BAD_SHAPE`` check.
+    _strata_dip_deg = 0.0
+    _strata_azimuth_deg = 0.0
     strata_cos = 1.0
     strata_sin = 0.0
     _strata_raw = stack.get("strata_orientation")
@@ -853,11 +872,35 @@ def carve_cliff_system(
         if _arr.size:
             nx_mean = float(_arr[..., 0].mean())
             ny_mean = float(_arr[..., 1].mean())
-            # atan2 returns 0 when both components are 0 (horizontal beds)
+            # Dip angle: ``nz = cos(dip)`` → ``dip = acos(nz)``. Use
+            # mean-of-degrees rather than ``acos(mean(nz))`` to avoid the
+            # non-linearity bias documented at the insert_hero_cliff_meshes
+            # site (terrain_cliffs.py:2470-2482). For a field with mixed
+            # dips spanning a style-bucket threshold, the two methods can
+            # land in different buckets (mean-of-cosines biases away from
+            # the true mean). Clip per cell to [-1, 1] so float drift on
+            # the unit-normal field doesn't raise.
+            nz_clipped = np.clip(_arr[..., 2], -1.0, 1.0)
+            per_cell_dip_deg = np.degrees(np.arccos(nz_clipped))
+            _strata_dip_deg = float(per_cell_dip_deg.mean())
+            # Azimuth: horizontal projection of the bedding normal. Use
+            # the mean-XY direction (atan2 on mean components) — that
+            # is the geometrically natural definition of a single scalar
+            # azimuth for a field of bedding-plane normals. atan2 returns
+            # 0 when both components are 0 (perfectly horizontal beds);
+            # in that case the per-cell dip is already 0° and the
+            # band-projection direction is moot, so the default
+            # (cos=1, sin=0) is consistent.
             azimuth_rad = math.atan2(ny_mean, nx_mean)
-            _strata_orient_deg = math.degrees(azimuth_rad)
+            _strata_azimuth_deg = math.degrees(azimuth_rad)
             strata_cos = math.cos(azimuth_rad)
             strata_sin = math.sin(azimuth_rad)
+    # Back-compat symbol: ``_strata_orient_deg`` is what ``_build_strata_layers``
+    # consumes (semantically the DIP angle, see _build_strata_layers docstring
+    # and ``base_dip = math.radians(strata_orient_deg)`` at line ~647). Bind
+    # it to the dip scalar so existing call sites and the side_effects log
+    # get the correct value.
+    _strata_orient_deg = _strata_dip_deg
 
     # Slope array (optional — used for face refinement + overhang + erosion)
     slope_arr = stack.get("slope")
@@ -1073,8 +1116,17 @@ def carve_cliff_system(
         cliffs.append(cliff)
 
         if strata_info > 0.0:
+            # Round-3 split: log BOTH the dip (consumed by
+            # ``_build_strata_layers`` as the per-layer base dip angle) and
+            # the azimuth (consumed by the band-projection at lines ~991-998
+            # via ``strata_cos`` / ``strata_sin``). The legacy ``orient_deg``
+            # key is preserved as the dip value (semantically what the
+            # original ``strata_orient_deg`` was being USED as inside
+            # ``_build_strata_layers``, even when it was mis-derived from
+            # azimuth in round-2).
             state.side_effects.append(
                 f"cliff_strata:{cliff.cliff_id}:orient_deg={_strata_orient_deg:.1f}"
+                f":dip_deg={_strata_dip_deg:.1f}:azimuth_deg={_strata_azimuth_deg:.1f}"
                 f":band_amplitude={strata_info:.4f}:x_shift_mean={strata_x_shift_mean:.4f}"
                 f":layer_count={len(strata_layers)}"
             )

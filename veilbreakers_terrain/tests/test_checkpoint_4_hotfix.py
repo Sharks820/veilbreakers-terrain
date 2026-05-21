@@ -127,28 +127,71 @@ def test_bug1_strata_orientation_consumer_uses_direction_cosines() -> None:
     cliffs = carve_cliff_system(state, region=None)
     assert len(cliffs) >= 1, "synthetic cliff state must yield ≥ 1 cliff"
 
-    # The side-effect format from terrain_cliffs.py:1076-1080 is:
-    #   cliff_strata:<id>:orient_deg=<deg>:band_amplitude=<x>:...
-    # Find at least one such effect and parse out orient_deg.
-    strata_effects = [s for s in state.side_effects if "cliff_strata:" in s and "orient_deg=" in s]
+    # The side-effect format from terrain_cliffs.py is (round-3 split):
+    #   cliff_strata:<id>:orient_deg=<dip_deg>:dip_deg=<deg>:azimuth_deg=<deg>:...
+    # Find at least one such effect.
+    strata_effects = [
+        s for s in state.side_effects
+        if "cliff_strata:" in s and "orient_deg=" in s
+    ]
     assert strata_effects, (
         f"carve_cliff_system did not emit any cliff_strata:...:orient_deg=... "
         f"side effect. side_effects={state.side_effects!r}"
     )
-    # Parse orient_deg=<float> from the first effect.
+    # Parse all three fields from the first effect.
     import re
-    m = re.search(r"orient_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
-    assert m is not None, f"could not parse orient_deg from {strata_effects[0]!r}"
-    orient_deg = float(m.group(1))
+    orient_match = re.search(r"orient_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
+    dip_match = re.search(r"dip_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
+    az_match = re.search(r"azimuth_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
+    assert orient_match is not None, (
+        f"could not parse orient_deg from {strata_effects[0]!r}"
+    )
+    assert dip_match is not None, (
+        f"PR #118 round-3: cliff_strata side effect must include dip_deg; "
+        f"got {strata_effects[0]!r}"
+    )
+    assert az_match is not None, (
+        f"PR #118 round-3: cliff_strata side effect must include azimuth_deg; "
+        f"got {strata_effects[0]!r}"
+    )
+    orient_deg = float(orient_match.group(1))
+    dip_deg = float(dip_match.group(1))
+    azimuth_deg = float(az_match.group(1))
 
     # Pre-fix (_arr.mean()) for this unit-normal field would yield
     # mean ≈ (nx+ny+nz)/3 ≈ (0.35+0.35+0.87)/3 ≈ 0.52, then
-    # math.radians(0.52) ≈ 0.009 rad → strata_orient_deg ≈ 0.52° (NOT 45°).
-    # Post-fix atan2(ny_mean, nx_mean) yields 45°.
-    assert abs(orient_deg - 45.0) < 1.0, (
-        f"strata orient_deg={orient_deg:.2f}° but expected ~45° (NE) — "
-        f"either the consumer reverted to scalar _arr.mean() (would give "
-        f"~0°), or azimuth/orientation extraction is broken."
+    # math.radians(0.52) ≈ 0.009 rad → orient_deg ≈ 0.52° (NOT 45°).
+    #
+    # Round-2 fix (PR #118 round-1/round-2) computed azimuth via
+    # atan2(ny_mean, nx_mean) and stored ~45° as "orient_deg", but
+    # ``_build_strata_layers`` consumes that value as the DIP angle —
+    # for E-facing beds (az ≈ 90°) the layers would dip near-vertical
+    # regardless of actual bedding tilt (copilot PRRT_kwDOSDBoMs6DpwYS,
+    # codex PRRT_kwDOSDBoMs6DpwdH).
+    #
+    # Round-3 fix (PR #118 round-3): derive dip from ``acos(nz_mean)``
+    # (the geologically-correct interpretation per Channel.STRATA_ORIENTATION_XYZ
+    # unit_normal_xyz contract) and pass THAT into ``_build_strata_layers``.
+    # The legacy ``orient_deg`` key is rebound to the dip scalar so the
+    # side_effects log matches what is actually baked into strata metadata.
+    # The azimuth is logged separately for the band-projection trace.
+    assert abs(dip_deg - 30.0) < 1.0, (
+        f"strata dip_deg={dip_deg:.2f}° but expected ~30° (input fixture "
+        f"set dip=30°). Round-3 must derive dip from acos(nz_mean); a "
+        f"regression to azimuth-as-dip would give ~45° (the NE azimuth)."
+    )
+    assert abs(azimuth_deg - 45.0) < 1.0, (
+        f"strata azimuth_deg={azimuth_deg:.2f}° but expected ~45° (input "
+        f"fixture set az=45° NE). Either the azimuth extraction reverted "
+        f"to scalar _arr.mean() (would give ~0°), or atan2 broke."
+    )
+    # Back-compat: ``orient_deg`` MUST equal ``dip_deg`` post round-3
+    # (it is what ``_build_strata_layers`` consumes; the round-2 alias
+    # to azimuth was a silent semantic flip).
+    assert abs(orient_deg - dip_deg) < 1e-3, (
+        f"PR #118 round-3: legacy orient_deg ({orient_deg:.2f}°) must "
+        f"equal dip_deg ({dip_deg:.2f}°) — both name the same scalar "
+        f"that flows into _build_strata_layers as base_dip."
     )
 
 
@@ -214,16 +257,41 @@ def test_bug1_strata_orientation_consumer_returns_zero_for_axial_aligned_field()
     carve_cliff_system(state, region=None)
 
     import re
-    strata_effects = [s for s in state.side_effects if "cliff_strata:" in s and "orient_deg=" in s]
+    strata_effects = [
+        s for s in state.side_effects
+        if "cliff_strata:" in s and "orient_deg=" in s
+    ]
     assert strata_effects, (
         f"carve_cliff_system did not emit any cliff_strata side effect; "
         f"side_effects={state.side_effects!r}"
     )
-    m = re.search(r"orient_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
-    assert m is not None
-    orient_deg = float(m.group(1))
-    assert abs(orient_deg) < 1.0, (
-        f"East-pointing bedding (az=0) must yield orient_deg≈0, got {orient_deg:.2f}°"
+    dip_match = re.search(r"dip_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
+    az_match = re.search(r"azimuth_deg=(-?\d+(?:\.\d+)?)", strata_effects[0])
+    assert dip_match is not None, (
+        f"PR #118 round-3: missing dip_deg in {strata_effects[0]!r}"
+    )
+    assert az_match is not None, (
+        f"PR #118 round-3: missing azimuth_deg in {strata_effects[0]!r}"
+    )
+    dip_deg = float(dip_match.group(1))
+    azimuth_deg = float(az_match.group(1))
+    # East-pointing bedding (az=0, dip=30°): the dip is non-zero (input
+    # fixture sets it explicitly), but the azimuth is the axis-aligned
+    # reference and must be ≈ 0°. This is the counter-test that prevents
+    # the regression from re-collapsing dip and azimuth into the same
+    # scalar: a code path that fed azimuth into _build_strata_layers
+    # would yield base_dip ≈ 0 and pass the older "orient_deg≈0" test,
+    # but the actual bedding tilt would not show up in the strata layers.
+    # Round-3 splits the two so this test asserts BOTH.
+    assert abs(azimuth_deg) < 1.0, (
+        f"East-pointing bedding (az=0) must yield azimuth_deg≈0°, "
+        f"got {azimuth_deg:.2f}°"
+    )
+    assert abs(dip_deg - 30.0) < 1.0, (
+        f"East-pointing bedding (dip=30°) must yield dip_deg≈30° from "
+        f"acos(nz_mean=cos(30°)); got {dip_deg:.2f}°. A regression here "
+        f"likely indicates _strata_orient_deg is bound to azimuth (would "
+        f"give ~0°) instead of dip."
     )
 
 

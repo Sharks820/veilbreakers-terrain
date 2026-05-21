@@ -567,6 +567,22 @@ def test_build_tree_instance_array_flattens_tree_like_roles_only() -> None:
     # ADV-CP4-02: column 3 is ``yaw_degrees`` per Channel.YAW_DEG contract;
     # range is [0, 360) degrees (was [0, 2*pi] radians pre-hotfix).
     assert np.all(arr[:, 3] <= 360.0)
+    # PR #118 round-3 (copilot PRRT_kwDOSDBoMs6DpwYo): the prototype-id
+    # column assertion was dropped during round-1's degrees-contract refit.
+    # Restore it so a regression in ``_build_tree_instance_array`` that
+    # scrambles or collapses ``prototype_id`` values (e.g. all rows getting
+    # the same stable id 0.0, or a sort order that breaks role grouping)
+    # is caught at the smallest possible witness.
+    #
+    # Expected mapping for the 3 input placements (after role filter +
+    # tree-like role grouping by oak_tree → bush):
+    #   row 0: oak_tree #1 (1, 2, 3)  → prototype_id 0.0
+    #   row 1: oak_tree #2 (4, 5, 6)  → prototype_id 0.0  (same prototype)
+    #   row 2: bush      (7, 8, 9)    → prototype_id 1.0
+    # ``grass`` (GROUND_COVER) is excluded from this builder by role; the
+    # "unknown" id has no rule entry so the role lookup defaults to a
+    # non-tree role and it is also filtered out.
+    assert arr[:, 4].tolist() == [0.0, 0.0, 1.0]
 
 
 def test_build_tree_instance_array_returns_empty_contract_for_non_tree_roles() -> None:
