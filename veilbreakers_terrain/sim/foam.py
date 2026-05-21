@@ -249,15 +249,38 @@ def generate_foam_mask(
     # feeds ``stack["waterfall_velocity"]`` shaped (H, W, 2) -- channel 0 is
     # V_x/east, channel 1 is V_y/north per ``generate_velocity_field``), and
     # fall back to East only when the local magnitude underflows.
+    #
+    # ADV-CP4-03 (CHECKPOINT-4 V2 hotfix): the prior zero-flow gate used the
+    # GLOBAL water_mask mean speed (``speed[water_mask].mean()``) to decide
+    # whether to render a wake at every rock. This silenced ALL rock wakes in
+    # rivers with eddies (some cells fast, mean ~0 → no wakes) and spuriously
+    # generated wakes around stagnant rocks in turbulent reaches (some cells
+    # fast, mean high → wakes everywhere). Sample the LOCAL flow speed at each
+    # rock_position and skip the rock if the local magnitude underflows the
+    # 1 mm/s threshold (matching the per-rock guard inside ``kelvin_wake_mask``
+    # at line 101). The fast path keeps unit cost: nearest-cell lookup is O(1)
+    # per rock, vs. the prior global mask reduction over (H, W).
     kelvin_foam = np.zeros((H, W), dtype=np.float32)
     if rock_positions:
         rows_g = np.arange(H)[:, None] * cell_size
         cols_g = np.arange(W)[None, :] * cell_size
-        avg_speed = float(speed[water_mask].mean()) if water_mask.any() else 1.0
+        speed_arr = np.asarray(speed, dtype=np.float32)
         for (r, c) in rock_positions:
+            # Per-rock local flow magnitude — nearest cell to the rock centre.
+            ri = int(round(float(r)))
+            ci = int(round(float(c)))
+            if 0 <= ri < H and 0 <= ci < W:
+                local_speed = float(speed_arr[ri, ci])
+            else:
+                # Rock outside the grid → no wake (no flow data to gate on).
+                continue
+            # 1 mm/s threshold mirrors ``kelvin_wake_mask``'s internal guard
+            # (foam.py:101) — keeps source-of-truth single per ADV-PR97-01.
+            if local_speed < 1e-3:
+                continue
             local_dir = _local_flow_dir_at(flow_dir, r, c, fallback=(1.0, 0.0))
             wake = kelvin_wake_mask(
-                cols_g, rows_g, r, c, local_dir, avg_speed, cell_size
+                cols_g, rows_g, r, c, local_dir, local_speed, cell_size
             )
             kelvin_foam = np.maximum(kelvin_foam, wake)
     kelvin_extra = kelvin_foam * 0.10

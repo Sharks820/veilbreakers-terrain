@@ -564,7 +564,24 @@ def test_build_tree_instance_array_flattens_tree_like_roles_only() -> None:
     assert arr.shape == (3, 5)
     np.testing.assert_allclose(arr[:, :3], np.array(placements["oak_tree"] + placements["bush"]))
     assert np.all(arr[:, 3] >= 0.0)
-    assert np.all(arr[:, 3] <= 2.0 * math.pi)
+    # ADV-CP4-02: column 3 is ``yaw_degrees`` per Channel.YAW_DEG contract;
+    # range is [0, 360) degrees (was [0, 2*pi] radians pre-hotfix).
+    assert np.all(arr[:, 3] <= 360.0)
+    # PR #118 round-3 (copilot PRRT_kwDOSDBoMs6DpwYo): the prototype-id
+    # column assertion was dropped during round-1's degrees-contract refit.
+    # Restore it so a regression in ``_build_tree_instance_array`` that
+    # scrambles or collapses ``prototype_id`` values (e.g. all rows getting
+    # the same stable id 0.0, or a sort order that breaks role grouping)
+    # is caught at the smallest possible witness.
+    #
+    # Expected mapping for the 3 input placements (after role filter +
+    # tree-like role grouping by oak_tree → bush):
+    #   row 0: oak_tree #1 (1, 2, 3)  → prototype_id 0.0
+    #   row 1: oak_tree #2 (4, 5, 6)  → prototype_id 0.0  (same prototype)
+    #   row 2: bush      (7, 8, 9)    → prototype_id 1.0
+    # ``grass`` (GROUND_COVER) is excluded from this builder by role; the
+    # "unknown" id has no rule entry so the role lookup defaults to a
+    # non-tree role and it is also filtered out.
     assert arr[:, 4].tolist() == [0.0, 0.0, 1.0]
 
 
@@ -723,6 +740,9 @@ def test_pass_unity_ready_shape(
     assert tp.shape[1] == 5
     # All rotations in valid range
     assert np.all(tp[:, 3] >= 0.0)
-    assert np.all(tp[:, 3] <= 2.0 * math.pi + 1e-6)
+    # ADV-CP4-02: column 3 is yaw_degrees (degrees) post-PR #114 retag; the
+    # producer ``_build_tree_instance_array`` now writes ``rng.uniform(0, 360)``
+    # rather than radians ``rng.uniform(0, 2*pi)``.
+    assert np.all(tp[:, 3] <= 360.0 + 1e-6)
     # Prototype IDs are non-negative integers-as-float
     assert np.all(tp[:, 4] >= 0.0)

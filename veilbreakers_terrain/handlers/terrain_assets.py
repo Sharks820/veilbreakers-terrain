@@ -796,7 +796,14 @@ def _build_tree_instance_array(
     rules: List[AssetContextRule],
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Flatten tree-like placements into a (N, 5) ndarray for Unity."""
+    """Flatten tree-like placements into a (N, 5) ndarray for Unity.
+
+    Column 3 is ``yaw_degrees`` per ``Channel.YAW_DEG`` (registered as
+    ``"yaw_degrees"`` in ``_channels.py``). The Unity export hop reads
+    column 3 via ``_tree_instances_json`` and feeds it to
+    ``Quaternion.Euler(0, yaw_degrees, 0)`` in
+    ``VbFoliageManifestRenderer`` — every value is degrees end-to-end.
+    """
     rule_map = {r.asset_id: r for r in rules}
     rows: List[Tuple[float, float, float, float, float]] = []
     proto_lookup: Dict[str, int] = {}
@@ -808,7 +815,13 @@ def _build_tree_instance_array(
             proto_lookup[asset_id] = len(proto_lookup)
         proto_id = float(proto_lookup[asset_id])
         for (x, y, z) in pts:
-            rot = float(rng.uniform(0.0, 2.0 * math.pi))
+            # ADV-CP4-02 (CHECKPOINT-4 V2 hotfix): PR #114 retagged
+            # ``Channel.YAW_DEG`` to ``"yaw_degrees"`` to surface that this
+            # producer was writing radians ``rng.uniform(0, 2*pi)`` into a
+            # column whose canonical unit is degrees. Every tree got a
+            # rotation in [0, 6.28°] instead of [0, 360°] — forests faced
+            # approximately north. Boundary contract: degrees in column 3.
+            rot = float(rng.uniform(0.0, 360.0))
             rows.append((float(x), float(y), float(z), rot, proto_id))
     if not rows:
         return np.zeros((0, 5), dtype=np.float32)
