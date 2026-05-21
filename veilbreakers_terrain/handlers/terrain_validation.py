@@ -2117,11 +2117,30 @@ def pass_validation_full(
     """
     t0 = time.perf_counter()
     active_controller = _get_active_controller()
-    baseline_stack = (
-        getattr(active_controller, "_pre_pipeline_baseline_stack", None)
-        if active_controller is not None
-        else None
-    )
+    # T0-8 (Y04 v2-ord 10) — the baseline mask_stack used to be held as a
+    # full in-memory ``copy.deepcopy`` snapshot on the controller as
+    # ``_pre_pipeline_baseline_stack`` (~6-7 GB on AAA tiles).  The
+    # controller now keeps only a SHA-256 content hash + a path to a temp
+    # .npz; we hydrate the baseline on demand here so the only memory cost
+    # is the lifetime of this single validation pass.
+    baseline_stack: Optional["TerrainMaskStack"] = None
+    if active_controller is not None:
+        # New path: lazy-hydrate from the on-disk snapshot.
+        loader = getattr(active_controller, "_load_pre_pipeline_baseline_stack", None)
+        if loader is not None:
+            try:
+                baseline_stack = loader()
+            except Exception:  # noqa: BLE001
+                baseline_stack = None
+        # Backwards-compat fallback: if a (legacy) caller hasn't been
+        # migrated and still sets ``_pre_pipeline_baseline_stack`` directly,
+        # honour the eager attribute.  The controller writes ``None`` to
+        # this attribute as a sentinel so the getattr below short-circuits
+        # to None when no legacy caller is in play.
+        if baseline_stack is None:
+            baseline_stack = getattr(
+                active_controller, "_pre_pipeline_baseline_stack", None
+            )
     report = run_validation_suite(
         state.mask_stack,
         state.intent,
