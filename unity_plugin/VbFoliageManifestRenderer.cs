@@ -111,10 +111,23 @@ namespace VeilBreakers.TerrainImport
 
         private ManifestPayload _manifest;
 
+        // HOTFIX-7e: track floating-origin shift so GPU foliage positions
+        // stay co-located with terrain after VbFloatingOrigin recenters the
+        // world. Without this, baked manifest positions drift kilometers away
+        // from the terrain GameObject after the first ShiftWorld() call.
+        private VbFloatingOrigin _floatingOrigin;
+        private Vector3 _originOffset = Vector3.zero;
+
         private void OnEnable()
         {
             EnsurePropertyBlock();
             ReloadManifest();
+            SubscribeFloatingOrigin();
+        }
+
+        private void OnDisable()
+        {
+            UnsubscribeFloatingOrigin();
         }
 
         private void OnValidate()
@@ -302,7 +315,57 @@ namespace VeilBreakers.TerrainImport
             var position = ConvertTerrainXzyToUnityXyz
                 ? new Vector3(raw[0], raw[2], raw[1])
                 : new Vector3(raw[0], raw[1], raw[2]);
-            return PositionsAreWorldSpace ? position : transform.TransformPoint(position);
+            var worldPosition = PositionsAreWorldSpace ? position : transform.TransformPoint(position);
+            // HOTFIX-7e: subtract accumulated floating-origin offset so GPU
+            // foliage tracks the same recentering applied to ShiftRoots.
+            return worldPosition - _originOffset;
+        }
+
+        private void SubscribeFloatingOrigin()
+        {
+            // No singleton on VbFloatingOrigin — fall back to a scene scan.
+            // Limitation: if a VbFloatingOrigin is added after foliage OnEnable,
+            // foliage must be toggled or the new origin component must call
+            // BindFloatingOrigin() explicitly.
+            if (_floatingOrigin == null)
+            {
+                _floatingOrigin = FindObjectOfType<VbFloatingOrigin>();
+            }
+            if (_floatingOrigin != null)
+            {
+                _floatingOrigin.OnOriginMoved.AddListener(HandleOriginShifted);
+                _originOffset = _floatingOrigin.AccumulatedOffset;
+            }
+        }
+
+        private void UnsubscribeFloatingOrigin()
+        {
+            if (_floatingOrigin != null)
+            {
+                _floatingOrigin.OnOriginMoved.RemoveListener(HandleOriginShifted);
+            }
+        }
+
+        /// <summary>
+        /// Bind to a VbFloatingOrigin discovered after this renderer initialized.
+        /// </summary>
+        public void BindFloatingOrigin(VbFloatingOrigin origin)
+        {
+            UnsubscribeFloatingOrigin();
+            _floatingOrigin = origin;
+            if (_floatingOrigin != null)
+            {
+                _floatingOrigin.OnOriginMoved.AddListener(HandleOriginShifted);
+                _originOffset = _floatingOrigin.AccumulatedOffset;
+            }
+        }
+
+        // HOTFIX-7e: OnOriginMoved supplies (currentAccumulatedOffset, previousOffset).
+        // We cache the accumulated offset and subtract it during ToUnityPosition
+        // so manifest world positions track the shifted ShiftRoots transforms.
+        private void HandleOriginShifted(Vector3 accumulatedOffset, Vector3 previousOffset)
+        {
+            _originOffset = accumulatedOffset;
         }
 
         private static Vector3 ToUnityScale(InstanceEntry instance)

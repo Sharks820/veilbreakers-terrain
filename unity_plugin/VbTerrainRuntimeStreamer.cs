@@ -47,11 +47,22 @@ namespace VeilBreakers.TerrainImport
         [Tooltip("Seconds between full tile rescans.")]
         public float RescanIntervalSeconds = 2.0f;
 
+        // HOTFIX-7f: terrain data unload knobs. Without these, SetActive(false)
+        // leaves heightmaps + splatmaps + tree prototypes resident — 64-tile
+        // worlds OOM on 8GB targets after a single play session.
+        [Tooltip("Run Resources.UnloadUnusedAssets() after every N tile deactivations.")]
+        public int UnloadAfterDeactivations = 10;
+
+        [Tooltip("Minimum seconds between Resources.UnloadUnusedAssets() invocations.")]
+        public float MinSecondsBetweenUnloads = 30.0f;
+
         public int KnownTileCount { get; private set; }
         public int ActiveTileCount { get; private set; }
 
         private readonly List<TileState> _tiles = new List<TileState>();
         private float _lastRescanTime = -9999.0f;
+        private int _pendingDeactivationCount;
+        private float _lastUnloadTime = -9999.0f;
 
         private void OnEnable()
         {
@@ -147,8 +158,17 @@ namespace VeilBreakers.TerrainImport
                     continue;
                 }
 
+                var wasActive = tile.Terrain.gameObject.activeSelf;
                 tile.Terrain.gameObject.SetActive(tile.ShouldBeActive);
                 changesRemaining--;
+
+                // HOTFIX-7f: track deactivations so we can periodically free
+                // unreferenced TerrainData (heightmaps, splatmaps, detail
+                // layers, tree prototypes) via Resources.UnloadUnusedAssets.
+                if (wasActive && !tile.ShouldBeActive)
+                {
+                    _pendingDeactivationCount++;
+                }
             }
 
             ActiveTileCount = 0;
@@ -165,6 +185,41 @@ namespace VeilBreakers.TerrainImport
             {
                 ConnectActiveNeighbors();
             }
+
+            MaybeUnloadUnusedAssets();
+        }
+
+        /// <summary>
+        /// HOTFIX-7f: free GPU + CPU memory held by deactivated TerrainData.
+        /// Pattern chosen: Resources.UnloadUnusedAssets() instead of
+        /// Resources.UnloadAsset(terrainData) because (a) deactivated terrains
+        /// still hold a hard ref to terrainData so UnloadAsset would no-op,
+        /// and (b) Object.Destroy(terrainData) would invalidate the asset on
+        /// reactivation. UnloadUnusedAssets handles AssetDatabase-loaded and
+        /// runtime-instantiated TerrainData uniformly and is the documented
+        /// path for streaming workflows on bounded-memory hardware.
+        /// </summary>
+        private void MaybeUnloadUnusedAssets()
+        {
+            if (UnloadAfterDeactivations <= 0)
+            {
+                return;
+            }
+            if (_pendingDeactivationCount < UnloadAfterDeactivations)
+            {
+                return;
+            }
+            if (Time.unscaledTime - _lastUnloadTime < MinSecondsBetweenUnloads)
+            {
+                return;
+            }
+            _pendingDeactivationCount = 0;
+            _lastUnloadTime = Time.unscaledTime;
+            // Resources.UnloadUnusedAssets reclaims terrain heightmaps, splatmaps,
+            // and tree prototypes that lost their last reference when tiles
+            // deactivated. Returns an AsyncOperation we intentionally drop —
+            // streamer reactivations across multiple frames are safe.
+            Resources.UnloadUnusedAssets();
         }
 
         private int CompareTiles(TileState left, TileState right)
