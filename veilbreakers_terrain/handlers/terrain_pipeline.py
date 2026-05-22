@@ -132,6 +132,13 @@ _LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
     # sequence will place integrate_deltas after this pass.  Without this entry
     # label_stamping would be anchored before the road/delta composition.
     "pass_road_network",
+    # ADV-W53-03: cliff and cave passes may modify the carved surface and
+    # boulder placements after structural_masks; label anchors placed
+    # before them would precede geometry mutations.  Added defensively so
+    # future label-stamping schedule authors do not anchor before cliff/cave
+    # outputs are committed.
+    "cliffs",
+    "caves",
 })
 
 

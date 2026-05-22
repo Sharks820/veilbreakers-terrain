@@ -40,7 +40,7 @@ import pytest
 def _make_intent(
     quality_profile: str = "aaa_open_world",
     has_scene_read: bool = False,
-    composition_hints: dict | None = None,
+    composition_hints: dict[str, object] | None = None,
 ):
     """Build a minimal ``TerrainIntentState`` for the given profile."""
     from veilbreakers_terrain.handlers.terrain_scene_read import capture_scene_read
@@ -73,7 +73,7 @@ def _make_intent(
     )
 
 
-def _sequence(quality_profile: str = "aaa_open_world", has_scene_read: bool = False, composition_hints: dict | None = None) -> list[str]:
+def _sequence(quality_profile: str = "aaa_open_world", has_scene_read: bool = False, composition_hints: dict[str, object] | None = None) -> list[str]:
     from veilbreakers_terrain.handlers.terrain_pipeline import build_default_pass_sequence
     intent = _make_intent(
         quality_profile=quality_profile,
@@ -285,6 +285,43 @@ def test_caves_absent_from_non_aaa_profiles_by_default(profile: str) -> None:
     assert "caves" not in seq, (
         f"caves appeared in default {profile!r} sequence — should be opt-out "
         "for non-AAA profiles to preserve baseline-hash test stability."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 5b — medium / high / cinematic profiles INCLUDE cliffs (positive)
+# ---------------------------------------------------------------------------
+# ADV-W53-05: PREVIEW_QUALITY_PROFILES is an ALLOWLIST of profiles that opt
+# OUT of cliffs/caves (perf-budget gate).  All other profiles — including
+# medium, high, and cinematic — are positive cases: cliffs must be present
+# in their default sequences.
+
+
+@pytest.mark.parametrize("profile", ["medium", "high", "cinematic"])
+def test_cliffs_in_non_preview_high_fidelity_profiles(profile: str) -> None:
+    """Profiles outside PREVIEW_QUALITY_PROFILES must include ``cliffs``.
+
+    ``PREVIEW_QUALITY_PROFILES`` is an allowlist (preview/mobile/low only).
+    Higher-fidelity profiles (medium, high, cinematic) are NOT in that set
+    and must schedule cliffs by default — they are positive cases for the
+    quality gate.
+    """
+    seq = _sequence(quality_profile=profile, has_scene_read=False)
+    assert "cliffs" in seq, (
+        f"cliffs is missing from the default {profile!r} sequence. "
+        "PREVIEW_QUALITY_PROFILES is an allowlist (opt-out for perf-budget); "
+        f"{profile!r} is not in that set and must schedule cliffs."
+    )
+
+
+@pytest.mark.parametrize("profile", ["medium", "high", "cinematic"])
+def test_caves_in_non_preview_high_fidelity_profiles_with_scene_read(profile: str) -> None:
+    """Profiles outside PREVIEW_QUALITY_PROFILES must include ``caves`` when scene_read is set."""
+    seq = _sequence(quality_profile=profile, has_scene_read=True)
+    assert "caves" in seq, (
+        f"caves is missing from the default {profile!r} sequence (with scene_read). "
+        "PREVIEW_QUALITY_PROFILES is an allowlist; "
+        f"{profile!r} must schedule caves when scene_read is active."
     )
 
 

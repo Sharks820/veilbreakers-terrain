@@ -3973,6 +3973,13 @@ def register_bundle_f_passes() -> None:
             name="caves",
             func=pass_caves,
             requires_channels=("height",),
+            # ADV-W53-04: slope, basin, and wetness are soft dependencies —
+            # pass_caves reads these channels when present (e.g. to modulate
+            # damp-cave probability and drainage routing) but degrades
+            # gracefully when they are absent.  Declaring them here surfaces
+            # the contract to future schedule authors and lets the DAG order
+            # their producers before caves when available.
+            optional_channels=("slope", "basin", "wetness"),
             produces_channels=(
                 "cave_candidate",
                 "wet_rock",

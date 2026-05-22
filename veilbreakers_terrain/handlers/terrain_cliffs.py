@@ -421,6 +421,14 @@ def build_cliff_candidate_mask(
     # produces_channels contract is satisfied even on zero-cliff tiles
     # (e.g. flat heightmaps in determinism-harness tests). Downstream
     # consumers must check for zero-row arrays before iterating.
+    #
+    # ADV-W53-02 / content-hash note: this unconditional write means
+    # every tile's content-hash now includes cliff_contour_spline regardless
+    # of whether any cliffs were found.  Pre-PR .npz caches that were baked
+    # without this channel will mismatch on first run and be re-baked
+    # automatically — a one-time cache invalidation on merge.  Determinism
+    # baselines in CI (output/test_artifacts/) auto-regenerate on the next
+    # full CI run; no manual intervention is required.
     # ------------------------------------------------------------------
     spline_pts: np.ndarray = np.empty((0, 2), dtype=np.float64)
     if mask.any():
@@ -2837,6 +2845,12 @@ def pass_cliffs(
     # Always write the channel (even when empty) so the PassDefinition
     # produces_channels contract is satisfied on zero-cliff tiles.
     # Downstream consumers must check for empty list before iterating.
+    #
+    # ADV-W53-02 / content-hash note: this unconditional write means
+    # every tile's content-hash now includes talus_boulder_placements
+    # regardless of whether any boulders were placed.  Pre-PR .npz caches
+    # will mismatch on first run and be re-baked automatically — a one-time
+    # cache invalidation on merge.  CI baselines auto-regenerate.
     stack.set("talus_boulder_placements", list(all_boulder_placements), "cliffs")
 
     # 7. Record structures as side effects (so downstream bundles can find them)
@@ -2865,7 +2879,7 @@ def pass_cliffs(
         consumed_channels=("slope", "saliency_macro"),
         produced_channels=(
             "cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs",
-            "cliff_mask", "talus_mask", "strata_mask",
+            "talus_boulder_placements", "cliff_mask", "talus_mask", "strata_mask",
         ),
         metrics={
             "candidate_cells": int(candidate.sum()),
