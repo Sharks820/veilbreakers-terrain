@@ -127,12 +127,12 @@ def _get_registered_definitions():
 
 
 @pytest.fixture()
-def _registered_defs():
+def _registered_defs():  # pyright: ignore[reportUnusedFunction]
     defs = _get_registered_definitions()
     yield defs
 
 
-def test_materials_v2_optional_channels(_registered_defs):
+def test_materials_v2_optional_channels(_registered_defs):  # pyright: ignore[reportMissingParameterType]
     """materials_v2 PassDefinition declares all expected optional channels."""
     defn = _registered_defs.get("materials_v2")
     assert defn is not None, "materials_v2 pass not registered"
@@ -143,7 +143,7 @@ def test_materials_v2_optional_channels(_registered_defs):
     )
 
 
-def test_materials_v2_volcanic_optional_channels(_registered_defs):
+def test_materials_v2_volcanic_optional_channels(_registered_defs):  # pyright: ignore[reportMissingParameterType]
     """materials_v2_volcanic PassDefinition declares all expected optional channels."""
     defn = _registered_defs.get("materials_v2_volcanic")
     assert defn is not None, "materials_v2_volcanic pass not registered"
@@ -154,7 +154,7 @@ def test_materials_v2_volcanic_optional_channels(_registered_defs):
     )
 
 
-def test_materials_v2_required_channels(_registered_defs):
+def test_materials_v2_required_channels(_registered_defs):  # pyright: ignore[reportMissingParameterType]
     """materials_v2 PassDefinition requires slope and height."""
     defn = _registered_defs.get("materials_v2")
     assert defn is not None
