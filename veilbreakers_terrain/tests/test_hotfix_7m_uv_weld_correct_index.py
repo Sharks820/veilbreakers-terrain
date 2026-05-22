@@ -223,7 +223,7 @@ def fake_bm_factory(monkeypatch: pytest.MonkeyPatch):  # type: ignore[misc]
     # The production call is: bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     # so the lambda must accept one positional arg (bm) plus **kwargs.
     fake_ops = types.SimpleNamespace(
-        recalc_face_normals=lambda _bm, **_kw: None,  # type: ignore[misc]
+        recalc_face_normals=lambda _bm, **_kw: None,  # type: ignore[misc]  # pyright: ignore[reportUnknownLambdaType]
     )
     monkeypatch.setattr(_bmesh_stub, "ops", fake_ops)
 
@@ -240,7 +240,7 @@ def fake_bm_factory(monkeypatch: pytest.MonkeyPatch):  # type: ignore[misc]
             pass
 
     fake_mesh_data = _FakeMeshData()
-    monkeypatch.setattr(_bpy_stub.data.meshes, "new", lambda name: fake_mesh_data)  # type: ignore[misc]
+    monkeypatch.setattr(_bpy_stub.data.meshes, "new", lambda name: fake_mesh_data)  # type: ignore[misc]  # pyright: ignore[reportUnknownLambdaType]
 
     # bpy.data.objects.new → return a fake obj
     class _FakeObj:
@@ -251,10 +251,10 @@ def fake_bm_factory(monkeypatch: pytest.MonkeyPatch):  # type: ignore[misc]
         parent = None
 
     fake_obj = _FakeObj()
-    monkeypatch.setattr(_bpy_stub.data.objects, "new", lambda name, mesh: fake_obj)  # type: ignore[misc]
+    monkeypatch.setattr(_bpy_stub.data.objects, "new", lambda name, mesh: fake_obj)  # type: ignore[misc]  # pyright: ignore[reportUnknownLambdaType]
 
     # bpy.context.collection.objects.link → no-op
-    fake_collection = types.SimpleNamespace(objects=types.SimpleNamespace(link=lambda o: None))  # type: ignore[misc]
+    fake_collection = types.SimpleNamespace(objects=types.SimpleNamespace(link=lambda o: None))  # type: ignore[misc]  # pyright: ignore[reportUnknownLambdaType]
     monkeypatch.setattr(_bpy_stub.context, "collection", fake_collection)
 
     # Force _HAS_BPY=True (conftest may already set this, but be explicit)
