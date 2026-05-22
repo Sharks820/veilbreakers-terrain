@@ -153,7 +153,8 @@ class StratigraphyLayer:
                     f"conflicts with derived strike (azimuth+pi/2) mod 2pi = "
                     f"{derived_strike!r} (circular diff {circular_diff:.4f} rad, "
                     f"tolerance {_STRIKE_VALIDATION_TOLERANCE_RAD:.4f} rad "
-                    f"= 2.5 deg). Omit strike_angle_rad to derive it from "
+                    f"= {_STRIKE_VALIDATION_TOLERANCE_RAD * 180 / math.pi:.4g} deg). "
+                    f"Omit strike_angle_rad to derive it from "
                     f"azimuth_rad."
                 )
             self.strike_angle_rad = supplied

@@ -147,10 +147,17 @@ def test_neighbor_stitch_except_does_not_catch_broad_exception() -> None:
 
 
 def test_neighbor_stitch_except_catches_file_not_found_and_oserror() -> None:
-    """The narrowed except must still cover missing/unreadable neighbor files.
+    """The narrowed except must cover all dequant-relevant exception classes.
 
-    These are the legitimate "no neighbor at world edge" conditions —
-    expected and quietly logged.
+    WAVE-1 hotfix extended the original (FileNotFoundError, OSError, KeyError)
+    tuple to also include ValueError and TypeError so that world-edge tiles
+    with partially-written neighbour manifests (missing or non-sequence
+    ``height_range``) are recovered via warn-and-skip rather than crashing
+    the tile bake.  All five classes must remain present.
+
+    Pinned against the dequant test contract in
+    ``test_t0_x_env_neighbor_dequant.py::test_neighbor_loader_except_is_narrow_not_bare``
+    which enforces the same required_narrow set via a separate AST walk.
     """
     try_node = _find_neighbor_stitch_try()
     all_caught: list[str] = []
@@ -164,27 +171,50 @@ def test_neighbor_stitch_except_catches_file_not_found_and_oserror() -> None:
         f"Narrowed except must still catch OSError (read failure / "
         f"permission / I/O error). Currently catches: {all_caught!r}"
     )
+    assert "ValueError" in all_caught, (
+        f"Narrowed except must catch ValueError (missing/non-finite "
+        f"height_range in partial world-edge manifest — recoverable). "
+        f"Currently catches: {all_caught!r}"
+    )
+    assert "TypeError" in all_caught, (
+        f"Narrowed except must catch TypeError (non-sequence height_range "
+        f"in partial world-edge manifest — recoverable). "
+        f"Currently catches: {all_caught!r}"
+    )
+    assert "KeyError" in all_caught, (
+        f"Narrowed except must catch KeyError (missing heightmap_path key "
+        f"in degenerate neighbour dict — belt-and-braces guard). "
+        f"Currently catches: {all_caught!r}"
+    )
 
 
-def test_neighbor_stitch_does_not_catch_value_error() -> None:
-    """ValueError from _read_neighbor_heightmap must propagate, not be caught.
+def test_neighbor_stitch_catches_value_error_and_type_error() -> None:
+    """ValueError and TypeError must be present in the narrow except tuple.
 
-    PR #111 added precise ValueError raises for corrupt metadata; this
-    PR-FOLLOWUP-6 ensures those bubble up as loud failures.
+    WAVE-1 hotfix: world-edge tiles may have partially-written neighbour
+    manifests where ``height_range`` is absent (KeyError → ValueError in
+    ``_read_neighbor_heightmap_from_manifest``) or non-sequence (TypeError).
+    Both are recoverable warn-and-skip conditions, not corrupt-data loud-fails,
+    so they belong in the narrow tuple rather than propagating.
+
+    This replaces the previous ``test_neighbor_stitch_does_not_catch_value_error``
+    test whose inverse assertions were correct under the original
+    PR-FOLLOWUP-6 design but became incorrect after the WAVE-1 hotfix
+    extended the contract to cover dequant-relevant edge cases.
     """
     try_node = _find_neighbor_stitch_try()
+    all_caught: list[str] = []
     for handler in try_node.handlers:
-        names = _exception_names(handler)
-        assert "ValueError" not in names, (
-            f"Neighbor-stitch except must NOT catch ValueError ({names!r}) "
-            f"— PR #111 raises ValueError on corrupt manifest metadata and "
-            f"those failures must propagate per FIX_PATTERN_v1 §C3."
-        )
-        assert "TypeError" not in names, (
-            f"Neighbor-stitch except must NOT catch TypeError ({names!r}) "
-            f"— a non-sequence ``height_range`` is a corrupt-manifest "
-            f"signal that should bubble up."
-        )
+        all_caught.extend(_exception_names(handler))
+    assert "ValueError" in all_caught, (
+        f"Neighbor-stitch except must catch ValueError after WAVE-1 hotfix "
+        f"(dequant-relevant world-edge recover path). Currently: {all_caught!r}"
+    )
+    assert "TypeError" in all_caught, (
+        f"Neighbor-stitch except must catch TypeError after WAVE-1 hotfix "
+        f"(non-sequence height_range world-edge recover path). "
+        f"Currently: {all_caught!r}"
+    )
 
 
 def test_inner_read_neighbor_heightmap_still_raises_value_error_on_bad_metadata() -> None:
