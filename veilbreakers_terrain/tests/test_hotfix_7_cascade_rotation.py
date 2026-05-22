@@ -38,26 +38,10 @@ The quaternion for a 90° rotation about Z is
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 import pytest
-
-# ---------------------------------------------------------------------------
-# Minimal stubs so the production module imports without bpy / numpy issues
-# ---------------------------------------------------------------------------
-from unittest.mock import MagicMock, patch
-import sys
-import types
-
-
-def _make_bpy_stub() -> types.ModuleType:
-    """Return a minimal bpy stub sufficient for the module-level guard."""
-    bpy = types.ModuleType("bpy")
-    bpy.data = MagicMock()
-    bpy.context = MagicMock()
-    bpy.ops = MagicMock()
-    bpy.types = MagicMock()
-    return bpy
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +64,7 @@ def _make_bpy_stub() -> types.ModuleType:
 # coincidentally-correct arithmetic.
 
 
-def _quat_from_placement(p: dict) -> tuple[float, float, float, float]:
+def _quat_from_placement(p: dict[str, Any]) -> tuple[float, float, float, float]:
     """Replicate the production quaternion-build from environment_scatter.py.
 
     This mirrors the post-fix code at the quaternion site inside _scatter_pass

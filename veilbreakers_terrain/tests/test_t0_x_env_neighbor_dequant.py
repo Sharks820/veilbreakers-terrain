@@ -431,7 +431,7 @@ class TestNeighborNonDictInputHandling:
         class FakeNeighbor:
             heightmap_path: str = "/fake/path"
             resolution: int = 17
-            height_range: tuple = (0.0, 100.0)
+            height_range: tuple[float, float] = (0.0, 100.0)
 
         with pytest.raises(TypeError, match=r"expected dict"):
             _read_neighbor_heightmap_from_manifest(FakeNeighbor())  # type: ignore[arg-type]
