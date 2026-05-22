@@ -334,7 +334,7 @@ class TestSiblingHandlersConsumeSchemaC:
             height=arr,
         )
         # Schema B (flat-AABB dict) zone — previously crashed on zone.permits()
-        dict_zone: dict = {
+        dict_zone: dict[str, Any] = {
             "zone_id": "test_dict_zone",
             "x_min": 0.0,
             "y_min": 0.0,
