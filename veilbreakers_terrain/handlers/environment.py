@@ -2803,19 +2803,38 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
                 if north_tile is not None and "north" not in neighbor_edges:
                     north_h = _read_neighbor_heightmap_from_manifest(north_tile)
                     neighbor_edges["north"] = north_h[-1, :].astype(np.float64).tolist()
+            # V2 P2 PR-FOLLOWUP-6 (rebased on PR #122 narrowing): narrowed
+            # from bare ``except Exception`` so the precise ``ValueError``
+            # raises that PR #111 added inside ``_read_neighbor_heightmap``
+            # (corrupt size, missing/non-finite ``height_range`` metadata)
+            # propagate as loud failures instead of being silently downgraded
+            # to "no stitch" log warnings. Same anti-pattern that PR #113
+            # closed for the catenary loud-fail (FIX_PATTERN_v1 §C3 — narrow
+            # except to legitimate I/O conditions only; let semantic / contract
+            # failures bubble).
+            #
+            # ``FileNotFoundError`` and ``OSError`` remain expected at world
+            # edges (no neighbor on the seam), so they keep the warning-only
+            # path. ``KeyError`` covers a degenerate ``neighbor`` dict missing
+            # ``"heightmap_path"`` (which is filtered by the ``next(...)``
+            # predicates above but kept as belt-and-braces for the inner
+            # ``np.fromfile`` call).
+            #
+            # ValueError and TypeError are included (WAVE-1 hotfix + dequant
+            # test contract: test_t0_x_env_neighbor_dequant.py pins
+            # required_narrow = {FileNotFoundError, OSError, ValueError,
+            # KeyError, TypeError}). These cover the dequant-relevant
+            # warn-and-skip-neighbor-edge cases: ValueError from a missing or
+            # non-finite ``height_range`` key (recoverable at world-edge tiles
+            # where the neighbour manifest may be partially written), TypeError
+            # from a non-sequence ``height_range`` value in the same scenario.
+            # Corrupt-manifest loud-fails from ``_read_neighbor_heightmap_from_manifest``
+            # that represent genuine data-integrity violations (not expected
+            # world-edge conditions) are guarded upstream by the manifest
+            # validation added in PR #122.
             except (FileNotFoundError, OSError, ValueError, KeyError, TypeError) as exc:
-                # WAVE-1 hotfix (2026-05-20) per FIX_PATTERN §C3: narrowed
-                # from bare ``except Exception`` so legitimate bugs in
-                # ``_read_neighbor_heightmap`` (e.g. attribute errors from
-                # a refactor that drops the ``height_range`` manifest key)
-                # surface as crashes instead of being swallowed as warnings.
-                # The narrow tuple covers the exception classes that
-                # ``np.fromfile`` (FileNotFoundError, OSError), the size /
-                # height_range guard (ValueError), and dict access on the
-                # neighbor result (KeyError, TypeError) can legitimately
-                # raise on bad-but-recoverable inputs.
                 logger.warning(
-                    "handle_generate_world_terrain: failed to load neighbor edge for tile (%d,%d): %s",
+                    "handle_generate_world_terrain: neighbor heightmap unavailable for tile (%d,%d): %s",
                     tile_x, tile_y, exc,
                 )
             if neighbor_edges:
@@ -2983,18 +3002,20 @@ def _execute_terrain_pipeline(params: dict[str, Any]) -> dict[str, Any]:
         if pass_name:
             requested_passes = [str(pass_name)]
         else:
-            _qp_name = str(params.get("quality_profile", "aaa_open_world"))
-            _is_preview_qp = _qp_name in ("preview", "mobile", "low")
-            requested_passes = [
-                "pass_generate_low_freq_hmap",
-                "terrain_labels",
-                "structural_masks",
-                "pass_generate_high_freq_detail",
-                "pass_composite_hmap",
-                "validation_minimal" if _is_preview_qp else "validation_full",
-            ]
-            if params.get("scene_read") is not None:
-                requested_passes[3:3] = ["pass_hydrology", "erosion"]
+            # V8 architectural fix (2026-05-20): the headless registration
+            # pre-warm list is now sourced from ``_default_pass_sequences``
+            # (single source of truth) rather than duplicated inline.
+            # The actual pipeline that runs is still derived from
+            # ``build_default_pass_sequence(intent)`` below — this list is
+            # only used to ensure the pass registry is loaded before
+            # intent construction.
+            from ._default_pass_sequences import build_registration_prewarm
+            requested_passes = list(
+                build_registration_prewarm(
+                    quality_profile=str(params.get("quality_profile", "aaa_open_world")),
+                    has_scene_read=params.get("scene_read") is not None,
+                )
+            )
 
     # Ensure all requested passes are registered even for direct callers
     # importing this module without the handlers package side effects.
