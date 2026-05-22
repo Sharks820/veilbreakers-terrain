@@ -1566,10 +1566,14 @@ def mesh_from_spec(
                 round(v[2] / weld_tolerance),
             )
             if key in _vert_dedup:
-                _remap.append(_vert_dedup[key])
+                bm_vi = _vert_dedup[key]
+                _remap.append(bm_vi)
+                # _inverse_remap: first-wins — do NOT overwrite an existing
+                # entry so the canonical UV for this bm-vert stays pinned to
+                # the first original vert that landed at this position.
             else:
-                idx = len(bm_verts)
-                _vert_dedup[key] = idx
+                bm_vi = len(bm_verts)
+                _vert_dedup[key] = bm_vi
                 bm_verts.append(bm.verts.new(v))
                 _remap.append(idx)
         # Populate the inverse map AFTER _remap is built so each bm vert
