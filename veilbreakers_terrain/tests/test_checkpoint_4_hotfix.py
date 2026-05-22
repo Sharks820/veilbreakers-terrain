@@ -1104,15 +1104,36 @@ def test_bug4_mesh_bridge_fills_all_material_slots() -> None:
             f"got {len(obj.data.materials)}"
         )
         # Every slot must be the rough_timber material — no None slots.
+        # CP5-CASCADE Bug 3: the single-spec-supplied category material
+        # gets cloned across every previously-None slot so faces with
+        # ``material_index >= 1`` no longer render as magenta debug.
+        # This assertion is unchanged from CP4: the magenta-debug fix
+        # is preserved for both single- and multi-material specs.
         for i, slot in enumerate(obj.data.materials):
             assert slot is not None, (
                 f"slot[{i}] is None — the PR #110 placeholder was never "
                 f"filled. Faces with material_index={i} would render as "
                 f"Blender's magenta debug material."
             )
-        # All slots reference the same material (single-category spec).
+        # CP5-CASCADE Bug 3: the multi-material spec carries
+        # ``material_ids = [0, 1, 2, 1]`` (3 distinct ids). The CP4
+        # homogenize-all-slots fix silently collapsed that
+        # differentiation — every slot pointed at the same material.
+        # Post-Bug-3 fix: a multi-material spec is detected via
+        # ``len(set(material_ids)) > 1`` and the loop only fills
+        # ``None`` placeholder slots. Because no upstream slot dispatch
+        # ran in this test, every slot was None and ALL get filled
+        # with the auto-category material (no None slots remain).
+        # The differentiation invariant is exercised by the dedicated
+        # test below (``test_cp5_bug3_multi_material_distinction_preserved``)
+        # which pre-populates slot[1] with a non-None marker.
         slot_names = {obj.data.materials[i].name for i in range(3)}
+        # Single auto-category material name is shared by every slot
+        # filled by the auto-category loop. The CP4-class magenta-debug
+        # invariant (no None slots) is the load-bearing assertion above;
+        # this last check just documents the all-None pre-state.
         assert len(slot_names) == 1, (
-            f"All slots in a single-category spec must share one material "
-            f"(name); got distinct names {slot_names}"
+            f"With all slots starting at None and a single category "
+            f"material to assign, every slot receives the same material. "
+            f"Got names: {slot_names}"
         )
