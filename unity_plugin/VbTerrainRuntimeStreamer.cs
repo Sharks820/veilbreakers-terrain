@@ -181,13 +181,11 @@ namespace VeilBreakers.TerrainImport
                 // lifecycle, but the strong ref is dropped immediately after
                 // — that lets Resources.UnloadUnusedAssets() actually reclaim
                 // the heightmaps/splatmaps/details/tree prototypes.
-                if (!wasActive && tile.ShouldBeActive)
+                if (!wasActive && tile.ShouldBeActive
+                    && tile.TerrainDataDetached && tile.CachedTerrainData != null)
                 {
-                    if (tile.TerrainDataDetached && tile.CachedTerrainData != null)
-                    {
-                        tile.Terrain.terrainData = tile.CachedTerrainData;
-                        tile.TerrainDataDetached = false;
-                    }
+                    tile.Terrain.terrainData = tile.CachedTerrainData;
+                    tile.TerrainDataDetached = false;
                 }
 
                 tile.Terrain.gameObject.SetActive(tile.ShouldBeActive);
