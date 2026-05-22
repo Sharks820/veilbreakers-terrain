@@ -222,9 +222,7 @@ def fake_bm_factory(monkeypatch: pytest.MonkeyPatch):  # type: ignore[misc]
     # bmesh.ops.recalc_face_normals — let it be a no-op.
     # The production call is: bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     # so the lambda must accept one positional arg (bm) plus **kwargs.
-    import types as _types
-
-    fake_ops = _types.SimpleNamespace(
+    fake_ops = types.SimpleNamespace(
         recalc_face_normals=lambda _bm, **_kw: None,
     )
     monkeypatch.setattr(_bmesh_stub, "ops", fake_ops)
@@ -256,7 +254,7 @@ def fake_bm_factory(monkeypatch: pytest.MonkeyPatch):  # type: ignore[misc]
     monkeypatch.setattr(_bpy_stub.data.objects, "new", lambda name, mesh: fake_obj)
 
     # bpy.context.collection.objects.link → no-op
-    fake_collection = _types.SimpleNamespace(objects=_types.SimpleNamespace(link=lambda o: None))
+    fake_collection = types.SimpleNamespace(objects=types.SimpleNamespace(link=lambda o: None))
     monkeypatch.setattr(_bpy_stub.context, "collection", fake_collection)
 
     # Force _HAS_BPY=True (conftest may already set this, but be explicit)
