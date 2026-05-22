@@ -22,7 +22,6 @@ The existing TestT1_28_PbrLerpBlend in test_t1_shader_cluster.py covers the
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
     QuixelAsset,

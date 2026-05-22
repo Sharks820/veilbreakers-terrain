@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import warnings
 
-import pytest
-
 from veilbreakers_terrain.handlers.atmospheric_volumes import (
     BIOME_ATMOSPHERE_RULES,
     compute_atmospheric_placements,
