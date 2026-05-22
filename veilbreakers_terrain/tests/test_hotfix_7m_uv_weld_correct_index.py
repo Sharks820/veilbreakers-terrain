@@ -456,7 +456,7 @@ def test_uv_weld_inverse_remap_first_wins(
         for loop in face.loops:
             bm_vi = loop.vert.index
             # Get the UV — find the first non-None value in the loop's _uv_values
-            for layer_key, slot in loop._uv_values.items():
+            for _, slot in loop._uv_values.items():
                 uv_val = getattr(slot, "uv", None)
                 if uv_val is not None:
                     all_uvs[bm_vi] = uv_val
