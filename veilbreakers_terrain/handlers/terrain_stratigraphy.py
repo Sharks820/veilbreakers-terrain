@@ -73,6 +73,21 @@ def _rng_from_pass_seed(
 
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+
+# V2 P1 PR-FOLLOWUP-6: widened from 5e-3 rad (~0.3 deg) to 2.5 deg to match
+# typical geological field-survey precision (whole-degree strike quotes).
+# The original tolerance hard-crashed legitimate user inputs like
+# strike=89 deg / azimuth=0 deg (within ±1 deg of perpendicular = a
+# canonical real-world stratigraphy measurement). At 2.5 deg gross logical
+# errors (e.g. strike off by 30 deg, swapped axes, sign flips) still raise
+# because their circular distance comfortably exceeds the band.
+_STRIKE_VALIDATION_TOLERANCE_RAD: float = math.radians(2.5)  # ~4.36e-2 rad
+
+
+# ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
 
@@ -115,7 +130,13 @@ class StratigraphyLayer:
         # unspecified (NaN sentinel). If the user supplied a finite value,
         # validate the range and keep it — but flag a contradiction when the
         # supplied strike disagrees with the expected azimuth+pi/2 by more
-        # than a numerical tolerance (5e-3 rad ~ 0.3 deg).
+        # than _STRIKE_VALIDATION_TOLERANCE_RAD (V2 P1 PR-FOLLOWUP-6:
+        # widened from 5e-3 rad / ~0.3 deg to 2.5 deg matching typical
+        # geological survey precision — strike measurements in published
+        # field data are routinely quoted to whole degrees, so the prior
+        # 0.3 deg band hard-crashed legitimate ±1 deg inputs like
+        # strike=89, azimuth=0). Gross logical errors (e.g. 30 deg off)
+        # still raise.
         user_supplied_strike = math.isfinite(float(self.strike_angle_rad))
         derived_strike = (
             float(self.azimuth_rad) + math.pi * 0.5
@@ -123,15 +144,18 @@ class StratigraphyLayer:
         if user_supplied_strike:
             supplied = float(self.strike_angle_rad) % (2.0 * math.pi)
             # Compute circular distance (shortest arc) between supplied
-            # and derived strike. Tolerate small float noise (~0.3 deg).
+            # and derived strike.
             diff = abs(supplied - derived_strike)
             circular_diff = min(diff, 2.0 * math.pi - diff)
-            if circular_diff > 5.0e-3:
+            if circular_diff > _STRIKE_VALIDATION_TOLERANCE_RAD:
                 raise ValueError(
                     f"StratigraphyLayer.strike_angle_rad={self.strike_angle_rad!r} "
                     f"conflicts with derived strike (azimuth+pi/2) mod 2pi = "
-                    f"{derived_strike!r} (circular diff {circular_diff:.4f} rad). "
-                    "Omit strike_angle_rad to derive it from azimuth_rad."
+                    f"{derived_strike!r} (circular diff {circular_diff:.4f} rad, "
+                    f"tolerance {_STRIKE_VALIDATION_TOLERANCE_RAD:.4f} rad "
+                    f"= {_STRIKE_VALIDATION_TOLERANCE_RAD * 180 / math.pi:.4g} deg). "
+                    f"Omit strike_angle_rad to derive it from "
+                    f"azimuth_rad."
                 )
             self.strike_angle_rad = supplied
         else:
