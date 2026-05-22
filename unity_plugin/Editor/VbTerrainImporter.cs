@@ -2478,6 +2478,23 @@ namespace VeilBreakers.TerrainImport.Editor
         /// </summary>
         private static string SafePathCombine(string baseDir, params string[] parts)
         {
+            // Defense in depth: reject any rooted/absolute part BEFORE calling Path.Combine.
+            // Path.Combine silently discards earlier arguments when a later argument is rooted
+            // ("/abs/path" or "C:\\abs\\path"), which would let a malicious manifest entry
+            // bypass the bundleDir base entirely. The StartsWith check below would catch the
+            // exfiltration in most cases, but rejecting early gives a clearer error message
+            // and eliminates the structural CodeQL/cs/path-combine alert.
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (parts[i] != null && Path.IsPathRooted(parts[i]))
+                {
+                    throw new System.Security.SecurityException(
+                        $"VbTerrainImporter: refused rooted path '{parts[i]}' in SafePathCombine " +
+                        $"arguments — only relative paths permitted (CWE-22 path traversal guard)"
+                    );
+                }
+            }
+
             var baseFullPath = Path.GetFullPath(baseDir);
             // Ensure canonical form ends with separator so "bundleDirExtra/..." is not a false match.
             if (!baseFullPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) &&
