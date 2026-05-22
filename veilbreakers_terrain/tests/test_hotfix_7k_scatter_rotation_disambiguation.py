@@ -125,7 +125,7 @@ class TestFilterAddsFields:
             _filter_multipass_scatter_placements,
         )
 
-        heightmap = np.zeros((8, 8), dtype=np.float32)
+        _heightmap = np.zeros((8, 8), dtype=np.float32)  # unused; kept for context
         slope_map = np.zeros((8, 8), dtype=np.float32)
         tw, th = 10.0, 10.0
         rot_rad = math.pi / 4  # 45°
