@@ -898,7 +898,10 @@ def _filter_multipass_scatter_placements(
 
         placement_local = dict(placement)
         placement_local["position"] = (local_x, local_y)
-        placement_local["rotation"] = math.degrees(float(placement.get("rotation", 0.0))) % 360.0
+        _rot_rad_src = float(placement.get("rotation_rad", placement.get("rotation", 0.0)))
+        placement_local["rotation"] = math.degrees(_rot_rad_src) % 360.0
+        placement_local["rotation_rad"] = _rot_rad_src
+        placement_local["_filtered"] = True
         placement_local["moisture"] = moisture
         placement_local["altitude"] = altitude
         # Preserve fine-grained species_id and vegetation_type for concrete
@@ -919,6 +922,42 @@ def _filter_multipass_scatter_placements(
         filtered.append(placement_local)
 
     return filtered
+
+
+def _read_rotation_rad(p: dict[str, Any]) -> float:
+    """Return yaw rotation in RADIANS from a placement dict.
+
+    Understands both pre-filter placements (``rotation`` is radians, no
+    ``_filtered`` marker) and post-filter placements (``rotation`` is
+    degrees, ``_filtered=True``).  Prefers the explicit ``rotation_rad``
+    side-channel when present — writers should always populate it so no
+    unit-guessing is needed.
+    """
+    if "rotation_rad" in p:
+        return float(p["rotation_rad"])
+    raw = float(p.get("rotation", 0.0))
+    if p.get("_filtered"):
+        # Post-filter: rotation key is degrees.
+        return math.radians(raw)
+    # Pre-filter: rotation key is radians.
+    return raw
+
+
+def _read_rotation_deg(p: dict[str, Any]) -> float:
+    """Return yaw rotation in DEGREES from a placement dict.
+
+    Understands both pre-filter placements (``rotation`` is radians) and
+    post-filter placements (``rotation`` is degrees, ``_filtered=True``).
+    Prefers the explicit ``rotation_rad`` side-channel when present.
+    """
+    if "rotation_rad" in p:
+        return math.degrees(float(p["rotation_rad"])) % 360.0
+    raw = float(p.get("rotation", 0.0))
+    if p.get("_filtered"):
+        # Post-filter: rotation key is already degrees.
+        return raw % 360.0
+    # Pre-filter: rotation key is radians; convert.
+    return math.degrees(raw) % 360.0
 
 
 def _yaw_deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
@@ -1023,7 +1062,7 @@ def _build_scatter_point_table_from_placements(
             normal = (0.0, 0.0, 1.0)
         orient = placement.get("orient")
         if not isinstance(orient, (tuple, list)) or len(orient) < 4:
-            orient = _yaw_deg_to_quat(float(placement.get("rotation", 0.0)))
+            orient = _yaw_deg_to_quat(_read_rotation_deg(placement))
         lod_index = int(placement.get("lod", 0))
         wind_profile = "tree" if base_type == "tree" or species_id.startswith("tree_") else base_type
         points.append(
@@ -2803,10 +2842,12 @@ def _scatter_pass(
             if rng.random() > _density_at(pos):
                 continue
             dist = _viewer_dist(wx, wy)
+            _rot_tree = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "tree",
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_tree,
+                "rotation_rad": _rot_tree,
                 "scale": _scale_pm20(1.0),
                 "lod": _lod_for_distance(dist, "tree"),
                 "altitude": _height_at(pos),
@@ -2824,10 +2865,12 @@ def _scatter_pass(
             if rng.random() > min(1.0, _density_at(pos) * 1.1):
                 continue
             dist = _viewer_dist(wx, wy)
+            _rot_bush = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "bush",
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_bush,
+                "rotation_rad": _rot_bush,
                 "scale": _scale_pm20(0.75),
                 "lod": _lod_for_distance(dist, "bush"),
                 "altitude": _height_at(pos),
@@ -2878,10 +2921,12 @@ def _scatter_pass(
             if rng.random() > _density_at(pos):
                 continue
             dist = _viewer_dist(wx, wy)
+            _rot_grass = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": f"grass_{biome_grass}",
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_grass,
+                "rotation_rad": _rot_grass,
                 "scale": _scale_pm20(1.0),
                 "biome": biome_grass,
                 "lod": _lod_for_distance(dist, "grass"),
@@ -2910,10 +2955,12 @@ def _scatter_pass(
                 continue
             base_scale, size_class = _rock_size_from_power_law(rng)
             dist = _viewer_dist(wx, wy)
+            _rot_rock = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "rock",
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_rock,
+                "rotation_rad": _rot_rock,
                 "scale": _scale_pm20(base_scale),
                 "size_class": size_class,
                 "lod": _lod_for_distance(dist, "rock"),
@@ -3063,12 +3110,14 @@ def _scatter_pass(
             _lod = _lod_for_distance(dist, _spec.category if _spec.category in _LOD_THRESHOLDS else "default")
             if dist >= _lod_hint_dist:
                 _lod = 3
+            _rot_foliage = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": _sid,
                 "species_id": _sid,
                 "category": _spec.category,
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_foliage,
+                "rotation_rad": _rot_foliage,
                 "scale": _scale_pm20(1.0),
                 "lod": _lod,
                 "altitude": _height_at(pos),
@@ -3125,8 +3174,11 @@ def _scatter_pass(
         _pos3: tuple[float, float, float] = (float(_pos2[0]), float(_pos2[1]), _alt * terrain_size)
         _raw_scale = float(_p.get("scale", 1.0))
         _scale3: tuple[float, float, float] = (_raw_scale, _raw_scale, _raw_scale)
-        # Convert yaw rotation (radians, around Z) to unit quaternion (x,y,z,w)
-        _rot = float(_p.get("rotation", 0.0))
+        # Convert yaw rotation (radians, around Z) to unit quaternion (x,y,z,w).
+        # Use _read_rotation_rad so consumers are agnostic to pre/post-filter
+        # unit convention — the helper resolves the right value regardless of
+        # whether _filtered=True or rotation_rad side-channel is present.
+        _rot = _read_rotation_rad(_p)
         _half = _rot * 0.5
         _orient: tuple[float, float, float, float] = (0.0, 0.0, math.sin(_half), math.cos(_half))
         _lod_int = int(_p.get("lod", 0))
@@ -3547,7 +3599,7 @@ def handle_scatter_vegetation(params: dict[str, Any]) -> dict[str, Any]:
         # Align vegetation to terrain normal (slope-perpendicular placement)
         slope_pitch = math.atan2(-dzdy, 1.0)  # tilt around X
         slope_roll = math.atan2(dzdx, 1.0)   # tilt around Y
-        base_rot = _vegetation_rotation(vt, p["rotation"])
+        base_rot = _vegetation_rotation(vt, _read_rotation_deg(p))
         instance.rotation_euler = (
             base_rot[0] + slope_pitch * 0.7,  # partial alignment (70%) for natural look
             base_rot[1] + slope_roll * 0.7,
@@ -3820,7 +3872,7 @@ def handle_scatter_props(params: dict[str, Any]) -> dict[str, Any]:
         )
         wz = terrain_sampler(p["position"][0], p["position"][1]) if terrain_sampler else 0.0
         instance.location = (p["position"][0], p["position"][1], wz)
-        instance.rotation_euler = _prop_rotation(ptype, p["rotation"])
+        instance.rotation_euler = _prop_rotation(ptype, _read_rotation_deg(p))
         s = p["scale"]
         instance.scale = (s, s, s)
         scatter_coll.objects.link(instance)
