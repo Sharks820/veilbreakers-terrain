@@ -20,7 +20,10 @@ docstring on ``_resolve_protected_zone_aabb`` for the schema catalogue.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Pyright: ``_resolve_protected_zone_aabb`` is intentionally underscored
 # (consistent with the PR #123 helper name imported by every consumer) but
@@ -84,6 +87,11 @@ def _resolve_protected_zone_aabb(
         goes through one schema-tolerant path, and the four handlers no
         longer carry duplicated dataclass-attribute access logic.
     """
+    # None is a legitimate "no zone" signal (e.g. an optional zone param that
+    # was not set by the caller).  Return the open-zone sentinel silently —
+    # this is expected, not a silent-defeat case.
+    if pz is None:
+        return (-1e18, -1e18, 1e18, 1e18)
     if isinstance(pz, dict):
         bounds = pz.get("bounds")
         if isinstance(bounds, dict):
@@ -120,11 +128,36 @@ def _resolve_protected_zone_aabb(
                 float(bounds_obj.max_y),
             )
         except (TypeError, ValueError):
-            # Attributes existed but weren't numeric — fall through.
-            pass
-    # Defensive: caller passed something the resolver doesn't recognise —
-    # treat as an open zone so downstream logic falls through to its existing
-    # "no zone" branch instead of crashing.
+            # Attributes existed but weren't numeric — WAVE6-1 (CWE-749
+            # silent-defeat risk): a partial/mock dataclass whose bounds attrs
+            # are non-numeric would previously fall through silently to the
+            # open-zone sentinel, which disables ALL zone protection.  Log a
+            # loud warning so the caller can diagnose the bad input.
+            _log.warning(
+                "_resolve_protected_zone_aabb: bounds attrs exist but are not "
+                "numeric on %s — returning open-zone sentinel "
+                "(CWE-749 silent-defeat risk). Check that ProtectedZoneSpec.bounds "
+                "carries real float values, not a mock or placeholder.",
+                type(pz).__name__,
+            )
+            return (-1e18, -1e18, 1e18, 1e18)
+    # WAVE6-1 (CWE-749 silent-defeat): caller passed a non-dict, non-None
+    # value whose shape the resolver does NOT recognise (e.g. a dataclass
+    # without a .bounds attribute, a string, or an unexpected wrapper type).
+    # Previously silent — now emits a WARNING so call-graph evolution that
+    # accidentally routes ProtectedZoneSpec instances here (or passes a
+    # partial mock) is immediately visible in logs rather than silently
+    # disabling all zone protection.
+    _log.warning(
+        "_resolve_protected_zone_aabb: unrecognised zone shape "
+        "(type=%s, has_bounds=%s) — returning open-zone sentinel. "
+        "Likely silent-defeat (CWE-749). Ensure the caller passes either "
+        "a dict with x_min/y_min/x_max/y_max (Schema B) or a nested "
+        "bounds dict (Schema A) or a ProtectedZoneSpec with .bounds "
+        "attrs (Schema C).",
+        type(pz).__name__,
+        bounds_obj is not None,
+    )
     return (-1e18, -1e18, 1e18, 1e18)
 
 

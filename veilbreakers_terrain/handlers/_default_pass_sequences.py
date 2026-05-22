@@ -62,11 +62,14 @@ the runtime-pipeline contract with the registrar-warming contract).
 """
 from __future__ import annotations
 
-# Import the canonical preview-quality-profile frozenset rather than
-# re-implementing the ("preview", "mobile", "low") tuple inline. The
-# import is intentionally lazy/string-name to avoid any chance of a
-# circular import even though ``terrain_pipeline`` does not currently
-# depend on this module — keeping the dependency arrow one-way.
+# Eager import of the canonical preview-quality-profile frozenset rather
+# than re-implementing the ("preview", "mobile", "low") tuple inline.
+# The dependency arrow is ONE-WAY: this module → terrain_pipeline.
+# WAVE6-2: the prior comment incorrectly stated "intentionally lazy/
+# string-name" — this import is top-level (eager), not lazy. The one-way
+# constraint is still enforced: do NOT add an ``import _default_pass_sequences``
+# (or any import that pulls this module) into ``terrain_pipeline.py``, which
+# would create a true circular import at module load time.
 from .terrain_pipeline import PREVIEW_QUALITY_PROFILES
 
 # The canonical 5-pass minimal pre-warm cover for headless registration.

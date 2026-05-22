@@ -199,6 +199,19 @@ _PREWARM_SCAN_EXEMPT_FILES: frozenset[str] = frozenset({
     # this builder emits). Adding it to the scan would create a chicken-
     # and-egg with the strict-subset invariant above.
     "terrain_pipeline.py",
+    # WAVE6-3: top-level orchestrator that groups passes into named
+    # GenerationStage chunks for hardware-budgeted sequential execution.
+    # The ``heightfield_foundation`` stage intentionally carries 3 of the 5
+    # prewarm names (pass_generate_low_freq_hmap, terrain_labels,
+    # structural_masks) alongside ``biome_channels`` which is staging-only
+    # (not in prewarm). That 3-of-5 overlap is below the threshold=4 guard
+    # today, but any future PR adding one more prewarm name to that stage
+    # would silently flip the scan.  Exempting here prevents a phantom CI
+    # break: generation_staging.py is NOT a drift surface (it does not
+    # execute passes directly; it schedules them for the
+    # TerrainGenerationOrchestrator loop).  Its pass_names tuples are the
+    # STAGING CONTRACT, not a prewarm literal redeclaration.
+    "generation_staging.py",
 })
 
 
