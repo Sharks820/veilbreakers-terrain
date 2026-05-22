@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from types import SimpleNamespace
 from pathlib import Path
@@ -728,14 +729,6 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         "FlowAccumulation",
         "GeneratedTrees",
         "NavMeshDataAssetPath",
-        # Verifier A #18 (HOTFIX-7a): TreeInstance.rotation must be wired
-        # using yaw_degrees * Mathf.Deg2Rad. PR #114+#118 fixed the Python
-        # producer to emit yaw_degrees correctly, but the Unity consumer
-        # constructed TreeInstance without setting rotation, so every tree
-        # faced north (Unity defaults the field to 0.0f). The producer-side
-        # contract is degrees (`_tree_instances_json` in
-        # terrain_unity_export.py) and Unity expects radians.
-        "rotation = tree.yaw_degrees * Mathf.Deg2Rad",
     ):
         assert token in source
     assert "new int[descriptor.height, descriptor.width]" in source
@@ -765,26 +758,26 @@ def test_unity_importer_treeinstance_rotation_field_is_wired_degrees_to_radians(
         "(Verifier A #18; PR #114+#118 fixed producer-side, this closes consumer)."
     )
 
-    # The rotation assignment must live in the same struct-initializer as
-    # widthScale/heightScale to ensure it actually targets the
-    # `SetTreeInstances` codepath (not a stray comment in a docblock).
-    setheights_idx = source.find(".SetTreeInstances(")
-    assert setheights_idx > 0, "expected .SetTreeInstances( in VbTerrainImporter.cs"
-    rotation_idx = source.find("rotation = tree.yaw_degrees * Mathf.Deg2Rad")
-    assert 0 < rotation_idx < setheights_idx, (
-        "rotation assignment must appear before .SetTreeInstances(...) (same loop body)"
+    # Parse the SetTreeInstances( call site: extract the block of code from the
+    # nearest preceding `new TreeInstance` through the closing `SetTreeInstances(`
+    # and assert that rotation, widthScale, and heightScale all appear inside it.
+    # Using a regex over the actual call block is robust to reformatting and avoids
+    # the brittle str.find() global-offset proximity heuristic.
+    set_tree_instances_idx = source.find(".SetTreeInstances(")
+    assert set_tree_instances_idx > 0, "expected .SetTreeInstances( in VbTerrainImporter.cs"
+    # Walk back from SetTreeInstances to find the enclosing new TreeInstance { block.
+    block_start = source.rfind("new TreeInstance", 0, set_tree_instances_idx)
+    assert block_start > 0, "expected 'new TreeInstance' before .SetTreeInstances( in VbTerrainImporter.cs"
+    call_block = source[block_start:set_tree_instances_idx]
+    assert re.search(r"\brotation\s*=\s*tree\.yaw_degrees\s*\*\s*Mathf\.Deg2Rad\b", call_block), (
+        "rotation = tree.yaw_degrees * Mathf.Deg2Rad must appear inside the "
+        "TreeInstance struct-initializer block before .SetTreeInstances(."
     )
-    width_scale_idx = source.find("widthScale = Mathf.Max(0.1f, tree.width_scale)")
-    height_scale_idx = source.find("heightScale = Mathf.Max(0.1f, tree.height_scale)")
-    assert 0 < width_scale_idx < setheights_idx
-    assert 0 < height_scale_idx < setheights_idx
-    # rotation must be co-located within ~1500 chars of the widthScale/heightScale
-    # assignment block — i.e. in the same TreeInstance struct initializer. The
-    # bound is loose (rather than tight) because the assignment carries a
-    # multi-line docblock explaining the degrees->radians conversion contract.
-    assert abs(rotation_idx - width_scale_idx) < 1500, (
-        "rotation assignment must be in the same TreeInstance struct-initializer "
-        "as widthScale (proximity guard)."
+    assert re.search(r"\bwidthScale\s*=", call_block), (
+        "widthScale assignment must appear in the same TreeInstance block."
+    )
+    assert re.search(r"\bheightScale\s*=", call_block), (
+        "heightScale assignment must appear in the same TreeInstance block."
     )
 
 
