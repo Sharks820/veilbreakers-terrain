@@ -30,7 +30,7 @@ import math
 import pytest
 
 from collections.abc import Callable
-from typing import cast
+from typing import Any, cast
 from _pytest.python_api import ApproxBase
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ class TestReadRotationRadHelper:
         assert _read_rotation_rad(p) == approx(math.pi / 2, abs=1e-9)
 
     def test_missing_rotation_returns_zero(self) -> None:
-        p: dict = {}
+        p: dict[str, Any] = {}
         assert _read_rotation_rad(p) == approx(0.0, abs=1e-12)
 
     def test_full_circle_clamped_correctly(self) -> None:
@@ -112,7 +112,7 @@ class TestReadRotationDegHelper:
         assert _read_rotation_deg(p) == approx(180.0, abs=1e-9)
 
     def test_missing_rotation_returns_zero(self) -> None:
-        p: dict = {}
+        p: dict[str, Any] = {}
         assert _read_rotation_deg(p) == approx(0.0, abs=1e-9)
 
 
@@ -258,7 +258,8 @@ class TestEntryPointEquivalence:
         rot_rad = math.pi / 2  # 90°
 
         # C3 quaternion (the inner ScatterPoint builder uses _read_rotation_rad)
-        qx, qy, qz, qw = self._quaternion_from_rad(rot_rad)
+        # Unpack to verify it does not raise; components checked via unit-vector test.
+        _qx, _qy, _qz, _qw = self._quaternion_from_rad(rot_rad)
 
         # _vegetation_rotation receives degrees; Z-component is math.radians(yaw_degrees)
         veg_rot = _vegetation_rotation("grass", math.degrees(rot_rad))
