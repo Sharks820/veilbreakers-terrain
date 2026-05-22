@@ -365,9 +365,14 @@ def test_cp5_bug3_multi_material_distinction_preserved() -> None:
     placeholder slots when ``len(set(material_ids)) > 1``. A pre-set
     non-None slot survives the auto-category pass.
 
-    Test strategy: pre-populate slot[1] with a sentinel non-None
-    material before calling mesh_from_spec, then verify slot[1] still
-    holds the sentinel after the auto-category loop ran.
+    Test strategy: patch ``bpy.data.meshes.new`` to return a mesh whose
+    ``materials.append`` auto-injects the sentinel into slot[1] during
+    the placeholder-allocation loop inside ``mesh_from_spec``. Then call
+    ``mesh_from_spec`` (the real production path — no inline reimplementation)
+    and assert slot[1] still holds the sentinel after the auto-category loop
+    ran. The test FAILS if ``mesh_from_spec`` overwrites non-None slots (PR
+    #118 regression) and PASSES only when the production multi-material
+    branch correctly skips already-populated slots.
     """
     import importlib
     from veilbreakers_terrain.handlers import _mesh_bridge
@@ -376,32 +381,64 @@ def test_cp5_bug3_multi_material_distinction_preserved() -> None:
     fake_create_procedural_material, _captured_mats = factory()
     mesh_bridge_module = importlib.reload(_mesh_bridge)
 
-    # SENTINEL: pre-populate one of the placeholder slots with a
-    # distinct material BEFORE mesh_from_spec gets to the auto-category
-    # loop. The upstream-slot-dispatch path doesn't exist today, so we
-    # patch _StubMeshes.new to inject the sentinel right when the mesh
-    # is created. After num_slots placeholder Nones are appended,
-    # mesh_from_spec writes mat into every None slot — under PR #118
-    # behaviour it overwrites the sentinel; under the CP5-CASCADE
-    # Bug 3 fix the sentinel survives.
+    # SENTINEL: simulates a material an upstream slot-dispatcher placed
+    # into slot[1] before the auto-category loop runs inside mesh_from_spec.
+    # The upstream-dispatch path does not exist yet, so we inject the
+    # sentinel by subclassing _StubMeshes.new to return a mesh whose
+    # materials.append auto-populates slot[1] (the second append) with the
+    # sentinel instead of None.  The production placeholder-allocation loop
+    # ``for _ in range(num_slots): mesh_data.materials.append(None)`` calls
+    # append 3 times (num_slots == max([0,1,2,1])+1 == 3).  Intercepting the
+    # second call replicates "an upstream dispatcher already claimed slot[1]".
     sentinel_material = types.SimpleNamespace(
         name="UPSTREAM_SLOT_DISPATCH_SENTINEL",
         mat_type="upstream_dispatch",
     )
 
-    # Wrap the StubMeshes.new() to inject sentinel into slot[1] post-
-    # placeholder-allocation. We do this by patching the mesh_from_spec
-    # spec to carry a metadata hook the post-allocation path reads. But
-    # we have no such hook today. Instead, drive the test through the
-    # public API: mesh_from_spec, then verify that with a multi-material
-    # spec where (after the fix) the loop only fills None slots, the
-    # final slot count is correct and slot states ARE all the
-    # auto-category material (since there's no upstream dispatch in
-    # the test). Then assert the SECOND invariant: a re-run with an
-    # injected sentinel BEFORE the auto-category loop runs preserves
-    # the sentinel. We simulate the injection by passing the same
-    # object back through and verifying the slot count stays at
-    # num_slots.
+    class _SentinelInjectingMaterials:
+        """Like _StubMaterials but injects sentinel_material at slot[1]."""
+        def __init__(self) -> None:
+            self._slots: list[Any] = []
+
+        def append(self, mat: Any) -> None:
+            # Second append (index 1): inject the sentinel instead of None.
+            if len(self._slots) == 1:
+                self._slots.append(sentinel_material)
+            else:
+                self._slots.append(mat)
+
+        def __iter__(self):
+            return iter(self._slots)
+
+        def __len__(self) -> int:
+            return len(self._slots)
+
+        def __getitem__(self, i: int) -> Any:
+            return self._slots[i]
+
+        def __setitem__(self, i: int, value: Any) -> None:
+            self._slots[i] = value
+
+        def __bool__(self) -> bool:
+            return bool(self._slots)
+
+    class _SentinelInjectingMeshes:
+        """Returns a mesh whose materials slot-list injects the sentinel."""
+        def new(self, name: str) -> Any:
+            import types as _types
+            m = _types.SimpleNamespace(
+                name=name,
+                materials=_SentinelInjectingMaterials(),
+                polygons=[],
+            )
+            def _update() -> None:
+                pass
+            m.update = _update  # type: ignore[attr-defined]
+            return m
+
+    # Patch only the meshes factory; everything else (objects, context,
+    # bmesh) comes from the shared stub so mesh_from_spec runs normally.
+    stub_bpy.data.meshes = _SentinelInjectingMeshes()
 
     with patch.object(mesh_bridge_module, "bpy", stub_bpy), \
          patch.object(mesh_bridge_module, "bmesh", stub_bmesh), \
@@ -425,55 +462,20 @@ def test_cp5_bug3_multi_material_distinction_preserved() -> None:
             "metadata": {"category": "furniture"},  # → "rough_timber"
         }
 
-        obj = mesh_bridge_module.mesh_from_spec(spec, name="TestMultiMatBug3")
+        # Drive the PRODUCTION path — no inline reimplementation of the
+        # assignment loop below this line.
+        obj = mesh_bridge_module.mesh_from_spec(spec, name="TestMultiMatSentinel")
 
         # All 3 slots allocated.
         assert len(obj.data.materials) == 3, (
             f"Expected 3 material slots; got {len(obj.data.materials)}"
         )
-        # CP4-class invariant preserved: no None slots — every face's
-        # material_index 0, 1, or 2 resolves to a real material.
-        for i, slot in enumerate(obj.data.materials):
-            assert slot is not None, (
-                f"slot[{i}] is None — the multi-material branch must "
-                f"still fill every previously-None placeholder. CP4 "
-                f"magenta-debug regression guard."
-            )
-
-        # Now pre-populate slot[1] with a sentinel BEFORE invoking the
-        # auto-category loop on a fresh mesh — this is the load-bearing
-        # CP5-CASCADE Bug 3 differentiation assertion.
-        obj2_data = mesh_bridge_module.bpy.data.meshes.new("TestSlotSentinel")
-        obj2_data.materials.append(None)
-        obj2_data.materials.append(sentinel_material)  # slot[1] pre-set
-        obj2_data.materials.append(None)
-        obj2 = mesh_bridge_module.bpy.data.objects.new(
-            "TestSlotSentinel", obj2_data
-        )
-
-        # Drive the auto-category branch by hand the same way
-        # mesh_from_spec does internally.
-        from veilbreakers_terrain.handlers._mesh_bridge import (
-            CATEGORY_MATERIAL_MAP,
-        )
-        material_type = CATEGORY_MATERIAL_MAP.get("furniture")
-        assert material_type == "rough_timber"
-        mat = fake_create_procedural_material(
-            "TestSlotSentinel_rough_timber", material_type
-        )
-        material_ids_local = [0, 1, 2, 1]
-        if material_ids_local and len(set(material_ids_local)) > 1:
-            for slot_idx in range(len(obj2.data.materials)):
-                if obj2.data.materials[slot_idx] is None:
-                    obj2.data.materials[slot_idx] = mat
-        else:
-            for slot_idx in range(len(obj2.data.materials)):
-                obj2.data.materials[slot_idx] = mat
 
         # CP5-CASCADE Bug 3 load-bearing assertion: slot[1]'s sentinel
-        # MUST survive — the multi-material branch only writes to
-        # None slots.
-        assert obj2.data.materials[1] is sentinel_material, (
+        # MUST survive — the multi-material branch only writes to None slots.
+        # This assertion FAILS on the pre-fix (PR #118) code because that
+        # version wrote mat into every slot regardless.
+        assert obj.data.materials[1] is sentinel_material, (
             "CP5-CASCADE Bug 3 regression: multi-material spec "
             "(material_ids = [0, 1, 2, 1]) must only fill None "
             "placeholder slots. Slot[1] was pre-populated with the "
@@ -481,17 +483,23 @@ def test_cp5_bug3_multi_material_distinction_preserved() -> None:
             "sentinel was silently overwritten with the auto-category "
             "material, collapsing per-face material differentiation. "
             f"Expected slot[1] = {sentinel_material.name!r}, got "
-            f"{obj2.data.materials[1].name!r}."
+            f"{obj.data.materials[1]!r}."
         )
-        # Slot[0] and slot[2] (both pre-None) DO receive the auto-
-        # category material — the magenta-debug fix from CP4 stands
-        # for placeholder slots.
-        assert obj2.data.materials[0] is mat, (
-            "slot[0] (pre-None) must receive the auto-category "
+        # Slot[0] and slot[2] (both started as None) DO receive the auto-
+        # category material — the magenta-debug fix from CP4 stands for
+        # placeholder slots.
+        assert obj.data.materials[0] is not None, (
+            "slot[0] (started as None) must receive the auto-category "
             "material to keep CP4's magenta-debug fix alive."
         )
-        assert obj2.data.materials[2] is mat, (
-            "slot[2] (pre-None) must receive the auto-category material."
+        assert obj.data.materials[0] is not sentinel_material, (
+            "slot[0] must be the auto-category material, not the sentinel."
+        )
+        assert obj.data.materials[2] is not None, (
+            "slot[2] (started as None) must receive the auto-category material."
+        )
+        assert obj.data.materials[2] is not sentinel_material, (
+            "slot[2] must be the auto-category material, not the sentinel."
         )
 
 
