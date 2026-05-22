@@ -1211,6 +1211,13 @@ def generate_lod_specs(
     src_verts = spec["vertices"]
     src_faces = spec["faces"]
     src_uvs = spec.get("uvs", [])
+    # WAVE-1-HOTFIX-2 Bug 4: project material_ids through every LOD level so
+    # multi-material specs don't trip the per-face vs per-id contract check
+    # at mesh_from_spec time. Previous behaviour: ``generate_lod_specs``
+    # returned ``{vertices, faces, uvs, metadata}`` only; downstream
+    # ``mesh_from_spec`` raised RuntimeError ("material_id count does not
+    # match polygon count") because the LOD spec had zero ids vs N polygons.
+    src_material_ids: list[int] = list(spec.get("material_ids", []))
     base_name = spec["metadata"]["name"]
     aabb = _compute_aabb(src_verts)
     src_meta = spec["metadata"]
@@ -1232,12 +1239,31 @@ def generate_lod_specs(
 
         # Final LOD -> billboard (unless disabled).
         if include_billboard and level >= len(ratios) - 1:
-            lod_specs.append(
-                _make_billboard_spec(
-                    src_verts, aabb, base_name, level,
-                    screen_pct, switch_dist, src_meta,
-                )
+            bill_spec = _make_billboard_spec(
+                src_verts, aabb, base_name, level,
+                screen_pct, switch_dist, src_meta,
             )
+            # WAVE-1-HOTFIX-2 Bug 4 (billboard branch): the cross-billboard
+            # emits 8 verts and 4 faces by construction, but the back-face
+            # quads share the same vertex sets as the front-face quads
+            # (reversed winding). BMesh dedups these at ``bm.from_mesh()``
+            # so the surviving polygon count is variable (1-2 unique loops
+            # per card, 2-4 polygons total). Because the count mismatch
+            # would trip mesh_from_spec's per-face-vs-per-id gate, the
+            # billboard spec deliberately does NOT carry material_ids.
+            # Downstream behaviour: the bridge falls back to single-slot
+            # mode (num_slots=1) and the category-material loop fills the
+            # single slot with the canonical material. The billboard
+            # already represents the entire mesh silhouette as one visual
+            # unit — a single-material billboard atlas is the AAA-standard
+            # representation (UE5 / Unity HLOD both do this). Preserve the
+            # modal material id in metadata so the Unity importer can pick
+            # the right atlas texture if needed.
+            if src_material_ids:
+                from collections import Counter
+                modal_mid = Counter(src_material_ids).most_common(1)[0][0]
+                bill_spec["metadata"]["billboard_material_id"] = int(modal_mid)
+            lod_specs.append(bill_spec)
             continue
 
         if ratio >= 1.0 or not src_verts:
@@ -1246,6 +1272,10 @@ def generate_lod_specs(
             lod_faces = [tuple(f) for f in src_faces]
             lod_uvs = list(src_uvs) if src_uvs else src_uvs
             max_err = 0.0
+            # WAVE-1-HOTFIX-2 Bug 4 (LOD0 branch): pass material_ids through
+            # 1:1 — LOD0 is the source geometry unchanged, so every face
+            # keeps its original id.
+            lod_material_ids: list[int] = list(src_material_ids) if src_material_ids else []
         else:
             # Choose grid resolution so the target number of unique cells ≈
             # ratio * original vertex count.  Cube-root gives the per-axis
@@ -1256,11 +1286,15 @@ def generate_lod_specs(
             new_verts, remap, max_err = _cluster_vertices(src_verts, grid_res, aabb)
 
             # Remap faces; discard degenerate (< 3 unique verts after merge)
+            # WAVE-1-HOTFIX-2 Bug 4: also track surviving SOURCE face indices
+            # so we can index into ``src_material_ids`` later.
             lod_faces = []
-            for face in src_faces:
+            surviving_src_face_idx: list[int] = []
+            for orig_face_idx, face in enumerate(src_faces):
                 remapped = tuple(dict.fromkeys(remap[i] for i in face))
                 if len(remapped) >= 3:
                     lod_faces.append(remapped)
+                    surviving_src_face_idx.append(orig_face_idx)
 
             # Compact: keep only vertices actually referenced
             used = sorted(set(i for f in lod_faces for i in f))
@@ -1287,6 +1321,23 @@ def generate_lod_specs(
             else:
                 lod_uvs = src_uvs
 
+            # WAVE-1-HOTFIX-2 Bug 4: project source material_ids through the
+            # surviving face indices. Each surviving LOD face inherits the id
+            # of the source face it came from (1:1 mapping by construction).
+            if src_material_ids:
+                lod_material_ids = [
+                    int(src_material_ids[i])
+                    for i in surviving_src_face_idx
+                    if i < len(src_material_ids)
+                ]
+                # If src_material_ids is shorter than src_faces (defensive,
+                # would itself be a contract violation upstream), pad with
+                # slot 0 so the count still matches lod_faces.
+                while len(lod_material_ids) < len(lod_faces):
+                    lod_material_ids.append(0)
+            else:
+                lod_material_ids = []
+
         culling_bounds = _compute_aabb(lod_verts)
 
         meta: dict[str, Any] = {
@@ -1304,12 +1355,15 @@ def generate_lod_specs(
         if switch_dist is not None:
             meta["switch_distance_m"] = switch_dist
 
-        lod_specs.append({
+        lod_entry: MeshSpec = {
             "vertices": lod_verts,
             "faces": lod_faces,
             "uvs": lod_uvs,
             "metadata": meta,
-        })
+        }
+        if lod_material_ids:
+            lod_entry["material_ids"] = lod_material_ids
+        lod_specs.append(lod_entry)
 
     return lod_specs
 
@@ -1496,7 +1550,14 @@ def mesh_from_spec(
         # generators that create disconnected components at the same positions
         _vert_dedup: dict[tuple[int, int, int], int] = {}
         bm_verts: list[Any] = []
-        _remap: list[int] = []  # maps original index -> deduped index
+        _remap: list[int] = []  # maps original index -> deduped (bm) index
+        # WAVE-1-HOTFIX-2 Bug 5: build an inverse remap so the UV-assignment
+        # loop later can recover one canonical original-vertex index from a
+        # bm vert index. Without this the UV loop reads ``uvs[loop.vert.index]``
+        # treating the post-dedup bm index as an original-array index, which
+        # silently picks the WRONG uv for every welded vertex (off-by-N error
+        # equal to the number of preceding welds in the source array).
+        _inverse_remap: dict[int, int] = {}
         for v in verts:
             # Quantize to tolerance grid for fast lookup
             key = (
@@ -1511,6 +1572,14 @@ def mesh_from_spec(
                 _vert_dedup[key] = idx
                 bm_verts.append(bm.verts.new(v))
                 _remap.append(idx)
+        # Populate the inverse map AFTER _remap is built so each bm vert
+        # points at the FIRST original index that mapped onto it. First-wins
+        # matches the prior implicit behaviour for non-welded meshes (where
+        # bm_idx == orig_idx and uvs[bm_idx] == uvs[orig_idx]) and gives a
+        # deterministic, single-source-of-truth UV for welded clusters.
+        for orig_i, bm_i in enumerate(_remap):
+            if bm_i not in _inverse_remap:
+                _inverse_remap[bm_i] = orig_i
         bm.verts.ensure_lookup_table()
 
         # Add faces using remapped vertex indices
@@ -1561,14 +1630,26 @@ def mesh_from_spec(
                             edge[crease_layer] = ce.get("value", 1.0)
 
         # Assign UVs if present
+        # WAVE-1-HOTFIX-2 Bug 5: ``loop.vert.index`` is the POST-dedup bm
+        # vertex index; the ``uvs`` array is indexed by the PRE-dedup
+        # original vertex index. Read through ``_inverse_remap`` so welded
+        # vertices pick up their canonical original UV (first-wins) instead
+        # of randomly mis-aligning by the weld-cluster offset. Falls back to
+        # ``bm_vi`` only when the bm vert is not in the inverse map (e.g.
+        # vertices created elsewhere — shouldn't happen here but defensive).
         if uvs:
             uv_layer = bm.loops.layers.uv.new("UVMap")
             bm.faces.ensure_lookup_table()
             for face in bm.faces:
                 for loop in face.loops:
-                    vi = loop.vert.index
-                    if vi < len(uvs):
-                        loop[uv_layer].uv = uvs[vi]
+                    # ``loop.vert.index`` is typed Optional[int] by some bmesh
+                    # stubs but is always int at runtime once
+                    # ``bm.verts.ensure_lookup_table()`` has been called above.
+                    bm_vi_raw = loop.vert.index
+                    bm_vi = int(bm_vi_raw) if bm_vi_raw is not None else 0
+                    original_vi = _inverse_remap.get(bm_vi, bm_vi)
+                    if original_vi < len(uvs):
+                        loop[uv_layer].uv = uvs[original_vi]
 
         # Recalculate normals
         bm.normal_update()
