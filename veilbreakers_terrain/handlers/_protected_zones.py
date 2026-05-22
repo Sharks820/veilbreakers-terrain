@@ -29,7 +29,7 @@ from typing import Any
 # ``from ._protected_zones import _resolve_protected_zone_aabb``. Declaring
 # it in __all__ silences ``reportUnusedFunction`` without renaming the
 # symbol (which would break PR #123's existing call sites).
-__all__ = ["_resolve_protected_zone_aabb"]
+__all__ = ["_resolve_protected_zone_aabb", "_zone_permits"]
 
 
 def _resolve_protected_zone_aabb(
@@ -104,15 +104,60 @@ def _resolve_protected_zone_aabb(
     # getattr (not isinstance against ProtectedZoneSpec / BBox) so this
     # module stays a true leaf — no imports from terrain_semantics — and
     # therefore importable by every handler without cycle risk.
+    #
+    # PR #126 review (Copilot T1): require *all four* attrs (not just min_x)
+    # so a partially-populated duck-typed object can't AttributeError at
+    # read time — fall through to the open-zone sentinel instead.
     bounds_obj = getattr(pz, "bounds", None)
-    if bounds_obj is not None and hasattr(bounds_obj, "min_x"):
-        return (
-            float(bounds_obj.min_x),
-            float(bounds_obj.min_y),
-            float(bounds_obj.max_x),
-            float(bounds_obj.max_y),
-        )
+    if bounds_obj is not None and all(
+        hasattr(bounds_obj, _attr) for _attr in ("min_x", "min_y", "max_x", "max_y")
+    ):
+        try:
+            return (
+                float(bounds_obj.min_x),
+                float(bounds_obj.min_y),
+                float(bounds_obj.max_x),
+                float(bounds_obj.max_y),
+            )
+        except (TypeError, ValueError):
+            # Attributes existed but weren't numeric — fall through.
+            pass
     # Defensive: caller passed something the resolver doesn't recognise —
     # treat as an open zone so downstream logic falls through to its existing
     # "no zone" branch instead of crashing.
     return (-1e18, -1e18, 1e18, 1e18)
+
+
+def _zone_permits(
+    zone: Any,
+    kind: str,
+    *,
+    x: float | None = None,
+    y: float | None = None,
+) -> bool:
+    """Schema-tolerant zone.permits() — works with object zones (.permits method)
+    AND dict-shaped zones (key-based forbid/allow lists).
+
+    PR #126 review (coderabbit T7/T9/T10): three sibling handlers
+    (``_terrain_world``, ``terrain_assets``, ``terrain_delta_integrator``)
+    called ``zone.permits(kind)`` directly, which crashes when a caller
+    supplies a dict-shaped zone instead of a ProtectedZoneSpec dataclass.
+    This helper resolves both shapes so every consumer can use one call.
+
+    Object zone: delegates to ``zone.permits(kind)`` unchanged.
+    Dict zone: checks ``forbidden_kinds`` / ``forbid`` deny-list first,
+               then ``allowed_kinds`` / ``allow`` allow-list.
+               Unknown shape defaults permissive (open zone).
+    """
+    permits_method = getattr(zone, "permits", None)
+    if callable(permits_method):
+        return bool(permits_method(kind))
+    if isinstance(zone, dict):
+        forbidden = zone.get("forbidden_kinds") or zone.get("forbid") or ()
+        if kind in forbidden:
+            return False
+        allowed = zone.get("allowed_kinds") or zone.get("allow")
+        if allowed is not None:
+            return kind in allowed
+        return True
+    return True  # unknown shape -> default permissive

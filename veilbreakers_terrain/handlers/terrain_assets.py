@@ -495,7 +495,8 @@ def _protected_mask(
     # AND raw dict-shaped zones with the same code path. Prior to this
     # fix the inline ``zone.bounds.min_x`` access only worked for the
     # dataclass case — a stub/test passing a plain dict crashed here.
-    from ._protected_zones import _resolve_protected_zone_aabb
+    # PR #126 (coderabbit T9): use _zone_permits so dict-shaped zones don't crash.
+    from ._protected_zones import _resolve_protected_zone_aabb, _zone_permits
 
     stack = state.mask_stack
     mask = np.zeros(shape, dtype=bool)
@@ -506,7 +507,7 @@ def _protected_mask(
     xs = stack.world_origin_x + (np.arange(cols) + 0.5) * stack.cell_size
     xg, yg = np.meshgrid(xs, ys)
     for zone in state.intent.protected_zones:
-        if zone.permits(pass_name):
+        if _zone_permits(zone, pass_name):
             continue
         min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
         inside = (

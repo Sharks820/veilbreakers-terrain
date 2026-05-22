@@ -802,7 +802,8 @@ def _protected_mask(
 ) -> np.ndarray:
     """Build a boolean mask of cells under a protected zone that forbids this pass."""
     # HOTFIX-7d (Verifier A #13): unified schema-tolerant resolver.
-    from ._protected_zones import _resolve_protected_zone_aabb
+    # PR #126 (coderabbit T7): use _zone_permits so dict-shaped zones don't crash.
+    from ._protected_zones import _resolve_protected_zone_aabb, _zone_permits
 
     stack = state.mask_stack
     mask = np.zeros(shape, dtype=bool)
@@ -815,7 +816,7 @@ def _protected_mask(
     xg, yg = np.meshgrid(xs, ys)
 
     for zone in state.intent.protected_zones:
-        if zone.permits(pass_name):
+        if _zone_permits(zone, pass_name):
             continue
         min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
         inside = (

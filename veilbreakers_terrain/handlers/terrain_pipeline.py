@@ -1858,7 +1858,7 @@ def pass_compute_biome_channels(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("biome_id", "corruption_map"),
+        produced_channels=("biome_id", "corruption_map", "biome_names"),
         metrics={
             "biome_count": int(len(set(spec.biome_ids.ravel().tolist()))),
             "corruption_mean": float(spec.corruption_map.mean()),
@@ -1874,11 +1874,11 @@ def register_biome_channel_pass() -> None:
             name="biome_channels",
             func=pass_compute_biome_channels,
             requires_channels=("height",),
-            produces_channels=("biome_id", "corruption_map"),
+            produces_channels=("biome_id", "corruption_map", "biome_names"),
             seed_namespace="biome_channels",
             requires_scene_read=False,
             may_modify_geometry=False,
-            description="Populate biome_id and corruption_map from deterministic world-map grammar.",
+            description="Populate biome_id, corruption_map, and biome_names from deterministic world-map grammar.",
         )
     )
 

@@ -119,15 +119,16 @@ def pass_integrate_deltas(
     # 2. Intent protected zones (replicates _terrain_world._protected_mask)
     # HOTFIX-7d (Verifier A #13): unified schema-tolerant resolver — accepts
     # ProtectedZoneSpec dataclass AND dict-shaped zones.
+    # PR #126 (coderabbit T10): use _zone_permits so dict-shaped zones don't crash.
     if state.intent.protected_zones:
-        from ._protected_zones import _resolve_protected_zone_aabb
+        from ._protected_zones import _resolve_protected_zone_aabb, _zone_permits
 
         rows, cols = total_delta.shape
         ys = stack.world_origin_y + (np.arange(rows) + 0.5) * stack.cell_size
         xs = stack.world_origin_x + (np.arange(cols) + 0.5) * stack.cell_size
         xg, yg = np.meshgrid(xs, ys)
         for zone in state.intent.protected_zones:
-            if zone.permits("integrate_deltas"):
+            if _zone_permits(zone, "integrate_deltas"):
                 continue
             min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
             inside = (

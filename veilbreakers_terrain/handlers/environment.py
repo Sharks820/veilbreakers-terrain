@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 import numpy as np
 
 from .terrain_protocol import enforce_protocol
+from ._protected_zones import _resolve_protected_zone_aabb  # noqa: F401  # re-exported for PR #123 call sites
 
 # Lazy-import guard: bpy/bmesh only available inside Blender. Modules that
 # transitively import this file outside Blender (tests, CI) must not crash at
@@ -293,16 +294,6 @@ def _coerce_optional_grid_channel(
     cleaned = np.nan_to_num(arr, nan=0.0, posinf=replace_hi, neginf=0.0)
     np.maximum(cleaned, 0.0, out=cleaned)
     return np.ascontiguousarray(cleaned, dtype=np.float32)
-
-
-# HOTFIX-7d (Verifier A #13 2026-05-21): the schema-tolerant resolver moved
-# into the leaf module ``_protected_zones`` so the five sibling handlers
-# (terrain_assets, _terrain_world, terrain_caves, terrain_cliffs,
-# terrain_delta_integrator) that consume ProtectedZoneSpec dataclasses
-# can import it without creating cycles back through environment.py.
-# Re-exported here to preserve PR #123's existing call sites that import
-# ``_resolve_protected_zone_aabb`` from this module.
-from ._protected_zones import _resolve_protected_zone_aabb  # noqa: F401
 
 
 def _resolve_road_cost_context(
