@@ -17,7 +17,6 @@ Both must declare the same optional_channels contract.
 from __future__ import annotations
 
 import ast
-import textwrap
 from pathlib import Path
 
 import pytest
