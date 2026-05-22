@@ -189,7 +189,7 @@ class TestCascadeAQuaternionCorrect90Degrees:
 class TestFilterStoresRotationRad:
     """Test that _filter_multipass_scatter_placements stores rotation_rad."""
 
-    def _make_minimal_maps(self, side: int = 9) -> tuple:
+    def _make_minimal_maps(self, side: int = 9) -> tuple[np.ndarray, np.ndarray]:
         """Return minimal heightmap and slope_map for the filter."""
         hm = np.full((side, side), 0.3, dtype=np.float32)
         sm = np.full((side, side), 5.0, dtype=np.float32)
@@ -211,7 +211,7 @@ class TestFilterStoresRotationRad:
             _filter_multipass_scatter_placements,
         )
 
-        hm, sm = self._make_minimal_maps()
+        _hm, sm = self._make_minimal_maps()
         # Build a synthetic raw placement with rotation in radians
         raw_rad = math.pi / 2  # 90 degrees
         raw_placements = [
