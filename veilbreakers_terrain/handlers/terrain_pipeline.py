@@ -118,13 +118,18 @@ _LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
     "talus",
     "structural_masks_post_talus",
     "structural_masks_post_deltas",
-    "lava_emit",
-    "lava_carve",
+    # NOTE: "lava_emit" and "lava_carve" removed (WAVE5-2) — neither is a
+    # registered pass name.  The only registered lava pass is
+    # "pass_lava_simulation" (terrain_lava.py:355).  Dead anchors never match
+    # pass-sequence iteration and silently mislead future readers.
+    "pass_lava_simulation",
     "integrate_deltas",
     "bathymetry",
     "pass_seasonal_water_state",
     "water_variants",
-    "pass_water_variants",
+    # NOTE: "pass_water_variants" removed (WAVE5-2) — the registered name is
+    # "water_variants" (terrain_water_variants.py:1138), which is already in
+    # this set above.  The prefixed alias is not registered in PASS_REGISTRY.
     "pass_water_depth",
     "erosion",
     "pass_hydrology",
