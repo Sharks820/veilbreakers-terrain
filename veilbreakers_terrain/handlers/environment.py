@@ -295,6 +295,63 @@ def _coerce_optional_grid_channel(
     return np.ascontiguousarray(cleaned, dtype=np.float32)
 
 
+def _resolve_protected_zone_aabb(
+    pz: Any,
+) -> tuple[float, float, float, float]:
+    """Resolve a protected_zone dict into a world-space AABB tuple.
+
+    Accepts BOTH historic schemas without silently dropping either:
+
+    Schema A (nested-bounds, the canonical form built by
+    ``_resolve_terrain_tile_params`` and consumed by terrain merge / glacial
+    crater / structure placement)::
+
+        {"zone_id": "...", "bounds": {"min_x": ..., "min_y": ...,
+                                       "max_x": ..., "max_y": ...}}
+
+    Schema B (flat-AABB, the form used by the road network reform handler
+    and the seasonal-water basin clipper — also accepts ``x0/x1/y0/y1``
+    aliases shipped by some emitter-side callers)::
+
+        {"zone_id": "...", "x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}
+        {"zone_id": "...", "x0": ..., "y0": ..., "x1": ..., "y1": ...}
+
+    Returns:
+        ``(min_x, min_y, max_x, max_y)`` tuple suitable for use in either an
+        inclusion test (``min_x <= wx <= max_x and min_y <= wy <= max_y``) or
+        a mask broadcast.  The defaults — ``+/-1e18`` for the nested-bounds
+        path, ``+/-1e9`` for the flat path — match the prior call-site
+        sentinels and were preserved so downstream comparisons that relied
+        on a "no-clip" zone (e.g. when only one axis was provided) continue
+        to behave the same. WAVE-1-HOTFIX-2 Bug 3 (FIX_PATTERN_v1 §C3
+        contract / schema unification): two of the six handler sites used
+        the flat schema; calling them with a nested-bounds zone silently
+        no-op'd the zone (every coord returned the +/-1e9 sentinel range),
+        causing protected geometry to be paved through. Centralising the
+        resolver here closes the divergence so every handler honours both
+        schemas.
+    """
+    if not isinstance(pz, dict):
+        # Defensive: caller passed something other than a dict — treat as
+        # an open zone so downstream logic falls through to its existing
+        # "no zone" branch instead of crashing.
+        return (-1e18, -1e18, 1e18, 1e18)
+    bounds = pz.get("bounds")
+    if isinstance(bounds, dict):
+        return (
+            float(bounds.get("min_x", -1e18)),
+            float(bounds.get("min_y", -1e18)),
+            float(bounds.get("max_x",  1e18)),
+            float(bounds.get("max_y",  1e18)),
+        )
+    return (
+        float(pz.get("x_min", pz.get("x0", -1e9))),
+        float(pz.get("y_min", pz.get("y0", -1e9))),
+        float(pz.get("x_max", pz.get("x1",  1e9))),
+        float(pz.get("y_max", pz.get("y1",  1e9))),
+    )
+
+
 def _resolve_road_cost_context(
     params: dict[str, Any],
     *,
@@ -3771,16 +3828,12 @@ def handle_stitch_terrain_edges(params: dict[str, Any]) -> dict[str, Any]:
     # -----------------------------------------------------------------------
     raw_protected_zones = params.get("protected_zones") or []
     pz_aabbs: list[tuple[float, float, float, float]] = []  # (min_x, min_y, max_x, max_y)
+    # WAVE-1-HOTFIX-2 Bug 3: dual-schema resolver replaces inline bounds-dict
+    # only logic — flat-AABB zones (used by road network reform + seasonal
+    # water) were previously dropped silently here, leaving merged terrain
+    # tiles writing through "protected" geometry.
     for pz in raw_protected_zones:
-        bounds = pz.get("bounds")
-        if not isinstance(bounds, dict):
-            continue
-        pz_aabbs.append((
-            float(bounds.get("min_x", -1e18)),
-            float(bounds.get("min_y", -1e18)),
-            float(bounds.get("max_x",  1e18)),
-            float(bounds.get("max_y",  1e18)),
-        ))
+        pz_aabbs.append(_resolve_protected_zone_aabb(pz))
 
     def _in_protected_zone(wx: float, wy: float) -> bool:
         for bmin_x, bmin_y, bmax_x, bmax_y in pz_aabbs:
@@ -4264,14 +4317,11 @@ def handle_carve_river(params: dict[str, Any]) -> dict[str, Any]:
             cs_x_pz = terrain_width_pz / max(cols - 1, 1)
             cs_y_pz = terrain_height_pz / max(rows - 1, 1)
             protected_zone_mask = np.zeros((rows, cols), dtype=bool)
+            # WAVE-1-HOTFIX-2 Bug 3: dual-schema resolver normalises both
+            # nested-bounds and flat-AABB zones so glacial crater carving
+            # honours zones emitted by either upstream contract.
             for pz in raw_protected_zones:
-                bounds = pz.get("bounds")
-                if not isinstance(bounds, dict):
-                    continue
-                bmin_x = float(bounds.get("min_x", -1e18))
-                bmin_y = float(bounds.get("min_y", -1e18))
-                bmax_x = float(bounds.get("max_x",  1e18))
-                bmax_y = float(bounds.get("max_y",  1e18))
+                bmin_x, bmin_y, bmax_x, bmax_y = _resolve_protected_zone_aabb(pz)
                 c_lo = max(0, int(math.floor((bmin_x - ox_pz) / max(cs_x_pz, 1e-9))))
                 c_hi = min(cols - 1, int(math.ceil((bmax_x - ox_pz) / max(cs_x_pz, 1e-9))))
                 r_lo = max(0, int(math.floor((bmin_y - oy_pz) / max(cs_y_pz, 1e-9))))
@@ -5462,17 +5512,45 @@ def _paint_road_mask_on_terrain(
     ab = seg_b - seg_a
     ab_sq = np.maximum((ab * ab).sum(axis=1), 1e-12)
 
-    def _min_dist_to_path(px: np.ndarray, py: np.ndarray) -> np.ndarray:
-        t = (
-            (px[:, None] - seg_a[None, :, 0]) * ab[None, :, 0]
-            + (py[:, None] - seg_a[None, :, 1]) * ab[None, :, 1]
-        ) / ab_sq[None, :]
-        t = np.clip(t, 0.0, 1.0)
-        cpx = seg_a[None, :, 0] + t * ab[None, :, 0]
-        cpy = seg_a[None, :, 1] + t * ab[None, :, 1]
-        dx = px[:, None] - cpx
-        dy = py[:, None] - cpy
-        return np.sqrt((dx * dx + dy * dy).min(axis=1))
+    def _min_dist_to_path(
+        px: np.ndarray, py: np.ndarray, chunk: int = 8192
+    ) -> np.ndarray:
+        """Chunked vectorised min-distance from points to polyline segments.
+
+        WAVE-1-HOTFIX-2 Bug 2 (FIX_PATTERN_v1 §C5 perf/HW envelope): the prior
+        implementation broadcast ``(N_verts, N_segments)`` directly. At AAA
+        terrain sizes (4096^2 verts x 500 segments = 8.3B doubles = 67 GB per
+        intermediate, several intermediates simultaneously) this allocation
+        either OOM'd the 8 GB VRAM HW envelope or spilled to swap and turned
+        a 1-second op into multi-minute. Chunk over points in 8 192-row
+        batches so peak transient memory stays bounded regardless of N_verts.
+        With the default chunk, per-intermediate alloc is ~33 MB at 500
+        segments (~33 MB * ~7 intermediates = ~230 MB peak); pre-fix at
+        N_verts=1M+ this was 30+ GB. Output is bit-identical to the prior
+        single-pass code (per-row math is unchanged, batches just iterate
+        the row dimension).
+        """
+        n = int(px.shape[0])
+        out = np.empty(n, dtype=np.float64)
+        # Edge case: empty point array -> empty output (matches prior behavior).
+        if n == 0:
+            return out
+        chunk = max(1, int(chunk))
+        for start in range(0, n, chunk):
+            end = min(start + chunk, n)
+            px_c = px[start:end]
+            py_c = py[start:end]
+            t = (
+                (px_c[:, None] - seg_a[None, :, 0]) * ab[None, :, 0]
+                + (py_c[:, None] - seg_a[None, :, 1]) * ab[None, :, 1]
+            ) / ab_sq[None, :]
+            t = np.clip(t, 0.0, 1.0)
+            cpx = seg_a[None, :, 0] + t * ab[None, :, 0]
+            cpy = seg_a[None, :, 1] + t * ab[None, :, 1]
+            dx = px_c[:, None] - cpx
+            dy = py_c[:, None] - cpy
+            out[start:end] = np.sqrt((dx * dx + dy * dy).min(axis=1))
+        return out
 
     def _ss(x: np.ndarray) -> np.ndarray:
         return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
@@ -6069,17 +6147,13 @@ def handle_create_cave_entrance(params: dict[str, Any]) -> dict[str, Any]:
     placement_blocked = False
     blocked_by_zone: str | None = None
     raw_protected_zones = params.get("protected_zones") or []
+    # WAVE-1-HOTFIX-2 Bug 3: dual-schema resolver — structure placement now
+    # honours zones from both nested-bounds and flat-AABB upstream paths.
     for pz in raw_protected_zones:
-        bounds = pz.get("bounds")
-        if not isinstance(bounds, dict):
-            continue
-        bmin_x = float(bounds.get("min_x", -1e18))
-        bmin_y = float(bounds.get("min_y", -1e18))
-        bmax_x = float(bounds.get("max_x",  1e18))
-        bmax_y = float(bounds.get("max_y",  1e18))
+        bmin_x, bmin_y, bmax_x, bmax_y = _resolve_protected_zone_aabb(pz)
         if bmin_x <= location[0] <= bmax_x and bmin_y <= location[1] <= bmax_y:
             placement_blocked = True
-            blocked_by_zone = str(pz.get("zone_id", "unknown"))
+            blocked_by_zone = str(pz.get("zone_id", "unknown") if isinstance(pz, dict) else "unknown")
             break
 
     if placement_blocked:
@@ -6328,11 +6402,11 @@ def handle_generate_road(params: dict[str, Any]) -> dict[str, Any]:
         road_pz_mask = np.zeros((rows, cols), dtype=bool)
         protected_cells_skipped = 0
         if raw_protected_zones:
+            # WAVE-1-HOTFIX-2 Bug 3: dual-schema resolver — road network
+            # protection mask now also honours nested-bounds zones (the
+            # canonical form emitted by _resolve_terrain_tile_params).
             for pz in raw_protected_zones:
-                pz_x0 = float(pz.get("x_min", pz.get("x0", -1e9)))
-                pz_x1 = float(pz.get("x_max", pz.get("x1",  1e9)))
-                pz_y0 = float(pz.get("y_min", pz.get("y0", -1e9)))
-                pz_y1 = float(pz.get("y_max", pz.get("y1",  1e9)))
+                pz_x0, pz_y0, pz_x1, pz_y1 = _resolve_protected_zone_aabb(pz)
                 road_pz_mask |= (
                     (_col_w[np.newaxis, :] >= pz_x0) & (_col_w[np.newaxis, :] <= pz_x1)
                     & (_row_w[:, np.newaxis] >= pz_y0) & (_row_w[:, np.newaxis] <= pz_y1)
@@ -8195,11 +8269,10 @@ def handle_carve_water_basin(params: dict[str, Any]) -> dict[str, Any]:
         # ------------------------------------------------------------------
         pz_mask = np.zeros((rows, cols), dtype=bool)
         if protected_zones:
+            # WAVE-1-HOTFIX-2 Bug 3: dual-schema resolver — seasonal water
+            # basin masking now also honours nested-bounds zones.
             for pz in protected_zones:
-                pz_x0 = float(pz.get("x_min", pz.get("x0", -1e9)))
-                pz_x1 = float(pz.get("x_max", pz.get("x1",  1e9)))
-                pz_y0 = float(pz.get("y_min", pz.get("y0", -1e9)))
-                pz_y1 = float(pz.get("y_max", pz.get("y1",  1e9)))
+                pz_x0, pz_y0, pz_x1, pz_y1 = _resolve_protected_zone_aabb(pz)
                 pz_mask |= (
                     (_col_w[np.newaxis, :] >= pz_x0) & (_col_w[np.newaxis, :] <= pz_x1)
                     & (_row_w[:, np.newaxis] >= pz_y0) & (_row_w[:, np.newaxis] <= pz_y1)
