@@ -82,19 +82,22 @@ def _rebind_pass_funcs_for_module(module_name: str) -> int:
 # Missing modules are silently skipped via _safe_reload, so additions here
 # are safe even if the module has not been created yet.
 _BIOME_RULE_MODULES = (
-    "veilbreakers_terrain.handlers.terrain_ecotone_graph",
-    "veilbreakers_terrain.handlers.terrain_materials_v2",
-    "veilbreakers_terrain.handlers.terrain_banded",
     # FIX-B14-P1-31: expanded to all biome *rule-dispatching* modules.
-    # IMPORTANT: never add modules that define dataclasses (e.g. terrain_water_variants,
-    # terrain_semantics) — reloading them creates new class objects, breaking
-    # isinstance() checks in already-imported code.
-    "veilbreakers_terrain.handlers.terrain_foliage_catalog",
+    # IMPORTANT: NEVER add modules that define dataclasses at module scope —
+    # reloading them creates new class objects, silently breaking isinstance()
+    # checks in already-imported code (WAVE4-HOT-RELOAD-DATACLASS-001).
+    #
+    # Modules intentionally EXCLUDED because they define @dataclass types:
+    #   terrain_ecotone_graph    — EcotoneEdge
+    #   terrain_materials_v2    — MaterialChannel, MaterialRuleSet
+    #   terrain_banded          — BandedHeightmap
+    #   terrain_foliage_catalog — SpeciesSpec
+    #   procedural_grass        — GrassSpecies, GrassPlacementRecord
+    #   _biome_grammar          — WorldMapSpec
+    # test_wave4_hot_reload_no_dataclass_modules.py enforces this rule in CI.
     "veilbreakers_terrain.handlers.terrain_biome_registry",
-    "veilbreakers_terrain.handlers._biome_grammar",
     "veilbreakers_terrain.handlers.terrain_banded_advanced",
     "veilbreakers_terrain.handlers.terrain_materials",
-    "veilbreakers_terrain.handlers.procedural_grass",
     "veilbreakers_terrain.handlers.vegetation_system",
     "veilbreakers_terrain.handlers.environment_scatter",
     "veilbreakers_terrain.handlers._scatter_engine",
@@ -102,7 +105,8 @@ _BIOME_RULE_MODULES = (
 
 _MATERIAL_RULE_MODULES = (
     "veilbreakers_terrain.handlers.terrain_materials",
-    "veilbreakers_terrain.handlers.terrain_materials_v2",
+    # terrain_materials_v2 intentionally excluded: defines @dataclass MaterialChannel
+    # and MaterialRuleSet at module scope (WAVE4-HOT-RELOAD-DATACLASS-001).
 )
 
 
