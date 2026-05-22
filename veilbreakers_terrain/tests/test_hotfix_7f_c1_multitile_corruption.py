@@ -19,7 +19,6 @@ tile grid.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_rng import derive_pass_seed
 from veilbreakers_terrain.handlers.terrain_semantics import (
@@ -218,8 +217,7 @@ def test_insert_hero_cliff_meshes_mesh_seed_uses_tile_coords():
     via monkey-patching.  The function must call ``_build_cliff_wall_mesh_spec``
     with different ``seed`` values for the two tile states.
     """
-    import math
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from veilbreakers_terrain.handlers.terrain_cliffs import (
         CliffStructure,
