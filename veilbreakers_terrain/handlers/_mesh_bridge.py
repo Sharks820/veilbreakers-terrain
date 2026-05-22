@@ -1575,7 +1575,7 @@ def mesh_from_spec(
                 bm_vi = len(bm_verts)
                 _vert_dedup[key] = bm_vi
                 bm_verts.append(bm.verts.new(v))
-                _remap.append(idx)
+                _remap.append(bm_vi)
         # Populate the inverse map AFTER _remap is built so each bm vert
         # points at the FIRST original index that mapped onto it. First-wins
         # matches the prior implicit behaviour for non-welded meshes (where
