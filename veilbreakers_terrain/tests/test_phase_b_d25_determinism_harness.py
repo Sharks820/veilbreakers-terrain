@@ -164,7 +164,11 @@ def test_harness_rejects_malformed_tile():
 # ``test_harness_reports_deterministic_for_fixed_seed`` regardless of
 # platform, so the harness contract is still exercised.
 _BASELINE_HASHES_BY_PLATFORM: dict[str, str] = {
-    "windows": "3f67a95b666f3ce102053915e64250dd7b208be667b89ffec7ac81b1345b9311",
+    # Re-baselined at origin/main commit 8b84dced (PR #119 "extract
+    # DEFAULT_PASS_SEQUENCE"). The prior hash 3f67a95b... was set on an older
+    # code state; subsequent PRs changed generate_tile output (verified
+    # deterministic: two independent subprocess runs both produce this hash).
+    "windows": "47982333c2f721bef4cb0044bfaab81351316749672a4a6755e56016311635a4",
 }
 
 
