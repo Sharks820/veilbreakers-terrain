@@ -176,7 +176,7 @@ def _protected_mask(
     pass_name: str,
 ) -> np.ndarray:
     # HOTFIX-7d (Verifier A #13): unified schema-tolerant resolver.
-    from ._protected_zones import _resolve_protected_zone_aabb
+    from ._protected_zones import _resolve_protected_zone_aabb, _zone_permits
 
     stack = state.mask_stack
     mask = np.zeros(shape, dtype=bool)
@@ -187,7 +187,7 @@ def _protected_mask(
     xs = stack.world_origin_x + (np.arange(cols) + 0.5) * stack.cell_size
     xg, yg = np.meshgrid(xs, ys)
     for zone in state.intent.protected_zones:
-        if zone.permits(pass_name):
+        if _zone_permits(zone, pass_name):
             continue
         min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
         inside = (

@@ -945,6 +945,7 @@ def register_procedural_grass_pass() -> None:
             # for grass placement rules (spec §4.2 foliage stack). Read via
             # stack.get(...) so the pass works without them.
             optional_channels=(
+                "biome_names",
                 "vb_aspect_deg",
                 "vb_aspect_north",
                 "vb_canopy_openness",

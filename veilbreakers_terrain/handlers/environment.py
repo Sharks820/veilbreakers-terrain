@@ -29,7 +29,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 import numpy as np
 
 from .terrain_protocol import enforce_protocol
-from ._protected_zones import _resolve_protected_zone_aabb, _zone_id  # noqa: F401  # re-exported for PR #123 call sites
+from ._protected_zones import _resolve_protected_zone_aabb, _zone_id  # noqa: F401  # re-exported for parity with _resolve_protected_zone_aabb and _zone_permits (PR #126 review)
 
 # Lazy-import guard: bpy/bmesh only available inside Blender. Modules that
 # transitively import this file outside Blender (tests, CI) must not crash at

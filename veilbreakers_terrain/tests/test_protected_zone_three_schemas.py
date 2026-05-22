@@ -304,6 +304,55 @@ class TestSiblingHandlersConsumeSchemaC:
         mask = _protected_mask_for_caves(state, shape)
         assert mask.any()
 
+    def test_terrain_delta_integrator_protected_mask_resolves_dataclass(self) -> None:
+        """pass_integrate_deltas routes through _zone_permits + _resolve_protected_zone_aabb.
+
+        PR #126 adversarial review F7: terrain_delta_integrator had no sibling test
+        in this class.  This test confirms that dict-shaped zones (Schema B) do not
+        crash the protected-zone path (previously ``zone.permits("integrate_deltas")``
+        would AttributeError on a plain dict).
+        """
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import (
+            pass_integrate_deltas,
+        )
+        from veilbreakers_terrain.handlers.terrain_semantics import (
+            BBox,
+            TerrainIntentState,
+            TerrainMaskStack,
+            TerrainPipelineState,
+        )
+
+        tile_size = 8
+        arr = np.zeros((tile_size + 1, tile_size + 1), dtype=np.float64)
+        stack = TerrainMaskStack(
+            tile_size=tile_size,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=arr,
+        )
+        # Schema B (flat-AABB dict) zone — previously crashed on zone.permits()
+        dict_zone: dict = {
+            "zone_id": "test_dict_zone",
+            "x_min": 0.0,
+            "y_min": 0.0,
+            "x_max": 4.0,
+            "y_max": 4.0,
+            "forbidden_kinds": ["integrate_deltas"],
+        }
+        intent = TerrainIntentState(
+            seed=1,
+            region_bounds=BBox(0.0, 0.0, float(tile_size), float(tile_size)),
+            tile_size=tile_size,
+            cell_size=1.0,
+            protected_zones=(dict_zone,),  # type: ignore[arg-type]
+        )
+        state = TerrainPipelineState(intent=intent, mask_stack=stack)
+        result = pass_integrate_deltas(state, region=None)
+        assert result.status == "ok", f"unexpected status: {result.status}"
+
 
 # ---------------------------------------------------------------------------
 # _zone_permits — schema-tolerant permits() resolver
@@ -420,3 +469,54 @@ class TestZoneId:
         # Some upstream paths set zone_id as int — diagnostic must
         # still produce a string-safe value.
         assert _zone_id({"zone_id": 42}) == "42"
+
+
+# ---------------------------------------------------------------------------
+# _zone_bounds_intersect — PR #126 adversarial review F2
+# ---------------------------------------------------------------------------
+
+
+class TestZoneBoundsIntersect:
+    """PR #126 adversarial review F2: _zone_bounds_intersect must handle
+    all three zone schemas so TerrainPassController.enforce_protected_zones
+    does not crash on dict-shaped zones.
+    """
+
+    def _target(self) -> Any:
+        from veilbreakers_terrain.handlers.terrain_semantics import BBox
+
+        return BBox(min_x=2.0, min_y=2.0, max_x=6.0, max_y=6.0)
+
+    def test_object_zone_intersects(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_bounds_intersect
+        from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
+
+        zone = ProtectedZoneSpec(
+            zone_id="z",
+            bounds=BBox(min_x=0.0, min_y=0.0, max_x=4.0, max_y=4.0),
+            kind="generic",
+        )
+        assert _zone_bounds_intersect(zone, self._target()) is True
+
+    def test_object_zone_no_intersect(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_bounds_intersect
+        from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
+
+        zone = ProtectedZoneSpec(
+            zone_id="z",
+            bounds=BBox(min_x=10.0, min_y=10.0, max_x=20.0, max_y=20.0),
+            kind="generic",
+        )
+        assert _zone_bounds_intersect(zone, self._target()) is False
+
+    def test_dict_zone_schema_b_intersects(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_bounds_intersect
+
+        zone = {"zone_id": "z", "x_min": 0.0, "y_min": 0.0, "x_max": 4.0, "y_max": 4.0}
+        assert _zone_bounds_intersect(zone, self._target()) is True
+
+    def test_dict_zone_schema_b_no_intersect(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_bounds_intersect
+
+        zone = {"zone_id": "z", "x_min": 50.0, "y_min": 50.0, "x_max": 60.0, "y_max": 60.0}
+        assert _zone_bounds_intersect(zone, self._target()) is False

@@ -29,7 +29,7 @@ from typing import Any
 # ``from ._protected_zones import _resolve_protected_zone_aabb``. Declaring
 # it in __all__ silences ``reportUnusedFunction`` without renaming the
 # symbol (which would break PR #123's existing call sites).
-__all__ = ["_resolve_protected_zone_aabb", "_zone_permits"]
+__all__ = ["_resolve_protected_zone_aabb", "_zone_permits", "_zone_bounds_intersect", "_zone_id"]
 
 
 def _resolve_protected_zone_aabb(
@@ -131,9 +131,6 @@ def _resolve_protected_zone_aabb(
 def _zone_permits(
     zone: Any,
     kind: str,
-    *,
-    x: float | None = None,
-    y: float | None = None,
 ) -> bool:
     """Schema-tolerant zone.permits() — works with object zones (.permits method)
     AND dict-shaped zones (key-based forbid/allow lists).
@@ -176,3 +173,33 @@ def _zone_id(zone: Any) -> str:
     if isinstance(zone, dict):
         return str(zone.get("zone_id", "unknown"))
     return str(getattr(zone, "zone_id", "unknown"))
+
+
+def _zone_bounds_intersect(zone: Any, target_bounds: Any) -> bool:
+    """Schema-tolerant zone.bounds.intersects(target_bounds) — AABB-intersection
+    that works whether zone is object-with-bounds-with-intersects,
+    object-with-bounds-as-dict, or dict zone (all three schemas accepted by
+    ``_resolve_protected_zone_aabb``).
+
+    PR #126 adversarial review F2: ``TerrainPassController.enforce_protected_zones``
+    called ``zone.bounds.intersects(target_bounds)`` directly, which crashes when
+    a caller supplies a dict-shaped zone instead of a ProtectedZoneSpec.  This
+    helper replaces that call so the pipeline-core enforcement is schema-tolerant.
+
+    ``target_bounds`` is the typed ``BBox`` with ``.min_x/.min_y/.max_x/.max_y``
+    or a 4-tuple ``(min_x, min_y, max_x, max_y)`` fallback.
+    """
+    z_min_x, z_min_y, z_max_x, z_max_y = _resolve_protected_zone_aabb(zone)
+    if hasattr(target_bounds, "min_x"):
+        t_min_x = float(target_bounds.min_x)
+        t_min_y = float(target_bounds.min_y)
+        t_max_x = float(target_bounds.max_x)
+        t_max_y = float(target_bounds.max_y)
+    else:
+        t_min_x, t_min_y, t_max_x, t_max_y = target_bounds  # 4-tuple fallback
+    return (
+        z_min_x <= t_max_x
+        and z_max_x >= t_min_x
+        and z_min_y <= t_max_y
+        and z_max_y >= t_min_y
+    )

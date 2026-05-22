@@ -49,6 +49,11 @@ from .terrain_semantics import (
     UnknownPassError,
     ValidationIssue,
 )
+from ._protected_zones import (
+    _resolve_protected_zone_aabb,
+    _zone_bounds_intersect,
+    _zone_permits,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -944,15 +949,16 @@ class TerrainPassController:
         on forbidden cells.
         """
         for zone in self.state.intent.protected_zones:
-            if not zone.bounds.intersects(target_bounds):
+            if not _zone_bounds_intersect(zone, target_bounds):
                 continue
-            if zone.permits(pass_name):
+            if _zone_permits(zone, pass_name):
                 continue
+            z_min_x, z_min_y, z_max_x, z_max_y = _resolve_protected_zone_aabb(zone)
             fully_covers = (
-                zone.bounds.min_x <= target_bounds.min_x
-                and zone.bounds.min_y <= target_bounds.min_y
-                and zone.bounds.max_x >= target_bounds.max_x
-                and zone.bounds.max_y >= target_bounds.max_y
+                z_min_x <= target_bounds.min_x
+                and z_min_y <= target_bounds.min_y
+                and z_max_x >= target_bounds.max_x
+                and z_max_y >= target_bounds.max_y
             )
             if fully_covers:
                 raise ProtectedZoneViolation(
