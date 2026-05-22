@@ -625,7 +625,16 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     "foam": "dimensionless",
     "mist": "dimensionless",
     "wet_rock": "dimensionless",
-    "macro_color": "dimensionless",
+    # CP5-CASCADE Bug 2: macro_color is (H, W, 3) float32 RGB emitted by
+    # terrain_macro_color.compute_macro_color (biome palette + altitude +
+    # wetness modulations), NOT a scalar dimensionless mask. Retagged
+    # "rgb_triplet" to match the new ChannelInfo in _channels.py
+    # (Channel.MACRO_COLOR_RGB) and to close the same Shape-A tag-vs-
+    # shape mismatch class as the strata_orientation case PR #113
+    # closed. Cross-registry symmetry test
+    # test_cross_registry_consistency_with_golden_snapshots pins both
+    # sides at "rgb_triplet" post-retag.
+    "macro_color": "rgb_triplet",
     "talus": "dimensionless",
     "grass_density_map": "dimensionless",
     "snow_coverage": "dimensionless",
