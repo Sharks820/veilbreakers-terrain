@@ -1221,6 +1221,8 @@ def generate_lod_specs(
     base_name = spec["metadata"]["name"]
     aabb = _compute_aabb(src_verts)
     src_meta = spec["metadata"]
+    # Extract source material_ids once; None means single-material (no key needed).
+    src_material_ids: list[int] | None = spec.get("material_ids") or None
 
     lod_specs: list[MeshSpec] = []
 
