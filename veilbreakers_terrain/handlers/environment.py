@@ -1412,7 +1412,7 @@ def _read_neighbor_heightmap_from_manifest(neighbor: dict[str, Any]) -> np.ndarr
     # would escape the narrow ``except`` tuple in the caller and crash the bake.
     # Return early with a clear warning so the caller's ``except`` tuple does
     # not need to cover this case — the isinstance check is a cleaner firewall.
-    if not isinstance(neighbor, dict):
+    if not isinstance(neighbor, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
         logger.warning(
             "_read_neighbor_heightmap_from_manifest: neighbor is not a dict "
             "(got %s); skipping neighbor edge",
