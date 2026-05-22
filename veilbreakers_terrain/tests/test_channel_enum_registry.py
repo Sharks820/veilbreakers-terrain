@@ -84,19 +84,26 @@ def test_every_channel_has_channel_info() -> None:
 
 def test_canonical_unit_set_is_closed() -> None:
     """The unit string must be one of the closed set {m, rad, deg,
-    dimensionless, id, count, unit_normal_xyz}. Any other unit is a typo
-    or a new unit class that needs explicit consideration.
+    dimensionless, id, count, unit_normal_xyz, rgb_triplet}. Any other
+    unit is a typo or a new unit class that needs explicit consideration.
 
     UT-C1 (CHECKPOINT-OPUS-ULTRA hotfix): added ``unit_normal_xyz`` for
     the strata_orientation channel which is a (H, W, 3) direction-cosine
-    field, not radians. Adding the unit explicitly here keeps the
-    closed-set invariant intact while welcoming the new class.
+    field, not radians.
+
+    CP5-CASCADE Bug 2 (CHECKPOINT-5 V2 hotfix): added ``rgb_triplet`` for
+    the macro_color channel which is a (H, W, 3) float32 RGB triple,
+    not a scalar dimensionless mask. Same Shape-A class as the
+    strata_orientation retag, same closed-set closure pattern.
+
+    Adding new units explicitly here keeps the closed-set invariant
+    intact while welcoming new classes.
     """
     from veilbreakers_terrain.handlers._channels import Channel
 
     allowed = {
         "m", "rad", "deg", "dimensionless", "id", "count",
-        "unit_normal_xyz",
+        "unit_normal_xyz", "rgb_triplet",
     }
     for ch in Channel:
         assert ch.info.unit in allowed, (

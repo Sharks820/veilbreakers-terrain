@@ -1744,6 +1744,19 @@ def mesh_from_spec(
     # carries only a single ``metadata["category"]`` per spec — the
     # all-slots-same-material choice mirrors how Blender's auto-import
     # populates placeholder slots for multi-submesh objects.
+    #
+    # CP5-CASCADE Bug 3 (CHECKPOINT-5 V2 hotfix): PR #118's homogenization
+    # loop silently collapsed spec-supplied ``material_ids`` differentiation
+    # — every slot received the same auto-category material, so multi-
+    # material specs (faces with distinct ``material_index`` values) ended
+    # up rendering as a single material despite the per-face
+    # ``material_index`` assignment surviving on polygons. Split the loop:
+    # when ``material_ids`` differentiates faces (multi-material spec),
+    # only fill empty (``None``) placeholder slots so non-None slots
+    # populated by upstream consumers (or by future per-slot dispatch)
+    # survive. When no ``material_ids`` are present (single-category
+    # spec), homogenize as before to preserve the PR #110/CP4 fix that
+    # closes the magenta-debug regression for single-material meshes.
     category = spec.get("metadata", {}).get("category", "")
     if category:
         material_type = CATEGORY_MATERIAL_MAP.get(category)
@@ -1757,12 +1770,30 @@ def mesh_from_spec(
                     mat_name = f"{obj_name}_{material_type}"
                     mat = create_procedural_material(mat_name, material_type)
                     if obj.data.materials:
-                        # Fill every allocated slot — including PR #110
-                        # placeholder ``None`` slots — so faces with
-                        # ``material_index >= 1`` no longer reference
-                        # missing materials and render as magenta debug.
-                        for slot_idx in range(len(obj.data.materials)):
-                            obj.data.materials[slot_idx] = mat
+                        # CP5-CASCADE Bug 3: differentiate by whether the
+                        # spec carries per-face material_ids. Multi-
+                        # material specs preserve any non-None slots
+                        # (set by upstream or future per-slot dispatch);
+                        # single-category specs homogenize (preserves
+                        # the PR #110/CP4 magenta-debug fix).
+                        if material_ids and len(set(material_ids)) > 1:
+                            # Multi-material spec — only fill empty
+                            # (None) placeholder slots. This preserves
+                            # any non-None slot a future per-slot
+                            # dispatcher may have populated, while
+                            # still closing the magenta-debug regression
+                            # for any slot that PR #110 left as None.
+                            for slot_idx in range(len(obj.data.materials)):
+                                if obj.data.materials[slot_idx] is None:
+                                    obj.data.materials[slot_idx] = mat
+                        else:
+                            # Single-category spec (or all material_ids
+                            # collapse to one) — homogenize as before
+                            # so faces with material_index >= 1 no
+                            # longer reference missing materials and
+                            # render as magenta debug.
+                            for slot_idx in range(len(obj.data.materials)):
+                                obj.data.materials[slot_idx] = mat
                     else:
                         obj.data.materials.append(mat)
             except Exception:
