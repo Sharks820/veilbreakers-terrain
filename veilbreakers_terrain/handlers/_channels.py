@@ -148,12 +148,20 @@ class Channel(Enum):
     CURVATURE = "curvature"
     BANK_INSTABILITY = "bank_instability"
     # --- Categorical-derived RGB mask (multi-channel float32) ---
-    # macro_color is (H, W, 3) float32 RGB on TerrainMaskStack — produced by
-    # terrain_macro_color.compute_macro_color from biome palette + altitude
-    # + wetness. Pinned "dimensionless" to match the assertion-site registry
-    # in terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS (no physical unit,
-    # but not in [0, 1] per-channel; the RGB triple carries no metric).
-    MACRO_COLOR = "macro_color"
+    # CP5-CASCADE (CHECKPOINT-5 V2 hotfix, Bug 2): the producer at
+    # ``terrain_macro_color.compute_macro_color`` writes (H, W, 3) float32
+    # RGB values, NOT a scalar [0, 1] mask. The previous "dimensionless"
+    # tag was a Shape-A bug class (same shape as the strata_orientation
+    # tag bug PR #113 retagged). The new tag "rgb_triplet" matches the
+    # producer's actual shape; the enum is renamed to
+    # ``MACRO_COLOR_RGB`` to make the multi-channel surface explicit
+    # at every consumer site. The string value ``"macro_color"`` is
+    # unchanged so the mask-stack accessor remains backwards-compatible
+    # (consumers already expect an RGB triple). Bidirectional cross-
+    # registry symmetry tests in test_channel_enum_registry pin the
+    # post-retag unit at both _channels and
+    # terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS.
+    MACRO_COLOR_RGB = "macro_color"
 
     # --- Binary masks (dimensionless 0/1) ---
     CLIFF_CANDIDATE = "cliff_candidate"
@@ -280,11 +288,12 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
     Channel.BANK_INSTABILITY: ChannelInfo(
         "dimensionless", "Bank instability factor [0, 1]"
     ),
-    Channel.MACRO_COLOR: ChannelInfo(
-        "dimensionless",
+    Channel.MACRO_COLOR_RGB: ChannelInfo(
+        "rgb_triplet",
         "Per-cell macro-color RGB triple (H, W, 3) float32 — biome palette "
-        "blended with altitude + wetness modulations. Multi-channel; no "
-        "scalar unit",
+        "blended with altitude + wetness modulations. Multi-channel; "
+        "values are linear RGB in [0, 1] per component, not a scalar "
+        "dimensionless mask. See CP5-CASCADE Bug 2 retag.",
     ),
     # Binary masks
     Channel.CLIFF_CANDIDATE: ChannelInfo(
