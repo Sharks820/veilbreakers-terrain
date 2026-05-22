@@ -242,21 +242,22 @@ def fake_bm_factory(monkeypatch: pytest.MonkeyPatch):  # type: ignore[misc]
             pass
 
     fake_mesh_data = _FakeMeshData()
-    _bpy_stub.data.meshes.new = lambda name: fake_mesh_data  # type: ignore[attr-defined]
+    monkeypatch.setattr(_bpy_stub.data.meshes, "new", lambda name: fake_mesh_data)
 
     # bpy.data.objects.new → return a fake obj
     class _FakeObj:
+        name: str = "fake_obj"
         location = (0.0, 0.0, 0.0)
         rotation_euler = (0.0, 0.0, 0.0)
         scale = (1.0, 1.0, 1.0)
         parent = None
 
     fake_obj = _FakeObj()
-    _bpy_stub.data.objects.new = lambda name, mesh: fake_obj  # type: ignore[attr-defined]
+    monkeypatch.setattr(_bpy_stub.data.objects, "new", lambda name, mesh: fake_obj)
 
     # bpy.context.collection.objects.link → no-op
     fake_collection = _types.SimpleNamespace(objects=_types.SimpleNamespace(link=lambda o: None))
-    _bpy_stub.context.collection = fake_collection  # type: ignore[attr-defined]
+    monkeypatch.setattr(_bpy_stub.context, "collection", fake_collection)
 
     # Force _HAS_BPY=True (conftest may already set this, but be explicit)
     monkeypatch.setattr(_mb, "_HAS_BPY", True)
