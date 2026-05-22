@@ -41,7 +41,7 @@ def _make_spec(
         b = (i + 1) % len(verts)
         c = (i + 2) % len(verts)
         faces.append((a, b, c))
-    spec: dict = {
+    spec: dict[str, Any] = {
         "vertices": verts,
         "faces": faces,
         "uvs": [(float(i) / n_faces, 0.0) for i in range(len(verts))],
