@@ -117,7 +117,10 @@ _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # Updated to 644 by WAVE5-3 fix (CE-WAVE-5 2026-05-22): 16-line comment
     # block added above ``has_scene_read`` in build_default_pass_sequence
     # (include_cliffs/include_caves vars) shifted derive_pass_seed downward.
-    ("handlers/terrain_pipeline.py", 644),
+    # Updated to 651 by WAVE5-3 + PR#125 merge: CP5-CASCADE Bug 3 cliffs/caves
+    # include_cliffs/include_caves 7-line block in build_default_pass_sequence
+    # added 7 more lines above derive_pass_seed (644 -> 651).
+    ("handlers/terrain_pipeline.py", 651),
     # terrain_determinism_ci.hash_state — intent recursion for hash only.
     ("handlers/terrain_determinism_ci.py", 87),
     # terrain_io.atomic_write_json — passes allow_nan kwarg through the
