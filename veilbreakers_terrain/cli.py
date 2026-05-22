@@ -150,14 +150,16 @@ def _run_real_pipeline_for_cli(
 
     # Minimal scene-read-free pass sequence (mirrors the default selected
     # by environment.py:_execute_terrain_pipeline when scene_read is None).
-    pass_sequence = [
-        "pass_generate_low_freq_hmap",
-        "terrain_labels",
-        "structural_masks",
-        "pass_generate_high_freq_detail",
-        "pass_composite_hmap",
-        "validation_minimal",
-    ]
+    #
+    # Round-2 (#119): sourced from the single-source-of-truth in
+    # ``handlers._default_pass_sequences`` so the CLI runtime pipeline
+    # cannot silently desync from the canonical extraction. The previous
+    # inline literal was the third copy of this sequence in the codebase
+    # (introduced post-V8-audit by PR #102 T0-2 CLI rewire) and was being
+    # consumed as the actual runtime pipeline by ``run_pipeline``, not
+    # just for registry pre-warm.
+    from .handlers._default_pass_sequences import DEFAULT_CLI_PASS_SEQUENCE
+    pass_sequence = list(DEFAULT_CLI_PASS_SEQUENCE)
 
     # checkpoint=False: do not write filesystem-side checkpoints from the
     # CLI bake (the manifest+heightmap+splatmap are the only artifacts the
