@@ -303,3 +303,81 @@ class TestSiblingHandlersConsumeSchemaC:
         state, shape = _make_state(tile_size=8)
         mask = _protected_mask_for_caves(state, shape)
         assert mask.any()
+
+
+# ---------------------------------------------------------------------------
+# _zone_permits — schema-tolerant permits() resolver
+# ---------------------------------------------------------------------------
+
+
+class TestZonePermits:
+    """PR #126 review (coderabbit T7/T9/T10): _zone_permits must accept
+    object zones (dataclass-style with ``.permits()`` method) AND dict
+    zones (key-based forbid/allow lists) without crashing on either.
+    """
+
+    def test_object_zone_delegates_to_permits_method(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        class _ObjZone:
+            def __init__(self, allowed: set[str]) -> None:
+                self._allowed = allowed
+
+            def permits(self, kind: str) -> bool:
+                return kind in self._allowed
+
+        zone = _ObjZone({"trees"})
+        assert _zone_permits(zone, "trees") is True
+        assert _zone_permits(zone, "boulders") is False
+
+    def test_dict_zone_forbidden_kinds_denies(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        zone = {"forbidden_kinds": ("boulders", "trees")}
+        assert _zone_permits(zone, "boulders") is False
+        assert _zone_permits(zone, "trees") is False
+        # Anything not in forbidden_kinds is permitted (no allow-list set).
+        assert _zone_permits(zone, "grass") is True
+
+    def test_dict_zone_forbid_alias_denies(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        zone = {"forbid": ("trees",)}
+        assert _zone_permits(zone, "trees") is False
+        assert _zone_permits(zone, "grass") is True
+
+    def test_dict_zone_allowed_kinds_restricts(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        zone = {"allowed_kinds": ("grass",)}
+        assert _zone_permits(zone, "grass") is True
+        assert _zone_permits(zone, "trees") is False
+
+    def test_dict_zone_allow_alias_restricts(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        zone = {"allow": ("grass",)}
+        assert _zone_permits(zone, "grass") is True
+        assert _zone_permits(zone, "trees") is False
+
+    def test_dict_zone_forbidden_wins_over_allowed(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        zone = {"forbidden_kinds": ("trees",), "allowed_kinds": ("trees", "grass")}
+        # Forbidden is checked first — trees is denied even though it is
+        # also in allowed_kinds.
+        assert _zone_permits(zone, "trees") is False
+        assert _zone_permits(zone, "grass") is True
+
+    def test_empty_dict_zone_defaults_permissive(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        assert _zone_permits({}, "anything") is True
+
+    def test_unknown_shape_defaults_permissive(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        # No .permits() method, not a dict — open zone fallback.
+        assert _zone_permits(object(), "anything") is True
+        assert _zone_permits(None, "anything") is True
+        assert _zone_permits(42, "anything") is True
