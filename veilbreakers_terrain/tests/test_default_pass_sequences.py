@@ -156,15 +156,29 @@ def test_prewarm_is_strict_subset_of_canonical_builder(
         )
     )
 
-    missing = sorted(prewarm - canonical)
-    assert not missing, (
+    # --- direction 1: no stray entries in prewarm that canonical doesn't have ---
+    stray = sorted(prewarm - canonical)
+    assert not stray, (
         "Drift detected: prewarm list contains passes the canonical "
         f"build_default_pass_sequence does not produce for "
         f"quality_profile={quality_profile!r}, has_scene_read={has_scene_read}: "
-        f"{missing}. Update _default_pass_sequences.py to match the "
+        f"{stray}. Update _default_pass_sequences.py to match the "
         "canonical builder (or update build_default_pass_sequence)."
     )
-    # silence np unused-import lint (numpy import asserts the hard dep)
+    # --- direction 2: prewarm is strictly smaller than canonical (proper subset) ---
+    # The pre-warm list is intentionally a SUBSET of the full pipeline — it
+    # covers only the passes needed for registry warm-up, not every step that
+    # build_default_pass_sequence emits. If prewarm ever grows to equal
+    # canonical, that means either the canonical builder lost passes (shrunk)
+    # or the prewarm accidentally absorbed the entire pipeline, both of which
+    # represent contract drift and should break loudly.
+    assert prewarm < canonical, (
+        f"prewarm is not a strict (proper) subset of canonical for "
+        f"quality_profile={quality_profile!r}, has_scene_read={has_scene_read}: "
+        f"prewarm={sorted(prewarm)}, canonical={sorted(canonical)}. "
+        "The pre-warm list should be smaller than the full pipeline."
+    )
+    # silence np unused-import lint (numpy import asserts the hard dep is present)
     _ = np
 
 
