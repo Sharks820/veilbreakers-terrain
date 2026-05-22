@@ -44,7 +44,7 @@ After WAVE-2, a single max-reasoning Opus verifier (Verifier A) ran independent 
 
 - **12 ALREADY-FIXED** by merged PRs (false alarms from reviewer running on stale branch)
 - **13 STILL-BUGGED** at HEAD (genuine open issues)
-- **2 WORSE-THAN-AUDIT** (severity upgraded — protected_zones 2→3 schemas; derive_pass_seed 13→52 sites across 25 files)
+- **2 WORSE-THAN-AUDIT** (severity upgraded — protected_zones 2→3 schemas; derive_pass_seed 13→52 sites across 33 files)
 
 ### 2.3 CHECKPOINT-5 V1+V2 verification
 
@@ -138,9 +138,9 @@ All findings clustered by domain. Each row: ID / file:line(s) / severity / class
 
 | ID | File:line | Sev | Class | Fixing PR | HW-flag |
 |---|---|---|---|---|---|
-| R-NG-01 | **52 sites across 25 handler files** — `derive_pass_seed(seed, ns, 0, 0, None)` hardcodes tile coords (per Cross-Reviewer ground-truth grep at HEAD `fa7e7ee3`; supersedes earlier 47-site/17-file estimate) | P0 | **WTA** | — | OK |
+| R-NG-01 | **52 sites across 33 handler files** — `derive_pass_seed(seed, ns, 0, 0, None)` hardcodes tile coords (per Cross-Reviewer ground-truth grep at HEAD `fa7e7ee3`; supersedes earlier 47-site/17-file estimate) | P0 | **WTA** | — | OK |
 
-**Files affected** (per Cross-Reviewer ground-truth grep at HEAD `fa7e7ee3` — 25 handler files):
+**Files affected** (per Cross-Reviewer ground-truth grep at HEAD `fa7e7ee3` — 33 handler files):
 
 ```
 _biome_grammar / _scatter_engine / _terrain_depth / _terrain_erosion /
@@ -158,7 +158,7 @@ Only `procedural_grass.py:882` currently uses real `state.tile_x/tile_y`.
 
 **Cluster prescription**: Multi-tile worlds today produce **IDENTICAL content in every tile** because the entire procedural stack repeats with same seed. This is a P0 multi-tile blocker.
 
-**Recommended split** (per Wave-Y04 v2 ordering discipline): NOT one 52-site PR — instead **split by domain**, **6-10 sub-PRs** (widened from prior 5-8 estimate per Cross-Reviewer scope correction: 25 handler files in scope, not 17):
+**Recommended split** (per Wave-Y04 v2 ordering discipline): NOT one 52-site PR — instead **split by domain**, **6-10 sub-PRs** (widened from prior 5-8 estimate per Cross-Reviewer scope correction: 33 handler files in scope, not 17):
 
 1. `RNG-PR-A` — biome + world_map + climate (~8 sites) ~½ day
 2. `RNG-PR-B` — terrain_depth + erosion + noise (~12 sites) ~1 day
@@ -476,7 +476,7 @@ Items below are CONFIRMED LIVE at `origin/main fa7e7ee3`. Ordered by leverage:
 
 | Ord | ID | Description | Effort | LOC est. |
 |---|---|---|---|---|
-| AAA-1 | R-NG-01 | `derive_pass_seed` 52-site multi-tile RNG fix (across 25 handler files) | 4 days (split by domain into 6-10 PRs) | ~220 LOC |
+| AAA-1 | R-NG-01 | `derive_pass_seed` 52-site multi-tile RNG fix (across 33 handler files) | 4 days (split by domain into 6-10 PRs) | ~220 LOC |
 | AAA-2 | U-CL-02 | TreeInstance.rotation 1-LOC wire | 30 min | 1 LOC |
 | AAA-3 | U-CL-06 | CWE-22 Path.Combine containment guard at VbTerrainImporter (17 sites per Cross-Reviewer HEAD) | ½ day | ~60 LOC |
 | AAA-4 | W-AT-04 | BIOME_ATMOSPHERE_RULES vocab alignment (entire game fog-only today) | 1 day | ~60 LOC |
@@ -526,7 +526,7 @@ The directive is **HARD** ("MUST"). Of V01's 73 guardrails, 35 are VISUAL-REQUIR
 | Ord | ID | Description | Effort |
 |---|---|---|---|
 | TT-1 | T-IN-01 | Move `.tmp/regress/` 5 files / 41 functions into `veilbreakers_terrain/tests/` | 1 hr |
-| TT-2 | T-IN-02 | CONFLICT resolution: ground-truth `test_terrain_assets:724` | 15 min check + ~1 hr fix |
+| ~~TT-2~~ | ~~T-IN-02~~ | ~~CONFLICT resolution: ground-truth `test_terrain_assets:724`~~ | **RESOLVED** — closed organically post-PR-#118 line drift; no action needed |
 | TT-3 | T-IN-03 | conftest stub policy: `@pytest.mark.requires_bpy_live` marker | ½ day |
 | TT-4 | T-IN-04 | Determinism guardrail allowlist expansion | ½ day |
 
@@ -543,7 +543,7 @@ All H-ML-* items not on critical path + remaining Wave-Y04 Tier-2 items unchange
 1. **U-CL-02 TreeInstance.rotation 1-LOC** — every terrain tree currently yaw=0 in Unity; 30 minutes; visible immediately. *Highest-leverage trivial fix in entire session.*
 2. **PR-VV-A Visual verification primitives (TIER-AAA-5)** — 35 visual-required guardrails currently 100% silently pass; PR-VV-A is the spine; 1 day; closes user-mandate gap that contradicts a HARD project directive. *Higher-leverage than U-CL-06 by unblocked-guardrail count.*
 3. **W-AT-04 BIOME_ATMOSPHERE_RULES vocab alignment** — entire game shows fog-only atmosphere today; 1 day; immediately unblocks AAA visual ceiling.
-4. **R-NG-01 `derive_pass_seed` 52-site fix across 25 files** — multi-tile worlds today produce identical tiles; ship-blocker for any multi-tile demo; 4 days but parallelizable across 6-10 small PRs.
+4. **R-NG-01 `derive_pass_seed` 52-site fix across 33 files** — multi-tile worlds today produce identical tiles; ship-blocker for any multi-tile demo; 4 days but parallelizable across 6-10 small PRs.
 5. **U-CL-06 CWE-22 path traversal containment** — security finding; Unity can execute arbitrary DLLs via descriptor; ½ day.
 
 **Demoted from top-5 (still on TIER-1 visual/perf queue at §6.3 TV-5)**: E-MN-03 `_paint_road_mask` chunked broadcast — OOMs at 4096² + 500 segments on 8GB target; ½ day refactor.
@@ -627,7 +627,7 @@ MASTER_FINAL Wave-2/3/4+CP5 addendum (post Cross-Reviewer revisions):
 - NEW: AAA-studio benchmark gap analysis section
 - Production readiness: 1.55 → 2.30 → projected 4.0 B+ tier in ~33 PRs / 5-6 weeks
 - Top 5 critical-path: U-CL-02 (TreeInstance 1-LOC), PR-VV-A (visual mandate AAA-5),
-                       W-AT-04 (entire game fog-only), R-NG-01 (52-site/25-file multi-tile),
+                       W-AT-04 (entire game fog-only), R-NG-01 (52-site/33-file multi-tile),
                        U-CL-06 (CWE-22)
 ```
 
