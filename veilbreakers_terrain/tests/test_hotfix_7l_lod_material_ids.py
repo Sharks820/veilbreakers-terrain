@@ -8,7 +8,7 @@ broke every multi-material LOD asset in the pipeline.
 
 from __future__ import annotations
 
-import pytest
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ def _make_spec(
     material_ids: list[int] | None = None,
     *,
     name: str = "TestMesh",
-) -> dict:
+) -> dict[str, Any]:
     """Build a minimal valid MeshSpec for a flat triangle grid."""
     # Two triangles per row, n_faces rows — keep it simple: use a cube-ish mesh
     # with n_faces distinct triangles, all sharing a small vertex pool.
