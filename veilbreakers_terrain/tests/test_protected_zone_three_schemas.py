@@ -381,3 +381,42 @@ class TestZonePermits:
         assert _zone_permits(object(), "anything") is True
         assert _zone_permits(None, "anything") is True
         assert _zone_permits(42, "anything") is True
+
+
+class TestZoneId:
+    """PR #126 review (coderabbit DvFAk): _zone_id must extract zone_id
+    from dict zones (.get) AND object/dataclass zones (getattr) so
+    blocked-by-zone diagnostics survive the same schema fragmentation
+    that motivated _zone_permits and _resolve_protected_zone_aabb.
+    """
+
+    def test_dict_zone_returns_zone_id(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_id
+
+        assert _zone_id({"zone_id": "lake_shore"}) == "lake_shore"
+
+    def test_dict_zone_without_zone_id_returns_unknown(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_id
+
+        assert _zone_id({}) == "unknown"
+
+    def test_object_zone_returns_zone_id(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_id
+
+        @dataclass
+        class _ObjZone:
+            zone_id: str = "ruins"
+
+        assert _zone_id(_ObjZone()) == "ruins"
+
+    def test_object_zone_without_zone_id_returns_unknown(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_id
+
+        assert _zone_id(object()) == "unknown"
+
+    def test_zone_id_coerced_to_string(self) -> None:
+        from veilbreakers_terrain.handlers._protected_zones import _zone_id
+
+        # Some upstream paths set zone_id as int — diagnostic must
+        # still produce a string-safe value.
+        assert _zone_id({"zone_id": 42}) == "42"

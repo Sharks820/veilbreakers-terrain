@@ -29,7 +29,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 import numpy as np
 
 from .terrain_protocol import enforce_protocol
-from ._protected_zones import _resolve_protected_zone_aabb  # noqa: F401  # re-exported for PR #123 call sites
+from ._protected_zones import _resolve_protected_zone_aabb, _zone_id  # noqa: F401  # re-exported for PR #123 call sites
 
 # Lazy-import guard: bpy/bmesh only available inside Blender. Modules that
 # transitively import this file outside Blender (tests, CI) must not crash at
@@ -6097,7 +6097,7 @@ def handle_create_cave_entrance(params: dict[str, Any]) -> dict[str, Any]:
         bmin_x, bmin_y, bmax_x, bmax_y = _resolve_protected_zone_aabb(pz)
         if bmin_x <= location[0] <= bmax_x and bmin_y <= location[1] <= bmax_y:
             placement_blocked = True
-            blocked_by_zone = str(pz.get("zone_id", "unknown") if isinstance(pz, dict) else "unknown")
+            blocked_by_zone = _zone_id(pz)
             break
 
     if placement_blocked:

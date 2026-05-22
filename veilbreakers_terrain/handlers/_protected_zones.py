@@ -161,3 +161,18 @@ def _zone_permits(
             return kind in allowed
         return True
     return True  # unknown shape -> default permissive
+
+
+def _zone_id(zone: Any) -> str:
+    """Schema-tolerant zone_id accessor for `blocked_by_zone` reporting.
+
+    PR #126 review (coderabbit DvFAk): the cave-entrance placement loop
+    read ``pz.get("zone_id", "unknown") if isinstance(pz, dict) else "unknown"``
+    which silently dropped the real zone_id for dataclass-backed zones
+    (every ProtectedZoneSpec attached via state.intent.protected_zones).
+    This helper unifies dict + attr access so blocked-by-zone diagnostics
+    work across all three schemas the resolver already supports.
+    """
+    if isinstance(zone, dict):
+        return str(zone.get("zone_id", "unknown"))
+    return str(getattr(zone, "zone_id", "unknown"))
