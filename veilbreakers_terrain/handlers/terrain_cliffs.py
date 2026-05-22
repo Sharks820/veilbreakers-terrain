@@ -417,7 +417,12 @@ def build_cliff_candidate_mask(
     # The spline is stored on the stack for downstream passes; the
     # boolean mask itself is untouched (slope-threshold result is
     # authoritative for which cells are "cliff").
+    # Always write cliff_contour_spline so the PassDefinition
+    # produces_channels contract is satisfied even on zero-cliff tiles
+    # (e.g. flat heightmaps in determinism-harness tests). Downstream
+    # consumers must check for zero-row arrays before iterating.
     # ------------------------------------------------------------------
+    spline_pts: np.ndarray = np.empty((0, 2), dtype=np.float64)
     if mask.any():
         contour_pts = _moore_contour_all_components(mask.astype(bool))
         if contour_pts.shape[0] >= 4:
@@ -427,7 +432,7 @@ def build_cliff_candidate_mask(
                 closed=False,  # multi-component traces are open chains
             )
             spline_pts = _fit_bspline_contour(smooth_pts, closed=False)
-            stack.set("cliff_contour_spline", spline_pts, "cliffs")
+    stack.set("cliff_contour_spline", spline_pts, "cliffs")
 
     return mask.astype(bool)
 
@@ -2828,9 +2833,11 @@ def pass_cliffs(
     cliff_mesh_specs = _build_cliff_overhang_mesh_specs(cliffs, stack)
     stack.set("cliff_mesh_specs", cliff_mesh_specs, "cliffs")
 
-    # Publish aggregated talus boulder placements for scatter consumers
-    if all_boulder_placements:
-        stack.set("talus_boulder_placements", list(all_boulder_placements), "cliffs")
+    # Publish aggregated talus boulder placements for scatter consumers.
+    # Always write the channel (even when empty) so the PassDefinition
+    # produces_channels contract is satisfied on zero-cliff tiles.
+    # Downstream consumers must check for empty list before iterating.
+    stack.set("talus_boulder_placements", list(all_boulder_placements), "cliffs")
 
     # 7. Record structures as side effects (so downstream bundles can find them)
     for cliff in cliffs:
