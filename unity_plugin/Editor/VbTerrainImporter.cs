@@ -2481,23 +2481,19 @@ namespace VeilBreakers.TerrainImport.Editor
         /// </summary>
         private static string SafePathCombine(string baseDir, params string[] parts)
         {
-            // Defense in depth: reject any rooted/absolute part BEFORE calling Path.Combine.
-            // Path.Combine silently discards earlier arguments when a later argument is rooted
-            // ("/abs/path" or "C:\\abs\\path"), which would let a malicious manifest entry
-            // bypass the bundleDir base entirely. The StartsWith check below would catch the
-            // exfiltration in most cases, but rejecting early gives a clearer error message
-            // and eliminates the structural CodeQL/cs/path-combine alert.
-            for (int i = 0; i < parts.Length; i++)
-            {
-                if (parts[i] != null && Path.IsPathRooted(parts[i]))
-                {
-                    throw new System.Security.SecurityException(
-                        $"VbTerrainImporter: refused rooted path '{parts[i]}' in SafePathCombine " +
-                        $"arguments — only relative paths permitted (CWE-22 path traversal guard)"
-                    );
-                }
-            }
-
+            // Defense in depth: reject any rooted/absolute part up front and join the parts
+            // MANUALLY via explicit separator concatenation instead of ``Path.Combine``.
+            //
+            // ``Path.Combine`` silently discards every earlier argument when a later argument
+            // is rooted ("/abs/path" or "C:\\abs\\path"), which would let a malicious manifest
+            // entry escape the bundleDir base entirely. CodeQL's ``cs/path-combine`` query
+            // recommends against ``Path.Combine`` precisely because of this silent-drop
+            // behaviour, and flags it structurally regardless of any preceding runtime guard.
+            // We therefore avoid the API altogether: (1) throw on any rooted part, (2) strip
+            // any leading directory separators so each part is provably relative, and (3)
+            // append each validated relative segment under the base directory with exactly one
+            // separator. The canonical ``GetFullPath`` + ``StartsWith`` containment check below
+            // remains the authoritative CWE-22 guard (it normalises ".." sequences too).
             var baseFullPath = Path.GetFullPath(baseDir);
             // Ensure canonical form ends with separator so "bundleDirExtra/..." is not a false match.
             if (!baseFullPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) &&
@@ -2506,10 +2502,44 @@ namespace VeilBreakers.TerrainImport.Editor
                 baseFullPath += Path.DirectorySeparatorChar;
             }
 
-            var allParts = new string[parts.Length + 1];
-            allParts[0] = baseDir;
-            parts.CopyTo(allParts, 1);
-            var combined = Path.Combine(allParts);
+            var combined = baseDir;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                var part = parts[i];
+                if (part == null)
+                {
+                    continue;
+                }
+                if (Path.IsPathRooted(part))
+                {
+                    throw new System.Security.SecurityException(
+                        $"VbTerrainImporter: refused rooted path '{part}' in SafePathCombine " +
+                        $"arguments — only relative paths permitted (CWE-22 path traversal guard)"
+                    );
+                }
+                // Strip any leading directory separators so the segment is provably relative;
+                // a rooted segment would have been rejected above, but this also neutralises a
+                // leading "/" or "\\" that ``Path.IsPathRooted`` treats as relative on some
+                // platforms and prevents an accidental double separator on concatenation.
+                var relativePart = part.TrimStart(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar
+                );
+                if (relativePart.Length == 0)
+                {
+                    continue;
+                }
+                if (combined.Length == 0 ||
+                    combined.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) ||
+                    combined.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                {
+                    combined += relativePart;
+                }
+                else
+                {
+                    combined += Path.DirectorySeparatorChar + relativePart;
+                }
+            }
             var fullPath = Path.GetFullPath(combined);
 
             if (!fullPath.StartsWith(baseFullPath, StringComparison.OrdinalIgnoreCase))
