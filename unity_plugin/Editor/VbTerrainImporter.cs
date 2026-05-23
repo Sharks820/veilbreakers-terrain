@@ -2502,7 +2502,9 @@ namespace VeilBreakers.TerrainImport.Editor
                 baseFullPath += Path.DirectorySeparatorChar;
             }
 
-            var combined = baseDir;
+            // Build the joined path with StringBuilder (CodeQL cs/string-concatenation-in-loop):
+            // O(n) amortised appends instead of repeated string reallocation in the loop.
+            var combinedBuilder = new System.Text.StringBuilder(baseDir);
             for (int i = 0; i < parts.Length; i++)
             {
                 var part = parts[i];
@@ -2529,17 +2531,24 @@ namespace VeilBreakers.TerrainImport.Editor
                 {
                     continue;
                 }
-                if (combined.Length == 0 ||
-                    combined.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) ||
-                    combined.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                // Insert exactly one separator unless the accumulator is empty or already
+                // ends in one. Inspecting the last char of the builder is equivalent to the
+                // prior ``combined.EndsWith(separator)`` test but without materialising a string.
+                var lastChar = combinedBuilder.Length == 0
+                    ? '\0'
+                    : combinedBuilder[combinedBuilder.Length - 1];
+                if (combinedBuilder.Length == 0 ||
+                    lastChar == Path.DirectorySeparatorChar ||
+                    lastChar == Path.AltDirectorySeparatorChar)
                 {
-                    combined += relativePart;
+                    combinedBuilder.Append(relativePart);
                 }
                 else
                 {
-                    combined += Path.DirectorySeparatorChar + relativePart;
+                    combinedBuilder.Append(Path.DirectorySeparatorChar).Append(relativePart);
                 }
             }
+            var combined = combinedBuilder.ToString();
             var fullPath = Path.GetFullPath(combined);
 
             if (!fullPath.StartsWith(baseFullPath, StringComparison.OrdinalIgnoreCase))
