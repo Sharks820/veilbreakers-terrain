@@ -99,11 +99,15 @@ _GUARDED_FILES: tuple[str, ...] = (
 # though strictness is the runtime default.
 _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # terrain_semantics.compute_hash — hashes intent dict for content key.
-    ("handlers/terrain_semantics.py", 1153),
+    # PR #126: line shifted +19 by the biome_names dataclass field + its
+    # _OPAQUE_CHANNELS registration added earlier in the file (was 1153).
+    ("handlers/terrain_semantics.py", 1172),
     # terrain_semantics.compute_hash — hashes per-channel opaque payloads.
-    ("handlers/terrain_semantics.py", 1210),
+    # PR #126: shifted +19 by the biome_names addition (was 1210).
+    ("handlers/terrain_semantics.py", 1229),
     # terrain_semantics — biome-grammar payload hash for determinism check.
-    ("handlers/terrain_semantics.py", 1552),
+    # PR #126: shifted +19 by the biome_names addition (was 1552).
+    ("handlers/terrain_semantics.py", 1571),
     # terrain_mask_cache.compute_cache_key — intent hash fallback.
     ("handlers/terrain_mask_cache.py", 82),
     # terrain_mask_cache.compute_cache_key — payload digest for cache key.
@@ -114,7 +118,9 @@ _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # _load_baseline_snapshot + _lightweight_water_network_copy module
     # helpers added above ``build_default_pass_sequence`` AND subsequent
     # main-branch additions (PR #117 LOD descriptor, PR #118 fixes).
-    ("handlers/terrain_pipeline.py", 616),
+    # PR #126: shifted 616 -> 621 by the _zone_bounds_intersect /
+    # _zone_permits imports added to the _protected_zones import block.
+    ("handlers/terrain_pipeline.py", 621),
     # terrain_determinism_ci.hash_state — intent recursion for hash only.
     ("handlers/terrain_determinism_ci.py", 87),
     # terrain_io.atomic_write_json — passes allow_nan kwarg through the

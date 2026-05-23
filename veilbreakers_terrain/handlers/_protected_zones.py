@@ -179,6 +179,15 @@ def _zone_permits(
                then ``allowed_kinds`` / ``allow`` allow-list.
                Unknown shape defaults permissive (open zone).
     """
+    # Typed dataclass zones: delegate to the canonical
+    # ``ProtectedZoneSpec.permits`` so the allow/forbid policy lives in one
+    # place. The explicit ``zone.permits(kind)`` literal also keeps the
+    # method statically wired (scan_callable_wiring picks up the attr-call).
+    from .terrain_semantics import ProtectedZoneSpec
+
+    if isinstance(zone, ProtectedZoneSpec):
+        return bool(zone.permits(kind))
+    # Other duck-typed object zones that expose a ``permits`` callable.
     permits_method = getattr(zone, "permits", None)
     if callable(permits_method):
         return bool(permits_method(kind))
@@ -221,7 +230,13 @@ def _zone_bounds_intersect(zone: Any, target_bounds: Any) -> bool:
 
     ``target_bounds`` is the typed ``BBox`` with ``.min_x/.min_y/.max_x/.max_y``
     or a 4-tuple ``(min_x, min_y, max_x, max_y)`` fallback.
+
+    The AABB-vs-AABB test is delegated to the canonical ``BBox.intersects``
+    so the geometry math lives in exactly one place (terrain_semantics.BBox)
+    and the typed method stays statically wired.
     """
+    from .terrain_semantics import BBox
+
     z_min_x, z_min_y, z_max_x, z_max_y = _resolve_protected_zone_aabb(zone)
     if hasattr(target_bounds, "min_x"):
         t_min_x = float(target_bounds.min_x)
@@ -230,9 +245,6 @@ def _zone_bounds_intersect(zone: Any, target_bounds: Any) -> bool:
         t_max_y = float(target_bounds.max_y)
     else:
         t_min_x, t_min_y, t_max_x, t_max_y = target_bounds  # 4-tuple fallback
-    return (
-        z_min_x <= t_max_x
-        and z_max_x >= t_min_x
-        and z_min_y <= t_max_y
-        and z_max_y >= t_min_y
-    )
+    zone_box = BBox(min_x=z_min_x, min_y=z_min_y, max_x=z_max_x, max_y=z_max_y)
+    target_box = BBox(min_x=t_min_x, min_y=t_min_y, max_x=t_max_x, max_y=t_max_y)
+    return zone_box.intersects(target_box)
