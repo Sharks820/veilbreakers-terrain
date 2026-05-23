@@ -125,7 +125,6 @@ class TestFilterAddsFields:
             _filter_multipass_scatter_placements,
         )
 
-        _heightmap = np.zeros((8, 8), dtype=np.float32)  # unused; kept for context
         slope_map = np.zeros((8, 8), dtype=np.float32)
         tw, th = 10.0, 10.0
         rot_rad = math.pi / 4  # 45°
@@ -257,9 +256,14 @@ class TestEntryPointEquivalence:
         """90° yaw: C3 quat, _vegetation_rotation Z-component, _prop_rotation Z-component all align."""
         rot_rad = math.pi / 2  # 90°
 
-        # C3 quaternion (the inner ScatterPoint builder uses _read_rotation_rad)
-        # Unpack to verify it does not raise; components checked via unit-vector test.
-        _qx, _qy, _qz, _qw = self._quaternion_from_rad(rot_rad)
+        # C3 quaternion (the inner ScatterPoint builder uses _read_rotation_rad).
+        # Recover the yaw from the pure-Z quaternion and assert it matches rot_rad
+        # so the C3 path is verified, not merely exercised.
+        qx, qy, qz, qw = self._quaternion_from_rad(rot_rad)
+        assert qx == approx(0.0, abs=1e-12)
+        assert qy == approx(0.0, abs=1e-12)
+        c3_yaw = 2.0 * math.atan2(qz, qw)
+        assert c3_yaw == approx(rot_rad, abs=1e-9)
 
         # _vegetation_rotation receives degrees; Z-component is math.radians(yaw_degrees)
         veg_rot = _vegetation_rotation("grass", math.degrees(rot_rad))
