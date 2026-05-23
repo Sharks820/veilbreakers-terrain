@@ -1007,8 +1007,8 @@ def pass_macro_world(
                     _derive_pass_seed(
                         int(seed) ^ 0xDEAD,
                         "terrain_world.pass_macro_world.degenerate_fallback",
-                        0,
-                        0,
+                        stack.tile_x,  # HOTFIX-7f C1: was 0 — each tile must
+                        stack.tile_y,  # derive a DIFFERENT fallback RNG stream.
                         None,
                     )
                 )
