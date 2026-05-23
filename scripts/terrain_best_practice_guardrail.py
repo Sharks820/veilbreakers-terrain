@@ -125,7 +125,20 @@ class GuardrailReport:
 
 def latest_matrix_path() -> Path | None:
     out_dir = REPO_ROOT / "output" / "spreadsheet"
-    matches = sorted(out_dir.glob(MATRIX_GLOB), key=lambda path: path.stat().st_mtime, reverse=True)
+    # Select by the date-encoded filename (``..._YYYY_MM_DD.csv``) rather than
+    # mtime. The date in the filename is the generation date and sorts
+    # lexicographically == chronologically because it is zero-padded. mtime is
+    # NOT reliable here: a fresh ``git checkout`` stamps every matrix with the
+    # same timestamp (an unordered tie), and any later edit to an older matrix
+    # bumps its mtime above the canonical newest one — both make an mtime-based
+    # pick select a stale historical matrix. Filename ordering is deterministic
+    # and immune to checkout/edit timestamps. mtime is kept only as a secondary
+    # tie-break for the (currently impossible) case of two same-dated files.
+    matches = sorted(
+        out_dir.glob(MATRIX_GLOB),
+        key=lambda path: (path.name, path.stat().st_mtime),
+        reverse=True,
+    )
     return matches[0] if matches else None
 
 
