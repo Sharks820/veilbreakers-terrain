@@ -178,7 +178,22 @@ ATMOSPHERIC_VOLUMES: dict[str, dict[str, Any]] = {
 # ---------------------------------------------------------------------------
 
 BIOME_ATMOSPHERE_RULES: dict[str, list[dict[str, Any]]] = {
-    "dark_forest": [
+    # WAVE4-ATMOSPHERIC-BIOME-VOCAB-FRAGMENTATION-001 fix (2026-05-22):
+    # All keys must be present in _biome_grammar.BIOME_CLIMATE_PARAMS (the
+    # canonical registry).  Prior keys were a legacy vocab set with only 1/10
+    # overlapping with canonical names; every canonical biome lookup fell
+    # through to _DEFAULT_ATMOSPHERE (fog-only).  Keys renamed as follows:
+    #   dark_forest       -> deep_forest       (canonical dense forest)
+    #   volcanic_wastes   -> ashen_wastes       (canonical volcanic biome)
+    #   frozen_peaks      -> frozen_hollows     (canonical frozen biome)
+    #   ancient_ruins     -> ruined_citadel     (canonical ancient ruin biome)
+    #   haunted_moor      -> cemetery           (canonical death-themed moor)
+    #   enchanted_glade   -> mushroom_forest    (canonical magical verdant)
+    #   bone_desert       -> desert             (canonical arid biome)
+    #   crystal_caverns   -> crystal_cavern     (canonical, dropped erroneous 's')
+    #   blood_marsh       -> blighted_mire      (canonical cursed wetland)
+    # corrupted_swamp was the only pre-existing canonical match; kept as-is.
+    "deep_forest": [
         {"volume": "ground_fog", "coverage": 0.6, "min_count": 3},
         {"volume": "dust_motes", "coverage": 0.3, "min_count": 2},
         {"volume": "god_rays", "coverage": 0.1, "min_count": 1},
@@ -189,39 +204,39 @@ BIOME_ATMOSPHERE_RULES: dict[str, list[dict[str, Any]]] = {
         {"volume": "spore_cloud", "coverage": 0.4, "min_count": 2},
         {"volume": "void_shimmer", "coverage": 0.1, "min_count": 1},
     ],
-    "volcanic_wastes": [
+    "ashen_wastes": [
         {"volume": "smoke_plume", "coverage": 0.5, "min_count": 3},
         {"volume": "dust_motes", "coverage": 0.3, "min_count": 2},
     ],
-    "frozen_peaks": [
+    "frozen_hollows": [
         {"volume": "ground_fog", "coverage": 0.4, "min_count": 2},
         {"volume": "dust_motes", "coverage": 0.2, "min_count": 1},
     ],
-    "ancient_ruins": [
+    "ruined_citadel": [
         {"volume": "dust_motes", "coverage": 0.5, "min_count": 3},
         {"volume": "god_rays", "coverage": 0.2, "min_count": 1},
         {"volume": "ground_fog", "coverage": 0.2, "min_count": 1},
     ],
-    "haunted_moor": [
+    "cemetery": [
         {"volume": "ground_fog", "coverage": 0.7, "min_count": 4},
         {"volume": "void_shimmer", "coverage": 0.2, "min_count": 1},
         {"volume": "fireflies", "coverage": 0.1, "min_count": 1},
     ],
-    "enchanted_glade": [
+    "mushroom_forest": [
         {"volume": "fireflies", "coverage": 0.5, "min_count": 3},
         {"volume": "god_rays", "coverage": 0.3, "min_count": 2},
         {"volume": "dust_motes", "coverage": 0.2, "min_count": 1},
     ],
-    "bone_desert": [
+    "desert": [
         {"volume": "dust_motes", "coverage": 0.6, "min_count": 3},
         {"volume": "smoke_plume", "coverage": 0.1, "min_count": 1},
     ],
-    "crystal_caverns": [
+    "crystal_cavern": [
         {"volume": "void_shimmer", "coverage": 0.3, "min_count": 2},
         {"volume": "dust_motes", "coverage": 0.4, "min_count": 2},
         {"volume": "spore_cloud", "coverage": 0.1, "min_count": 1},
     ],
-    "blood_marsh": [
+    "blighted_mire": [
         {"volume": "ground_fog", "coverage": 0.7, "min_count": 4},
         {"volume": "smoke_plume", "coverage": 0.2, "min_count": 1},
         {"volume": "spore_cloud", "coverage": 0.3, "min_count": 2},
@@ -1061,7 +1076,7 @@ def pass_atmospheric_volumes(
         hints.get("atmosphere_biome")
         or hints.get("biome")
         or getattr(intent, "biome_rules", None)
-        or "dark_forest"
+        or "deep_forest"
     )
     density_scale = float(hints.get("atmosphere_density_scale", 1.0))
     weather_hints = hints.get("weather_hints")

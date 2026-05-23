@@ -352,15 +352,28 @@ def test_biome_channels_pass_writes_biome_and_corruption_arrays():
     result = pass_compute_biome_channels(state, None)
 
     assert result.status == "ok"
-    assert set(result.produced_channels) == {"biome_id", "corruption_map"}
+    # HOTFIX-7c (PR #126): pass_compute_biome_channels now ALSO produces the
+    # canonical ``biome_names`` ordered name-list channel (registered in
+    # TerrainMaskStack._OPAQUE_CHANNELS) so downstream macro-color / Unity
+    # export can translate per-cell biome indices into names. The dedicated
+    # round-trip contract lives in test_biome_names_round_trip.py.
+    assert set(result.produced_channels) == {"biome_id", "corruption_map", "biome_names"}
     assert stack.biome_id is not None
     assert stack.corruption_map is not None
+    assert stack.biome_names is not None
     biome_id = stack.biome_id
     corruption_map = stack.corruption_map
     assert biome_id.shape == stack.height.shape
     assert corruption_map.shape == stack.height.shape
     assert biome_id.dtype.kind in {"i", "u"}
     assert corruption_map.dtype == np.float32
+    # biome_names is the ordered Voronoi-cell name list (one per biome index).
+    # Length must cover every biome_id value so consumers can index
+    # ``biome_names[biome_id_value]`` (here biome_count == 4 from the hint).
+    assert isinstance(stack.biome_names, list)
+    assert len(stack.biome_names) == 4
+    assert all(isinstance(name, str) for name in stack.biome_names)
+    assert int(biome_id.max()) < len(stack.biome_names)
 
 
 def test_stratigraphy_pass_writes_bedrock_and_sediment_channels():

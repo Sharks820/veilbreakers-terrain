@@ -248,6 +248,9 @@ def _protected_mask(
     shape: Tuple[int, int],
     pass_name: str,
 ) -> np.ndarray:
+    # HOTFIX-7d (Verifier A #13): unified schema-tolerant resolver.
+    from ._protected_zones import _resolve_protected_zone_aabb, _zone_permits
+
     stack = state.mask_stack
     mask = np.zeros(shape, dtype=bool)
     if not state.intent.protected_zones:
@@ -257,13 +260,14 @@ def _protected_mask(
     xs = stack.world_origin_x + (np.arange(cols) + 0.5) * stack.cell_size
     xg, yg = np.meshgrid(xs, ys)
     for zone in state.intent.protected_zones:
-        if zone.permits(pass_name):
+        if _zone_permits(zone, pass_name):
             continue
+        min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
         inside = (
-            (xg >= zone.bounds.min_x)
-            & (xg <= zone.bounds.max_x)
-            & (yg >= zone.bounds.min_y)
-            & (yg <= zone.bounds.max_y)
+            (xg >= min_x)
+            & (xg <= max_x)
+            & (yg >= min_y)
+            & (yg <= max_y)
         )
         mask |= inside
     return mask
@@ -818,6 +822,25 @@ def apply_seasonal_water_state(
     stack.set("water_surface_mask", water_surface_mask, "water_variants_seasonal")
     stack.set("tidal", tidal, "water_variants_seasonal")
 
+    # HOTFIX-7j (Verifier A 2026-05-21 #24): recompute water_surface_elevation_m
+    # against the *new* seasonal mask so caustic rendering reads a fresh spill-rim
+    # elevation that matches the mutated mask.  Without this, every season other
+    # than NORMAL left water_surface_elevation_m stale (pre-mutation topology)
+    # while water_surface_mask reflected the new state — the visible misalignment.
+    #
+    # _compute_spill_rim_elevation returns 0.0 for every dry cell, so an all-dry
+    # mask (DRY season draining to zero) correctly yields an all-zero array as the
+    # sentinel (matches the invariant used throughout pass_water_variants).
+    water_surface_elevation_m = _compute_spill_rim_elevation(
+        np.asarray(stack.height, dtype=np.float32),
+        water_surface_mask > 0.0,
+    )
+    stack.set(
+        "water_surface_elevation_m",
+        water_surface_elevation_m,
+        "water_variants_seasonal",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Pass entry point
@@ -1104,7 +1127,12 @@ def pass_seasonal_water_state(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("wetness", "water_surface_mask", "tidal"),
-        produced_channels=("wetness", "water_surface_mask", "tidal"),
+        produced_channels=(
+            "wetness",
+            "water_surface_mask",
+            "tidal",
+            "water_surface_elevation_m",
+        ),
         metrics={"seasonal_state": seasonal_state.value},
         issues=issues,
     )
@@ -1117,16 +1145,24 @@ def register_pass_seasonal_water_state() -> None:
             name="pass_seasonal_water_state",
             func=pass_seasonal_water_state,
             requires_channels=("wetness", "water_surface_mask"),
-            produces_channels=("wetness", "water_surface_mask", "tidal"),
+            produces_channels=(
+                "wetness",
+                "water_surface_mask",
+                "tidal",
+                "water_surface_elevation_m",
+            ),
             # Overrides declared so the DAG knows this pass re-writes channels
             # that water_variants already wrote; without this declaration the
             # PassDAG would consider downstream readers stale on second run.
-            overrides=("wetness", "water_surface_mask", "tidal"),
+            # HOTFIX-7j: water_surface_elevation_m added — seasonal mask
+            # mutation now recomputes the spill-rim in lockstep.
+            overrides=("wetness", "water_surface_mask", "tidal", "water_surface_elevation_m"),
             seed_namespace="seasonal_water_state",
             requires_scene_read=True,
             description=(
                 "Bundle O supplement — apply per-season wetness/water_surface_mask/tidal "
-                "mutations as a registered DAG pass so downstream passes see fresh values."
+                "mutations as a registered DAG pass so downstream passes see fresh values. "
+                "HOTFIX-7j: also recomputes water_surface_elevation_m against the new mask."
             ),
         )
     )

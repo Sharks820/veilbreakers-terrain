@@ -49,6 +49,11 @@ from .terrain_semantics import (
     UnknownPassError,
     ValidationIssue,
 )
+from ._protected_zones import (
+    _resolve_protected_zone_aabb,
+    _zone_bounds_intersect,
+    _zone_permits,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -118,13 +123,18 @@ _LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
     "talus",
     "structural_masks_post_talus",
     "structural_masks_post_deltas",
-    "lava_emit",
-    "lava_carve",
+    # NOTE: "lava_emit" and "lava_carve" removed (WAVE5-2) — neither is a
+    # registered pass name.  The only registered lava pass is
+    # "pass_lava_simulation" (terrain_lava.py:355).  Dead anchors never match
+    # pass-sequence iteration and silently mislead future readers.
+    "pass_lava_simulation",
     "integrate_deltas",
     "bathymetry",
     "pass_seasonal_water_state",
     "water_variants",
-    "pass_water_variants",
+    # NOTE: "pass_water_variants" removed (WAVE5-2) — the registered name is
+    # "water_variants" (terrain_water_variants.py:1138), which is already in
+    # this set above.  The prefixed alias is not registered in PASS_REGISTRY.
     "pass_water_depth",
     "erosion",
     "pass_hydrology",
@@ -979,15 +989,16 @@ class TerrainPassController:
         on forbidden cells.
         """
         for zone in self.state.intent.protected_zones:
-            if not zone.bounds.intersects(target_bounds):
+            if not _zone_bounds_intersect(zone, target_bounds):
                 continue
-            if zone.permits(pass_name):
+            if _zone_permits(zone, pass_name):
                 continue
+            z_min_x, z_min_y, z_max_x, z_max_y = _resolve_protected_zone_aabb(zone)
             fully_covers = (
-                zone.bounds.min_x <= target_bounds.min_x
-                and zone.bounds.min_y <= target_bounds.min_y
-                and zone.bounds.max_x >= target_bounds.max_x
-                and zone.bounds.max_y >= target_bounds.max_y
+                z_min_x <= target_bounds.min_x
+                and z_min_y <= target_bounds.min_y
+                and z_max_x >= target_bounds.max_x
+                and z_max_y >= target_bounds.max_y
             )
             if fully_covers:
                 raise ProtectedZoneViolation(
@@ -1879,14 +1890,21 @@ def pass_compute_biome_channels(
     # canonical biome name to translate via ``BIOME_BUCKET_MAP_18_TO_14``
     # to the 14-bucket render palette. Stamp the ordered name list onto
     # the stack so consumers can do ``biome_names[biome_id_value]``.
-    setattr(stack, "biome_names", list(spec.biome_names))
+    #
+    # HOTFIX-7c (Verifier A #7 / 2026-05-21): use ``stack.set`` instead of
+    # raw ``setattr`` so the list participates in compute_hash / to_npz /
+    # from_npz round-trip via ``_OPAQUE_CHANNELS``. Prior code path was
+    # silently dropped on checkpoint restore — downstream macro-color
+    # and Unity-export consumers reverted to the legacy "raw biome_id as
+    # palette index" branch after any rollback.
+    stack.set("biome_names", list(spec.biome_names), "biome_channels")
 
     return PassResult(
         pass_name="biome_channels",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("biome_id", "corruption_map"),
+        produced_channels=("biome_id", "corruption_map", "biome_names"),
         metrics={
             "biome_count": int(len(set(spec.biome_ids.ravel().tolist()))),
             "corruption_mean": float(spec.corruption_map.mean()),
@@ -1902,11 +1920,11 @@ def register_biome_channel_pass() -> None:
             name="biome_channels",
             func=pass_compute_biome_channels,
             requires_channels=("height",),
-            produces_channels=("biome_id", "corruption_map"),
+            produces_channels=("biome_id", "corruption_map", "biome_names"),
             seed_namespace="biome_channels",
             requires_scene_read=False,
             may_modify_geometry=False,
-            description="Populate biome_id and corruption_map from deterministic world-map grammar.",
+            description="Populate biome_id, corruption_map, and biome_names from deterministic world-map grammar.",
         )
     )
 
@@ -2046,7 +2064,14 @@ def pass_water_depth(
         status="ok",
         duration_seconds=_time.perf_counter() - t0,
         produced_channels=("water_depth_m", "shoreline_blend"),
-        consumed_channels=("water_surface_elevation_m", "height_m", "height"),
+        # WAVE5-14: removed "height_m" from consumed_channels — it was a
+        # legacy fallback alias for "height" (line ~1982: stack.get("height_m")
+        # followed by stack.get("height")). The canonical channel is "height"
+        # which is already declared in requires_channels of the PassDefinition.
+        # Listing "height_m" here created a DAG orphan (consumer declared but
+        # no pass produces "height_m"). The fallback read is kept in the pass
+        # body for backward-compat but is not declared as a DAG edge.
+        consumed_channels=("water_surface_elevation_m", "height"),
         metrics={
             "depth_max_m": float(depth.max()),
             "depth_mean_m": float(depth.mean()),

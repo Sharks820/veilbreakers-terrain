@@ -489,6 +489,7 @@ def register_bundle_k_macro_color_pass() -> None:
             requires_channels=("height",),
             optional_channels=(
                 "biome_id",
+                "biome_names",
                 "wetness",
                 "erosion_amount",
                 "deposition_amount",

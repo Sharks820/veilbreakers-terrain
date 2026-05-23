@@ -99,28 +99,33 @@ _GUARDED_FILES: tuple[str, ...] = (
 # though strictness is the runtime default.
 _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # terrain_semantics.compute_hash — hashes intent dict for content key.
-    ("handlers/terrain_semantics.py", 1153),
+    # PR #126: line shifted +19 by the biome_names dataclass field + its
+    # _OPAQUE_CHANNELS registration added earlier in the file (was 1153).
+    ("handlers/terrain_semantics.py", 1172),
     # terrain_semantics.compute_hash — hashes per-channel opaque payloads.
-    ("handlers/terrain_semantics.py", 1210),
+    # PR #126: shifted +19 by the biome_names addition (was 1210).
+    ("handlers/terrain_semantics.py", 1229),
     # terrain_semantics — biome-grammar payload hash for determinism check.
-    ("handlers/terrain_semantics.py", 1552),
+    # PR #126: shifted +19 by the biome_names addition (was 1552).
+    ("handlers/terrain_semantics.py", 1571),
     # terrain_mask_cache.compute_cache_key — intent hash fallback.
     ("handlers/terrain_mask_cache.py", 82),
     # terrain_mask_cache.compute_cache_key — payload digest for cache key.
     ("handlers/terrain_mask_cache.py", 86),
     # terrain_pipeline.derive_pass_seed — payload digest for seed derivation.
     # Line offset shifted by T0-8 helpers (Y04 v2-ord 10, PR-15) — was 490
-    # at HEAD c8b750d3, now 616 after _snapshot_mask_stack_to_disk +
+    # at HEAD c8b750d3, now 626 after _snapshot_mask_stack_to_disk +
     # _load_baseline_snapshot + _lightweight_water_network_copy module
     # helpers added above ``build_default_pass_sequence`` AND subsequent
     # main-branch additions (PR #117 LOD descriptor, PR #118 fixes).
-    # Updated to 644 by WAVE5-3 fix (CE-WAVE-5 2026-05-22): 16-line comment
-    # block added above ``has_scene_read`` in build_default_pass_sequence
-    # (include_cliffs/include_caves vars) shifted derive_pass_seed downward.
-    # Updated to 651 by WAVE5-3 + PR#125 merge: CP5-CASCADE Bug 3 cliffs/caves
-    # include_cliffs/include_caves 7-line block in build_default_pass_sequence
-    # added 7 more lines above derive_pass_seed (644 -> 651).
-    ("handlers/terrain_pipeline.py", 651),
+    # WAVE5-3 ∪ main merge (2026-05-23): main pinned 626 (#126's
+    # _protected_zones import block + #141's dead-anchor comment lines), and
+    # WAVE5-3 inserts the include_cliffs/include_caves comment + var block
+    # ABOVE derive_pass_seed in build_default_pass_sequence, shifting the
+    # json.dumps callsite further down. The ast.Call node.lineno of the
+    # ``json.dumps(`` callsite in derive_pass_seed is verified at 661 in the
+    # fully-merged terrain_pipeline.py (def derive_pass_seed @ 648).
+    ("handlers/terrain_pipeline.py", 661),
     # terrain_determinism_ci.hash_state — intent recursion for hash only.
     ("handlers/terrain_determinism_ci.py", 87),
     # terrain_io.atomic_write_json — passes allow_nan kwarg through the

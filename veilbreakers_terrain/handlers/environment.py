@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 import numpy as np
 
 from .terrain_protocol import enforce_protocol
+from ._protected_zones import _resolve_protected_zone_aabb, _zone_id  # noqa: F401  # pyright: ignore[reportUnusedImport]  # re-exported for parity with _zone_permits (PR #126 review)
 
 # Lazy-import guard: bpy/bmesh only available inside Blender. Modules that
 # transitively import this file outside Blender (tests, CI) must not crash at
@@ -293,63 +294,6 @@ def _coerce_optional_grid_channel(
     cleaned = np.nan_to_num(arr, nan=0.0, posinf=replace_hi, neginf=0.0)
     np.maximum(cleaned, 0.0, out=cleaned)
     return np.ascontiguousarray(cleaned, dtype=np.float32)
-
-
-def _resolve_protected_zone_aabb(
-    pz: Any,
-) -> tuple[float, float, float, float]:
-    """Resolve a protected_zone dict into a world-space AABB tuple.
-
-    Accepts BOTH historic schemas without silently dropping either:
-
-    Schema A (nested-bounds, the canonical form built by
-    ``_resolve_terrain_tile_params`` and consumed by terrain merge / glacial
-    crater / structure placement)::
-
-        {"zone_id": "...", "bounds": {"min_x": ..., "min_y": ...,
-                                       "max_x": ..., "max_y": ...}}
-
-    Schema B (flat-AABB, the form used by the road network reform handler
-    and the seasonal-water basin clipper — also accepts ``x0/x1/y0/y1``
-    aliases shipped by some emitter-side callers)::
-
-        {"zone_id": "...", "x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}
-        {"zone_id": "...", "x0": ..., "y0": ..., "x1": ..., "y1": ...}
-
-    Returns:
-        ``(min_x, min_y, max_x, max_y)`` tuple suitable for use in either an
-        inclusion test (``min_x <= wx <= max_x and min_y <= wy <= max_y``) or
-        a mask broadcast.  The defaults — ``+/-1e18`` for the nested-bounds
-        path, ``+/-1e9`` for the flat path — match the prior call-site
-        sentinels and were preserved so downstream comparisons that relied
-        on a "no-clip" zone (e.g. when only one axis was provided) continue
-        to behave the same. WAVE-1-HOTFIX-2 Bug 3 (FIX_PATTERN_v1 §C3
-        contract / schema unification): two of the six handler sites used
-        the flat schema; calling them with a nested-bounds zone silently
-        no-op'd the zone (every coord returned the +/-1e9 sentinel range),
-        causing protected geometry to be paved through. Centralising the
-        resolver here closes the divergence so every handler honours both
-        schemas.
-    """
-    if not isinstance(pz, dict):
-        # Defensive: caller passed something other than a dict — treat as
-        # an open zone so downstream logic falls through to its existing
-        # "no zone" branch instead of crashing.
-        return (-1e18, -1e18, 1e18, 1e18)
-    bounds = pz.get("bounds")
-    if isinstance(bounds, dict):
-        return (
-            float(bounds.get("min_x", -1e18)),
-            float(bounds.get("min_y", -1e18)),
-            float(bounds.get("max_x",  1e18)),
-            float(bounds.get("max_y",  1e18)),
-        )
-    return (
-        float(pz.get("x_min", pz.get("x0", -1e9))),
-        float(pz.get("y_min", pz.get("y0", -1e9))),
-        float(pz.get("x_max", pz.get("x1",  1e9))),
-        float(pz.get("y_max", pz.get("y1",  1e9))),
-    )
 
 
 def _resolve_road_cost_context(
@@ -1463,6 +1407,22 @@ def _read_neighbor_heightmap_from_manifest(neighbor: dict[str, Any]) -> np.ndarr
         When the ``neighbor`` dict is missing ``heightmap_path`` or other
         required keys, or when its values are the wrong type.
     """
+    # CHECKPOINT-5 cascade-D: guard against non-dict inputs (None, namedtuple,
+    # dataclass, …).  A future refactor may pass a typed object rather than a
+    # plain dict.  Calling ``.get()`` on a non-dict raises AttributeError which
+    # would escape the narrow ``except`` tuple in the caller and crash the bake.
+    # Return early with a clear warning so the caller's ``except`` tuple does
+    # not need to cover this case — the isinstance check is a cleaner firewall.
+    if not isinstance(neighbor, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+        logger.warning(
+            "_read_neighbor_heightmap_from_manifest: neighbor is not a dict "
+            "(got %s); skipping neighbor edge",
+            type(neighbor).__name__,
+        )
+        raise TypeError(
+            f"_read_neighbor_heightmap_from_manifest: expected dict, got "
+            f"{type(neighbor).__name__}"
+        )
     res = int(neighbor.get("resolution", 257))
     raw = np.fromfile(
         neighbor["heightmap_path"],
@@ -2889,7 +2849,15 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
             # that represent genuine data-integrity violations (not expected
             # world-edge conditions) are guarded upstream by the manifest
             # validation added in PR #122.
-            except (FileNotFoundError, OSError, ValueError, KeyError, TypeError) as exc:
+            #
+            # CHECKPOINT-5 cascade-D: AttributeError added — if ``neighbor``
+            # is None or a non-dict type (namedtuple/dataclass), calling
+            # ``neighbor.get(...)`` raises AttributeError which previously
+            # escaped the tuple and crashed the terrain bake.  The isinstance
+            # guard in ``_read_neighbor_heightmap_from_manifest`` raises
+            # TypeError for non-dict inputs; AttributeError is kept here as
+            # belt-and-braces for any future refactor path.
+            except (FileNotFoundError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
                 logger.warning(
                     "handle_generate_world_terrain: neighbor heightmap unavailable for tile (%d,%d): %s",
                     tile_x, tile_y, exc,
@@ -5104,7 +5072,11 @@ def _carve_river_banks_into_terrain(
         terrain_height = max(float(getattr(dims, "y")), 1e-6)
         origin_x = float(getattr(loc, "x", 0.0))
         origin_y = float(getattr(loc, "y", 0.0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
+        # AttributeError: dims or loc can be None when terrain_obj does not
+        # have the expected Blender Vector attributes (mock objects, headless
+        # test stubs, non-mesh objects). getattr(None, "x") raises
+        # AttributeError which was not in the tuple before this fix.
         return {"terrain_carved": False, "terrain_carve_reason": "invalid_transform"}
 
     col_scale = (cols - 1) / terrain_width
@@ -6153,7 +6125,7 @@ def handle_create_cave_entrance(params: dict[str, Any]) -> dict[str, Any]:
         bmin_x, bmin_y, bmax_x, bmax_y = _resolve_protected_zone_aabb(pz)
         if bmin_x <= location[0] <= bmax_x and bmin_y <= location[1] <= bmax_y:
             placement_blocked = True
-            blocked_by_zone = str(pz.get("zone_id", "unknown") if isinstance(pz, dict) else "unknown")
+            blocked_by_zone = _zone_id(pz)
             break
 
     if placement_blocked:

@@ -684,6 +684,9 @@ def _protected_mask_for_caves(
     shape: Tuple[int, int],
 ) -> np.ndarray:
     """Per-cell mask of cells forbidden by protected zones for the 'caves' pass."""
+    # HOTFIX-7d (Verifier A #13): unified schema-tolerant resolver.
+    from ._protected_zones import _resolve_protected_zone_aabb, _zone_permits
+
     stack = state.mask_stack
     mask = np.zeros(shape, dtype=bool)
     if not state.intent.protected_zones:
@@ -693,13 +696,14 @@ def _protected_mask_for_caves(
     xs = stack.world_origin_x + (np.arange(cols) + 0.5) * stack.cell_size
     xg, yg = np.meshgrid(xs, ys)
     for zone in state.intent.protected_zones:
-        if zone.permits("caves"):
+        if _zone_permits(zone, "caves"):
             continue
+        min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
         inside = (
-            (xg >= zone.bounds.min_x)
-            & (xg <= zone.bounds.max_x)
-            & (yg >= zone.bounds.min_y)
-            & (yg <= zone.bounds.max_y)
+            (xg >= min_x)
+            & (xg <= max_x)
+            & (yg >= min_y)
+            & (yg <= max_y)
         )
         mask |= inside
     return mask
@@ -3973,13 +3977,20 @@ def register_bundle_f_passes() -> None:
             name="caves",
             func=pass_caves,
             requires_channels=("height",),
-            # ADV-W53-04: slope, basin, and wetness are soft dependencies —
-            # pass_caves reads these channels when present (e.g. to modulate
-            # damp-cave probability and drainage routing) but degrades
-            # gracefully when they are absent.  Declaring them here surfaces
-            # the contract to future schedule authors and lets the DAG order
-            # their producers before caves when available.
-            optional_channels=("slope", "basin", "wetness"),
+            # ADV-W53-04 (WAVE5-3) ∪ #126: biome_names, slope, basin, and
+            # wetness are all soft dependencies — pass_caves reads each when
+            # present but degrades gracefully when absent:
+            #   - biome_names  @ ~954  (getattr(stack, "biome_names", None) →
+            #                            biome-keyed cave-type selection)
+            #   - slope        @ ~1172 (stack.get("slope"))
+            #   - basin        @ ~831  (_sample("basin", 0.0) → KARST/SEA_GROTTO)
+            #   - wetness      @ ~1712 (stack.get("wetness"))
+            # This is the UNION of WAVE5-3 (slope/basin/wetness) and #126
+            # (biome_names): dropping either side silently re-broke a real soft
+            # read.  Declaring all four surfaces the contract to future schedule
+            # authors and lets the DAG order their producers before caves when
+            # available.  Guarded by test_caves_optional_channels_union.
+            optional_channels=("biome_names", "slope", "basin", "wetness"),
             produces_channels=(
                 "cave_candidate",
                 "wet_rock",

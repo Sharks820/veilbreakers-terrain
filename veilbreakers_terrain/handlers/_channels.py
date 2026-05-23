@@ -43,7 +43,7 @@ from typing import Final, FrozenSet
 class ChannelInfo:
     """Per-channel metadata bound to a ``Channel`` enum member."""
 
-    unit: str  # canonical unit: 'm' | 'rad' | 'deg' | 'dimensionless' | 'count' | 'id' | 'unit_normal_xyz'
+    unit: str  # canonical unit: 'm' | 'rad' | 'deg' | 'dimensionless' | 'count' | 'id' | 'unit_normal_xyz' | 'rgb_triplet'
     description: str
 
 
@@ -161,6 +161,9 @@ class Channel(Enum):
     # registry symmetry tests in test_channel_enum_registry pin the
     # post-retag unit at both _channels and
     # terrain_golden_snapshots._CHANNEL_CANONICAL_UNITS.
+    # WAVE5-11 Shape-A fix: renamed MACRO_COLOR → MACRO_COLOR_RGB
+    # and retagged unit from "dimensionless" to "rgb_triplet" to reflect the
+    # (H, W, 3) non-scalar shape. Mirrors PR #113 STRATA_ORIENTATION_XYZ fix.
     MACRO_COLOR_RGB = "macro_color"
 
     # --- Binary masks (dimensionless 0/1) ---
@@ -293,7 +296,9 @@ _CHANNEL_INFO: Final[dict[Channel, ChannelInfo]] = {
         "Per-cell macro-color RGB triple (H, W, 3) float32 — biome palette "
         "blended with altitude + wetness modulations. Multi-channel; "
         "values are linear RGB in [0, 1] per component, not a scalar "
-        "dimensionless mask. See CP5-CASCADE Bug 2 retag.",
+        "dimensionless mask. See CP5-CASCADE Bug 2 retag. WAVE5-11: "
+        "retagged from 'dimensionless' to 'rgb_triplet' to reflect non-scalar "
+        "(H, W, 3) shape. Stack key stays 'macro_color' for backward compat.",
     ),
     # Binary masks
     Channel.CLIFF_CANDIDATE: ChannelInfo(

@@ -307,7 +307,7 @@ namespace VeilBreakers.TerrainImport.Editor
 
         public static Terrain ImportBundleDirectory(string bundleDirectory)
         {
-            var descriptorPath = Path.Combine(bundleDirectory, ImportDescriptorName);
+            var descriptorPath = SafePathCombine(bundleDirectory, ImportDescriptorName);
             if (!File.Exists(descriptorPath))
             {
                 throw new FileNotFoundException(
@@ -592,7 +592,7 @@ namespace VeilBreakers.TerrainImport.Editor
 
             var payloadPath = string.IsNullOrEmpty(bundleDirectory)
                 ? descriptor.navmesh_area_id_file
-                : Path.Combine(bundleDirectory, descriptor.navmesh_area_id_file);
+                : SafePathCombine(bundleDirectory, descriptor.navmesh_area_id_file);
             if (!File.Exists(payloadPath))
             {
                 return null;
@@ -819,7 +819,7 @@ namespace VeilBreakers.TerrainImport.Editor
         )
         {
             var heights = ReadHeightmap01(
-                Path.Combine(bundleDirectory, descriptor.heightmap.file),
+                SafePathCombine(bundleDirectory, descriptor.heightmap.file),
                 descriptor.heightmap
             );
             terrainData.SetHeights(0, 0, heights);
@@ -870,7 +870,7 @@ namespace VeilBreakers.TerrainImport.Editor
             var alphamaps = new float[height, width, layerCount];
             foreach (var splatmap in descriptor.splatmaps)
             {
-                var bytes = File.ReadAllBytes(Path.Combine(bundleDirectory, splatmap.file));
+                var bytes = File.ReadAllBytes(SafePathCombine(bundleDirectory, splatmap.file));
                 var expected = splatmap.width * splatmap.height * splatmap.channels;
                 if (bytes.Length != expected)
                 {
@@ -966,7 +966,7 @@ namespace VeilBreakers.TerrainImport.Editor
             for (var index = 0; index < descriptor.detail_layers.Length; index++)
             {
                 var counts = ReadDetailCounts(
-                    Path.Combine(bundleDirectory, descriptor.detail_layers[index].file),
+                    SafePathCombine(bundleDirectory, descriptor.detail_layers[index].file),
                     descriptor.detail_layers[index]
                 );
                 terrainData.SetDetailLayer(0, 0, index, counts);
@@ -984,7 +984,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            var treeInstancesPath = Path.Combine(bundleDirectory, descriptor.tree_instances_file);
+            var treeInstancesPath = SafePathCombine(bundleDirectory, descriptor.tree_instances_file);
             if (!File.Exists(treeInstancesPath))
             {
                 return;
@@ -1047,6 +1047,9 @@ namespace VeilBreakers.TerrainImport.Editor
                         prototypeIndex = prototypeIndex,
                         widthScale = Mathf.Max(0.1f, tree.width_scale),
                         heightScale = Mathf.Max(0.1f, tree.height_scale),
+                        // TreeInstance.rotation is per-tree yaw in radians;
+                        // the JSON manifest emits yaw_degrees, so convert here.
+                        rotation = tree.yaw_degrees * Mathf.Deg2Rad,
                         color = ToColor(tree.color),
                         lightmapColor = ToColor(tree.lightmap_color),
                     }
@@ -1070,7 +1073,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            var payloadPath = Path.Combine(bundleDirectory, descriptor.supplemental_mesh_specs_file);
+            var payloadPath = SafePathCombine(bundleDirectory, descriptor.supplemental_mesh_specs_file);
             if (!File.Exists(payloadPath))
             {
                 return;
@@ -1133,7 +1136,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            var payloadPath = Path.Combine(bundleDirectory, descriptor.water_shader_manifest_file);
+            var payloadPath = SafePathCombine(bundleDirectory, descriptor.water_shader_manifest_file);
             if (!File.Exists(payloadPath))
             {
                 Debug.LogWarning($"VeilBreakers terrain import missing water shader manifest: {descriptor.water_shader_manifest_file}");
@@ -1158,9 +1161,9 @@ namespace VeilBreakers.TerrainImport.Editor
             TerrainBundleDescriptor descriptor
         )
         {
-            return File.Exists(Path.Combine(bundleDirectory, descriptor.water_surface_elevation_file ?? string.Empty))
-                && File.Exists(Path.Combine(bundleDirectory, descriptor.water_depth_file ?? string.Empty))
-                && File.Exists(Path.Combine(bundleDirectory, descriptor.flow_direction_file ?? string.Empty));
+            return File.Exists(SafePathCombine(bundleDirectory, descriptor.water_surface_elevation_file ?? string.Empty))
+                && File.Exists(SafePathCombine(bundleDirectory, descriptor.water_depth_file ?? string.Empty))
+                && File.Exists(SafePathCombine(bundleDirectory, descriptor.flow_direction_file ?? string.Empty));
         }
 
         private static Mesh BuildWaterPlaneMesh(float width, float depth, string id)
@@ -1239,7 +1242,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            var payloadPath = Path.Combine(bundleDirectory, descriptor.light_placements_file);
+            var payloadPath = SafePathCombine(bundleDirectory, descriptor.light_placements_file);
             if (!File.Exists(payloadPath))
             {
                 return;
@@ -1298,7 +1301,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            var payloadPath = Path.Combine(bundleDirectory, descriptor.probe_placements_file);
+            var payloadPath = SafePathCombine(bundleDirectory, descriptor.probe_placements_file);
             if (!File.Exists(payloadPath))
             {
                 return;
@@ -1363,7 +1366,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            var payloadPath = Path.Combine(bundleDirectory, descriptor.foliage_placement_manifest_file);
+            var payloadPath = SafePathCombine(bundleDirectory, descriptor.foliage_placement_manifest_file);
             if (!File.Exists(payloadPath))
             {
                 Debug.LogWarning($"VeilBreakers terrain import missing foliage placement manifest: {descriptor.foliage_placement_manifest_file}");
@@ -1440,7 +1443,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            var payloadPath = Path.Combine(bundleDirectory, relativeFile);
+            var payloadPath = SafePathCombine(bundleDirectory, relativeFile);
             if (!File.Exists(payloadPath))
             {
                 Debug.LogWarning($"VeilBreakers terrain import missing {payloadType} sidecar: {relativeFile}");
@@ -2042,7 +2045,7 @@ namespace VeilBreakers.TerrainImport.Editor
         {
             if (!string.IsNullOrEmpty(relativeTextureFile))
             {
-                var sourcePath = Path.Combine(bundleDirectory, relativeTextureFile);
+                var sourcePath = SafePathCombine(bundleDirectory, relativeTextureFile);
                 if (!File.Exists(sourcePath))
                 {
                     throw new FileNotFoundException(
@@ -2075,7 +2078,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 return string.Empty;
             }
 
-            var sourcePath = Path.Combine(bundleDirectory, descriptor.terrain_normal_map_file);
+            var sourcePath = SafePathCombine(bundleDirectory, descriptor.terrain_normal_map_file);
             if (!File.Exists(sourcePath))
             {
                 Debug.LogWarning(
@@ -2467,6 +2470,95 @@ namespace VeilBreakers.TerrainImport.Editor
                 default:
                     return LightType.Point;
             }
+        }
+
+        /// <summary>
+        /// CWE-22 path-traversal containment guard (Verifier A 2026-05-21 #17).
+        /// Resolves <paramref name="parts"/> against <paramref name="baseDir"/> via
+        /// <see cref="Path.GetFullPath"/> and throws <see cref="System.Security.SecurityException"/>
+        /// when the resolved path does not start with the canonical bundle directory.
+        /// All reads from manifest-controlled file paths MUST go through this helper.
+        /// </summary>
+        private static string SafePathCombine(string baseDir, params string[] parts)
+        {
+            // Defense in depth: reject any rooted/absolute part up front and join the parts
+            // MANUALLY via explicit separator concatenation instead of ``Path.Combine``.
+            //
+            // ``Path.Combine`` silently discards every earlier argument when a later argument
+            // is rooted ("/abs/path" or "C:\\abs\\path"), which would let a malicious manifest
+            // entry escape the bundleDir base entirely. CodeQL's ``cs/path-combine`` query
+            // recommends against ``Path.Combine`` precisely because of this silent-drop
+            // behaviour, and flags it structurally regardless of any preceding runtime guard.
+            // We therefore avoid the API altogether: (1) throw on any rooted part, (2) strip
+            // any leading directory separators so each part is provably relative, and (3)
+            // append each validated relative segment under the base directory with exactly one
+            // separator. The canonical ``GetFullPath`` + ``StartsWith`` containment check below
+            // remains the authoritative CWE-22 guard (it normalises ".." sequences too).
+            var baseFullPath = Path.GetFullPath(baseDir);
+            // Ensure canonical form ends with separator so "bundleDirExtra/..." is not a false match.
+            if (!baseFullPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) &&
+                !baseFullPath.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+            {
+                baseFullPath += Path.DirectorySeparatorChar;
+            }
+
+            // Build the joined path with StringBuilder (CodeQL cs/string-concatenation-in-loop):
+            // O(n) amortised appends instead of repeated string reallocation in the loop.
+            var combinedBuilder = new System.Text.StringBuilder(baseDir);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                var part = parts[i];
+                if (part == null)
+                {
+                    continue;
+                }
+                if (Path.IsPathRooted(part))
+                {
+                    throw new System.Security.SecurityException(
+                        $"VbTerrainImporter: refused rooted path '{part}' in SafePathCombine " +
+                        $"arguments — only relative paths permitted (CWE-22 path traversal guard)"
+                    );
+                }
+                // Strip any leading directory separators so the segment is provably relative;
+                // a rooted segment would have been rejected above, but this also neutralises a
+                // leading "/" or "\\" that ``Path.IsPathRooted`` treats as relative on some
+                // platforms and prevents an accidental double separator on concatenation.
+                var relativePart = part.TrimStart(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar
+                );
+                if (relativePart.Length == 0)
+                {
+                    continue;
+                }
+                // Insert exactly one separator unless the accumulator is empty or already
+                // ends in one. Inspecting the last char of the builder is equivalent to the
+                // prior ``combined.EndsWith(separator)`` test but without materialising a string.
+                var lastChar = combinedBuilder.Length == 0
+                    ? '\0'
+                    : combinedBuilder[combinedBuilder.Length - 1];
+                if (combinedBuilder.Length == 0 ||
+                    lastChar == Path.DirectorySeparatorChar ||
+                    lastChar == Path.AltDirectorySeparatorChar)
+                {
+                    combinedBuilder.Append(relativePart);
+                }
+                else
+                {
+                    combinedBuilder.Append(Path.DirectorySeparatorChar).Append(relativePart);
+                }
+            }
+            var combined = combinedBuilder.ToString();
+            var fullPath = Path.GetFullPath(combined);
+
+            if (!fullPath.StartsWith(baseFullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new System.Security.SecurityException(
+                    $"VbTerrainImporter: refused to access '{combined}' — resolves outside bundle " +
+                    $"directory '{baseFullPath}' (CWE-22 path traversal guard)"
+                );
+            }
+            return fullPath;
         }
 
         private static void EnsureAssetFolder(string assetFolder)
