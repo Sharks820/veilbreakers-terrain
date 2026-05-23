@@ -625,7 +625,7 @@ _CHANNEL_CANONICAL_UNITS: dict[str, str] = {
     "foam": "dimensionless",
     "mist": "dimensionless",
     "wet_rock": "dimensionless",
-    # CP5-CASCADE Bug 2: macro_color is (H, W, 3) float32 RGB emitted by
+    # CP5-CASCADE Bug 2 / WAVE5-11 Shape-A fix: macro_color is (H, W, 3) float32 RGB emitted by
     # terrain_macro_color.compute_macro_color (biome palette + altitude +
     # wetness modulations), NOT a scalar dimensionless mask. Retagged
     # "rgb_triplet" to match the new ChannelInfo in _channels.py

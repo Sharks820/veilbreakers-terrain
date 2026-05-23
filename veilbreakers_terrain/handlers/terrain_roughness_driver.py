@@ -232,6 +232,26 @@ def register_bundle_k_roughness_driver_pass() -> None:
             # Without this dependency the driver silently falls back to the
             # base roughness when multiscale breakup has not been executed.
             requires_channels=("height", "roughness_breakup"),
+            # WAVE5-14: ``material_zones`` was listed in the PassResult
+            # consumed_channels but absent from the PassDefinition, leaving a
+            # DAG orphan (consumer declared, no producer). The channel is an
+            # integer zone map written by user-authored rules (not a pass), so
+            # there is no pipeline producer — declaring it optional here closes
+            # the strict-graph contract without blocking execution when absent.
+            # Similarly ``slope``, ``curvature``, ``wetness``,
+            # ``erosion_amount``, ``deposition_amount``,
+            # ``ambient_occlusion_bake`` are all soft-reads guarded by None
+            # checks in the pass body; listing them as optional makes the DAG
+            # schedule their producers (when registered) before this pass.
+            optional_channels=(
+                "material_zones",
+                "slope",
+                "curvature",
+                "wetness",
+                "erosion_amount",
+                "deposition_amount",
+                "ambient_occlusion_bake",
+            ),
             produces_channels=("roughness_variation",),
             seed_namespace="roughness_driver",
             requires_scene_read=False,

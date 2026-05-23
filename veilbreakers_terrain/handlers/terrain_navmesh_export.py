@@ -489,7 +489,7 @@ def export_navmesh_json(
         "swim": 3,
         "climb": 4,
         "fly": 5,
-        "cliff_blocked": 255
+        "cliff_blocked": 64
       },
       "verts": [[x,y,z], ...],         ← world-space Y-up vertex positions
       "polys": [[i,j,k], ...],         ← CCW triangle indices
