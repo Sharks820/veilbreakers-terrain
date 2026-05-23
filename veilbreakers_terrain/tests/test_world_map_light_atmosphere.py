@@ -775,12 +775,12 @@ class TestBiomeAtmosphereRules:
 class TestComputeAtmosphericPlacements:
     """Test atmospheric placement computation."""
 
-    def test_dark_forest_placements(self):
+    def test_deep_forest_placements(self):
         from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         bounds = (0, 0, 100, 100)
         result = compute_atmospheric_placements(
-            "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
+            "deep_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         assert len(result) > 0
         vol_types = {p["volume_type"] for p in result}
@@ -811,7 +811,7 @@ class TestComputeAtmosphericPlacements:
 
         bounds = (0, 0, 80, 80)
         result = compute_atmospheric_placements(
-            "enchanted_glade", bounds, seed=42, **_terrain_kwargs(bounds)
+            "mushroom_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         for p in result:
             assert "volume_type" in p
@@ -830,7 +830,7 @@ class TestComputeAtmosphericPlacements:
 
         bounds = (10, 20, 50, 60)
         result = compute_atmospheric_placements(
-            "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
+            "deep_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         for p in result:
             assert bounds[0] <= p["position"][0] <= bounds[2]
@@ -841,10 +841,10 @@ class TestComputeAtmosphericPlacements:
 
         bounds = (0, 0, 100, 100)
         base = compute_atmospheric_placements(
-            "dark_forest", bounds, seed=42, density_scale=1.0, **_terrain_kwargs(bounds)
+            "deep_forest", bounds, seed=42, density_scale=1.0, **_terrain_kwargs(bounds)
         )
         scaled = compute_atmospheric_placements(
-            "dark_forest", bounds, seed=42, density_scale=2.0, **_terrain_kwargs(bounds)
+            "deep_forest", bounds, seed=42, density_scale=2.0, **_terrain_kwargs(bounds)
         )
         assert len(scaled) >= len(base)
 
@@ -853,10 +853,10 @@ class TestComputeAtmosphericPlacements:
 
         bounds = (0, 0, 100, 100)
         r1 = compute_atmospheric_placements(
-            "volcanic_wastes", bounds, seed=42, **_terrain_kwargs(bounds)
+            "ashen_wastes", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         r2 = compute_atmospheric_placements(
-            "volcanic_wastes", bounds, seed=42, **_terrain_kwargs(bounds)
+            "ashen_wastes", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         assert len(r1) == len(r2)
         for a, b in zip(r1, r2):
@@ -882,7 +882,7 @@ class TestComputeAtmosphericPlacements:
         heightmap = [[float(r * 10 + c) for c in range(8)] for r in range(8)]
 
         result = compute_atmospheric_placements(
-            "dark_forest",
+            "deep_forest",
             (0, 0, 8, 8),
             seed=42,
             heightmap=heightmap,
@@ -898,7 +898,7 @@ class TestComputeAtmosphericPlacements:
 
         with pytest.raises(ValueError, match="ridge_mask shape"):
             compute_atmospheric_placements(
-                "dark_forest",
+                "deep_forest",
                 (0, 0, 8, 8),
                 seed=42,
                 heightmap=[[0.0] * 8 for _ in range(8)],
