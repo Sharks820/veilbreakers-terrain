@@ -142,6 +142,13 @@ _LABEL_STAMPING_DEFERRABLE_PASSES = frozenset({
     # sequence will place integrate_deltas after this pass.  Without this entry
     # label_stamping would be anchored before the road/delta composition.
     "pass_road_network",
+    # ADV-W53-03: cliff and cave passes may modify the carved surface and
+    # boulder placements after structural_masks; label anchors placed
+    # before them would precede geometry mutations.  Added defensively so
+    # future label-stamping schedule authors do not anchor before cliff/cave
+    # outputs are committed.
+    "cliffs",
+    "caves",
 })
 
 
@@ -363,6 +370,21 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         or any(token in biome_hint for token in _VOLCANIC_HINT_TOKENS)
     )
     include_talus = bool(composition_hints.get("talus", False))
+    # CE-WAVE-5 WAVE5-3 (P0, CONF 100, 2026-05-22): cliffs and caves were
+    # registered PassDefinitions but NEVER scheduled here, so every default
+    # AAA bake produced rolling hills with no vertical cliff features and no
+    # cave entrances — a silent quality regression across every run.
+    #
+    # Default ON for AAA-tier profiles; preview/mobile/low profiles opt out
+    # via the default so their byte-identical fixture baselines are unaffected.
+    # Callers can still opt out explicitly:
+    #   composition_hints={"include_cliffs": False, "include_caves": False}
+    #
+    # ``caves`` additionally requires a scene_read payload (registered with
+    # ``requires_scene_read=True``), so it is always suppressed in non-scene-
+    # read builds regardless of the hint value.
+    include_cliffs = bool(composition_hints.get("include_cliffs", _aaa_quality))
+    include_caves = bool(composition_hints.get("include_caves", _aaa_quality))
     has_scene_read = getattr(intent, "scene_read", None) is not None
     validation_pass = (
         "validation_minimal"
@@ -459,6 +481,19 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # always reads the final composited height — see the inserted
             # ``"topographic_indices"`` entry after talus + before
             # ``pass_road_network`` / ``materials_v2``.
+            # CE-WAVE-5 WAVE5-3 (P0): cliffs (Bundle B) and caves (Bundle F)
+            # were registered PassDefinitions but never scheduled here.
+            # ``cliffs`` requires slope + height (both written by the
+            # structural_masks/erosion block above); it runs BEFORE
+            # pass_terrain_features so cliff geometry is part of the carved
+            # surface that scatter and materials consume.
+            # ``caves`` requires height + scene_read (requires_scene_read=True
+            # in its PassDefinition); it runs AFTER cliffs so caves can
+            # anchor entrances at cliff faces when both are active.
+            # environment._execute_terrain_pipeline auto-injects
+            # emit_overhang_meshes when either pass is in the pipeline.
+            *(("cliffs",) if include_cliffs else ()),
+            *(("caves",) if include_caves and has_scene_read else ()),
             # C-7: terrain feature carving before scatter
             "pass_terrain_features",
             # C-8: sightline framing before scatter

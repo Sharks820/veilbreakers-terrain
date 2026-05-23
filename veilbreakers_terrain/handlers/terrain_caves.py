@@ -3977,7 +3977,20 @@ def register_bundle_f_passes() -> None:
             name="caves",
             func=pass_caves,
             requires_channels=("height",),
-            optional_channels=("biome_names",),
+            # ADV-W53-04 (WAVE5-3) ∪ #126: biome_names, slope, basin, and
+            # wetness are all soft dependencies — pass_caves reads each when
+            # present but degrades gracefully when absent:
+            #   - biome_names  @ ~954  (getattr(stack, "biome_names", None) →
+            #                            biome-keyed cave-type selection)
+            #   - slope        @ ~1172 (stack.get("slope"))
+            #   - basin        @ ~831  (_sample("basin", 0.0) → KARST/SEA_GROTTO)
+            #   - wetness      @ ~1712 (stack.get("wetness"))
+            # This is the UNION of WAVE5-3 (slope/basin/wetness) and #126
+            # (biome_names): dropping either side silently re-broke a real soft
+            # read.  Declaring all four surfaces the contract to future schedule
+            # authors and lets the DAG order their producers before caves when
+            # available.  Guarded by test_caves_optional_channels_union.
+            optional_channels=("biome_names", "slope", "basin", "wetness"),
             produces_channels=(
                 "cave_candidate",
                 "wet_rock",

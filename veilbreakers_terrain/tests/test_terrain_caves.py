@@ -526,6 +526,31 @@ def test_register_bundle_f_passes_adds_caves():
     assert "cave_mesh_specs" in definition.produces_channels
 
 
+def test_caves_optional_channels_union():
+    """Regression net for the WAVE5-3 ∪ #126 merge: ``caves`` declares ALL
+    four soft reads — biome_names (#126) and slope/basin/wetness (WAVE5-3).
+
+    A future edit that drops any one (e.g. by re-resolving a conflict to a
+    single side) silently re-breaks a real soft read inside ``pass_caves``:
+      - biome_names  @ ~954  getattr(stack, "biome_names", None)
+      - slope        @ ~1172 stack.get("slope")
+      - basin        @ ~831  _sample("basin", 0.0)
+      - wetness      @ ~1712 stack.get("wetness")
+    """
+    from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+    register_bundle_f_passes()
+    definition = TerrainPassController.PASS_REGISTRY["caves"]
+    optional = set(definition.optional_channels or ())
+    for ch in ("biome_names", "slope", "basin", "wetness"):
+        assert ch in optional, (
+            f"caves must declare '{ch}' in optional_channels (it is a real "
+            f"soft read in pass_caves); current optional_channels="
+            f"{sorted(optional)}"
+        )
+
+
 def test_pass_caves_requires_scene_read():
     from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
