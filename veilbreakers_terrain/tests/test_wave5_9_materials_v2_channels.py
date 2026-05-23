@@ -115,12 +115,10 @@ def test_all_stack_get_sites_declared():
 def _get_registered_definitions():
     """Register the bundle B passes and return the PassDefinition objects."""
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
-        register_bundle_b_material_passes,
-    )
+    import veilbreakers_terrain.handlers.terrain_materials_v2 as materials_v2
 
     TerrainPassController.clear_registry()
-    register_bundle_b_material_passes()
+    materials_v2.register_bundle_b_material_passes()
     defs = dict(TerrainPassController.PASS_REGISTRY)  # name → PassDefinition
     TerrainPassController.clear_registry()
     return defs
@@ -208,12 +206,12 @@ def test_pass_materials_no_optional_channels_does_not_crash():
     from stack.get()).  This verifies each None-path is handled gracefully.
     """
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_materials_v2 import pass_materials
+    import veilbreakers_terrain.handlers.terrain_materials_v2 as materials_v2
 
     TerrainPassController.clear_registry()
     try:
         state = _build_minimal_state()
-        result = pass_materials(state, region=None)
+        result = materials_v2.pass_materials(state, region=None)
         assert result.status in ("ok", "warning"), (
             f"pass_materials returned unexpected status {result.status!r} "
             f"with no optional channels on the stack"
@@ -235,9 +233,8 @@ def test_pass_materials_each_optional_channel_handled_when_none(channel_name: st
     written by pass_materials — injecting None before the call and then
     checking the result is the same as the no-optional-channels test above.)
     """
-    import numpy as np
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_materials_v2 import pass_materials
+    import veilbreakers_terrain.handlers.terrain_materials_v2 as materials_v2
 
     TerrainPassController.clear_registry()
     try:
@@ -249,7 +246,7 @@ def test_pass_materials_each_optional_channel_handled_when_none(channel_name: st
         if getattr(state.mask_stack, channel_name, None) is not None:
             object.__setattr__(state.mask_stack, channel_name, None)
 
-        result = pass_materials(state, region=None)
+        result = materials_v2.pass_materials(state, region=None)
         assert result.status in ("ok", "warning"), (
             f"pass_materials failed when optional channel {channel_name!r} "
             f"is absent: status={result.status!r}"

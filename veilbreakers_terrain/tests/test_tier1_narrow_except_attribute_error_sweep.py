@@ -31,8 +31,6 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -113,9 +111,9 @@ def test_carve_river_banks_none_terrain_obj_returns_safe_dict():
     """Passing None as terrain_obj must return the safe 'insufficient_geometry'
     dict rather than raising AttributeError or any other exception.
     """
-    from veilbreakers_terrain.handlers.environment import _carve_river_banks_into_terrain
+    import veilbreakers_terrain.handlers.environment as env
 
-    result = _carve_river_banks_into_terrain(
+    result = env._carve_river_banks_into_terrain(
         terrain_obj=None,
         path_points=[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)],
         width_world=2.0,
@@ -142,7 +140,7 @@ def test_carve_river_banks_no_dims_attribute_returns_safe_dict():
     because getattr(None, 'x') raises AttributeError, which was not in the
     (TypeError, ValueError) catch tuple.
     """
-    from veilbreakers_terrain.handlers.environment import _carve_river_banks_into_terrain
+    import veilbreakers_terrain.handlers.environment as env
 
     # Build an object with enough vertices to pass the len(vertices) >= 4 guard
     # but whose 'dimensions' and 'location' are absent (getattr → None).
@@ -157,7 +155,7 @@ def test_carve_river_banks_no_dims_attribute_returns_safe_dict():
         data = _Mesh()
         # No 'dimensions' or 'location' — getattr(..., None) → None for both
 
-    result = _carve_river_banks_into_terrain(
+    result = env._carve_river_banks_into_terrain(
         terrain_obj=_TObj(),
         path_points=[(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)],
         width_world=1.0,
