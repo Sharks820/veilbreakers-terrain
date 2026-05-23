@@ -118,13 +118,14 @@ _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # _load_baseline_snapshot + _lightweight_water_network_copy module
     # helpers added above ``build_default_pass_sequence`` AND subsequent
     # main-branch additions (PR #117 LOD descriptor, PR #118 fixes).
-    # Merge of #126 into main: WAVE5-2 (#141) added 5 comment lines to
-    # _LABEL_STAMPING_DEFERRABLE_PASSES documenting dead-anchor removals
-    # (was 616 -> 621), and PR #126 added the _zone_bounds_intersect /
-    # _zone_permits imports to the _protected_zones import block (621 -> 626).
-    # The ast.Call node.lineno of the ``json.dumps(`` callsite in
-    # derive_pass_seed is verified at 626 in the merged file.
-    ("handlers/terrain_pipeline.py", 626),
+    # WAVE5-3 ∪ main merge (2026-05-23): main pinned 626 (#126's
+    # _protected_zones import block + #141's dead-anchor comment lines), and
+    # WAVE5-3 inserts the include_cliffs/include_caves comment + var block
+    # ABOVE derive_pass_seed in build_default_pass_sequence, shifting the
+    # json.dumps callsite further down. The ast.Call node.lineno of the
+    # ``json.dumps(`` callsite in derive_pass_seed is verified at 661 in the
+    # fully-merged terrain_pipeline.py (def derive_pass_seed @ 648).
+    ("handlers/terrain_pipeline.py", 661),
     # terrain_determinism_ci.hash_state — intent recursion for hash only.
     ("handlers/terrain_determinism_ci.py", 87),
     # terrain_io.atomic_write_json — passes allow_nan kwarg through the
