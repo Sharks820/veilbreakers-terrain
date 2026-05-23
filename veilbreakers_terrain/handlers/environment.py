@@ -5104,7 +5104,11 @@ def _carve_river_banks_into_terrain(
         terrain_height = max(float(getattr(dims, "y")), 1e-6)
         origin_x = float(getattr(loc, "x", 0.0))
         origin_y = float(getattr(loc, "y", 0.0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
+        # AttributeError: dims or loc can be None when terrain_obj does not
+        # have the expected Blender Vector attributes (mock objects, headless
+        # test stubs, non-mesh objects). getattr(None, "x") raises
+        # AttributeError which was not in the tuple before this fix.
         return {"terrain_carved": False, "terrain_carve_reason": "invalid_transform"}
 
     col_scale = (cols - 1) / terrain_width
