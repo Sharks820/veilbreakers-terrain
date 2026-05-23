@@ -354,7 +354,7 @@ def _build_command_handlers() -> dict[str, CommandHandler]:
 
         def _handle_compute_atmospheric_placements(params: HandlerParams) -> list[Any]:
             return _av.compute_atmospheric_placements(
-                biome_name=params.get("biome_name", "dark_forest"),
+                biome_name=params.get("biome_name", "deep_forest"),
                 area_bounds=tuple(params.get("area_bounds", [0, 0, 100, 100])),
                 seed=params.get("seed", 42),
                 density_scale=float(params.get("density_scale", 1.0)),
