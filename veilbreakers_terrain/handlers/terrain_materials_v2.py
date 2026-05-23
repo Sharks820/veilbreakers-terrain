@@ -1241,7 +1241,27 @@ def register_bundle_b_material_passes() -> None:
             # overlap is intentional (quixel_ingest overrides materials_v2
             # for photoscanned biomes, see terrain_quixel_ingest.py).
             requires_channels=("slope", "height"),
-            optional_channels=("curvature", "wetness"),
+            # WAVE5-9: declare every channel read via stack.get(...) so the
+            # topo-sort DAG sees the dependency instead of relying on incidental
+            # ordering.  All are optional — each call site handles None
+            # gracefully (zeros_like fallback, skip-block, or region blend).
+            optional_channels=(
+                "curvature",
+                "wetness",
+                "lava_prox",
+                "snow_line_factor",
+                "strata_height",
+                "ridge_eroded",
+                "ridge",
+                "rock_label",
+                "gravel_label",
+                "water_label",
+                "cliff_label",
+                "water_surface_mask",
+                "wet_rock",
+                "road_sdf_dist",
+                "splatmap_weights_layer",  # read for region-blend base
+            ),
             produces_channels=(
                 "splatmap_weights_layer",
                 "material_weights",
@@ -1273,7 +1293,26 @@ def register_bundle_b_material_passes() -> None:
             name="materials_v2_volcanic",
             func=_pass_volcanic_materials,
             requires_channels=("slope", "height"),
-            optional_channels=("curvature", "wetness"),
+            # WAVE5-9: same optional_channels contract as the primary pass —
+            # both share pass_materials() so they read the identical stack.get
+            # call sites.
+            optional_channels=(
+                "curvature",
+                "wetness",
+                "lava_prox",
+                "snow_line_factor",
+                "strata_height",
+                "ridge_eroded",
+                "ridge",
+                "rock_label",
+                "gravel_label",
+                "water_label",
+                "cliff_label",
+                "water_surface_mask",
+                "wet_rock",
+                "road_sdf_dist",
+                "splatmap_weights_layer",
+            ),
             produces_channels=(
                 "splatmap_weights_layer",
                 "material_weights",

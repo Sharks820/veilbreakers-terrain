@@ -78,7 +78,7 @@ class TestComputeAtmosphericPlacements:
     def test_known_biome(self):
         bounds = (0, 0, 100, 100)
         placements = compute_atmospheric_placements(
-            "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
+            "deep_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         assert len(placements) > 0
 
@@ -108,7 +108,7 @@ class TestComputeAtmosphericPlacements:
     def test_placements_within_bounds(self):
         bounds = (10, 20, 50, 80)
         placements = compute_atmospheric_placements(
-            "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
+            "deep_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         for p in placements:
             x, y, _z = p["position"]
@@ -118,10 +118,10 @@ class TestComputeAtmosphericPlacements:
     def test_density_scale(self):
         bounds = (0, 0, 100, 100)
         base = compute_atmospheric_placements(
-            "frozen_peaks", bounds, density_scale=1.0, **_terrain_kwargs(bounds)
+            "frozen_hollows", bounds, density_scale=1.0, **_terrain_kwargs(bounds)
         )
         scaled = compute_atmospheric_placements(
-            "frozen_peaks", bounds, density_scale=2.0, **_terrain_kwargs(bounds)
+            "frozen_hollows", bounds, density_scale=2.0, **_terrain_kwargs(bounds)
         )
         # More density should produce equal or more volumes
         assert len(scaled) >= len(base)
@@ -129,17 +129,17 @@ class TestComputeAtmosphericPlacements:
     def test_deterministic(self):
         bounds = (0, 0, 50, 50)
         p1 = compute_atmospheric_placements(
-            "ancient_ruins", bounds, seed=42, **_terrain_kwargs(bounds)
+            "ruined_citadel", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         p2 = compute_atmospheric_placements(
-            "ancient_ruins", bounds, seed=42, **_terrain_kwargs(bounds)
+            "ruined_citadel", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         assert p1 == p2
 
     def test_valid_volume_types(self):
         bounds = (0, 0, 100, 100)
         placements = compute_atmospheric_placements(
-            "enchanted_glade", bounds, **_terrain_kwargs(bounds)
+            "mushroom_forest", bounds, **_terrain_kwargs(bounds)
         )
         for p in placements:
             assert p["volume_type"] in ATMOSPHERIC_VOLUMES
@@ -170,7 +170,7 @@ class TestComputeAtmosphericPlacements:
             region_bounds=BBox(0.0, 0.0, 4.0, 4.0),
             tile_size=4,
             cell_size=1.0,
-            composition_hints={"atmosphere_biome": "dark_forest"},
+            composition_hints={"atmosphere_biome": "deep_forest"},
         )
         state = TerrainPipelineState(intent=intent, mask_stack=stack)
 
