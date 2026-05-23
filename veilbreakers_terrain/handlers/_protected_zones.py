@@ -175,8 +175,19 @@ def _zone_permits(
     This helper resolves both shapes so every consumer can use one call.
 
     Object zone: delegates to ``zone.permits(kind)`` unchanged.
-    Dict zone: checks ``forbidden_kinds`` / ``forbid`` deny-list first,
-               then ``allowed_kinds`` / ``allow`` allow-list.
+    Dict zone: checks the deny-list first, then the allow-list. The deny/
+               allow keys are accepted under BOTH the legacy
+               ``forbidden_kinds`` / ``forbid`` / ``allowed_kinds`` / ``allow``
+               spellings AND the canonical serialized spellings
+               ``forbidden_mutations`` / ``allowed_mutations`` that the rest
+               of the codebase round-trips (terrain_checkpoints.py:366-367 and
+               environment.py:3133-3134 serialize ProtectedZoneSpec to dicts
+               with the *_mutations keys). Without the *_mutations spellings a
+               serialized dict policy zone with ``forbidden_mutations=[...]``
+               would be silently treated as permissive (CWE-749 silent-defeat
+               of the protection policy). The dict semantics mirror
+               ``ProtectedZoneSpec.permits``: deny on forbidden hit, then deny
+               when a non-empty allow-list omits the kind, else permit.
                Unknown shape defaults permissive (open zone).
     """
     # Typed dataclass zones: delegate to the canonical
@@ -192,11 +203,23 @@ def _zone_permits(
     if callable(permits_method):
         return bool(permits_method(kind))
     if isinstance(zone, dict):
-        forbidden = zone.get("forbidden_kinds") or zone.get("forbid") or ()
+        # Accept both the legacy *_kinds/forbid/allow spellings and the
+        # canonical serialized *_mutations spellings (see docstring). The
+        # first present non-empty value wins for each of deny/allow.
+        forbidden = (
+            zone.get("forbidden_kinds")
+            or zone.get("forbidden_mutations")
+            or zone.get("forbid")
+            or ()
+        )
         if kind in forbidden:
             return False
-        allowed = zone.get("allowed_kinds") or zone.get("allow")
-        if allowed is not None:
+        allowed = (
+            zone.get("allowed_kinds")
+            or zone.get("allowed_mutations")
+            or zone.get("allow")
+        )
+        if allowed:
             return kind in allowed
         return True
     return True  # unknown shape -> default permissive

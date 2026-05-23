@@ -418,6 +418,47 @@ class TestZonePermits:
         assert _zone_permits(zone, "trees") is False
         assert _zone_permits(zone, "grass") is True
 
+    def test_dict_zone_forbidden_mutations_denies(self) -> None:
+        """ADV-126 (R2): the serialized dict form of a protected zone uses the
+        canonical ``forbidden_mutations`` key (see terrain_checkpoints.py:367
+        and environment.py:3134 which serialize ProtectedZoneSpec to dicts).
+        Before the hardening, the dict path only read ``forbidden_kinds`` /
+        ``forbid`` so a serialized policy zone was silently treated as
+        permissive (CWE-749 silent-defeat). It must now deny.
+        """
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        zone = {"forbidden_mutations": ["cliffs", "place_caves"]}
+        assert _zone_permits(zone, "cliffs") is False
+        assert _zone_permits(zone, "place_caves") is False
+        # Anything not forbidden is still permitted (no allow-list set).
+        assert _zone_permits(zone, "place_trees") is True
+
+    def test_dict_zone_allowed_mutations_restricts(self) -> None:
+        """ADV-126 (R2): the canonical serialized ``allowed_mutations`` allow-
+        list must restrict the dict path the same way ``allowed_kinds`` does.
+        """
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        zone = {"allowed_mutations": ["place_grass"]}
+        assert _zone_permits(zone, "place_grass") is True
+        assert _zone_permits(zone, "cliffs") is False
+
+    def test_dict_zone_forbidden_mutations_wins_over_allowed_mutations(
+        self,
+    ) -> None:
+        """ADV-126 (R2): deny-list is evaluated before allow-list, mirroring
+        ``ProtectedZoneSpec.permits`` semantics, for the *_mutations spellings.
+        """
+        from veilbreakers_terrain.handlers._protected_zones import _zone_permits
+
+        zone = {
+            "forbidden_mutations": ["cliffs"],
+            "allowed_mutations": ["cliffs", "place_grass"],
+        }
+        assert _zone_permits(zone, "cliffs") is False
+        assert _zone_permits(zone, "place_grass") is True
+
     def test_empty_dict_zone_defaults_permissive(self) -> None:
         from veilbreakers_terrain.handlers._protected_zones import _zone_permits
 
