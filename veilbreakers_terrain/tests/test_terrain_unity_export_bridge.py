@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from types import SimpleNamespace
 from pathlib import Path
@@ -732,6 +733,52 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         assert token in source
     assert "new int[descriptor.height, descriptor.width]" in source
     assert "counts[y, x]" in source
+
+
+def test_unity_importer_treeinstance_rotation_field_is_wired_degrees_to_radians():
+    """Verifier A #18 (HOTFIX-7a) regression guard.
+
+    Unity's `TreeInstance.rotation` field is in radians (around the Y axis).
+    Our JSON manifest emits `yaw_degrees` for tree instances via
+    `_tree_instances_json` in `terrain_unity_export.py`. Prior to this fix
+    the `new TreeInstance { ... }` struct-initializer in `VbTerrainImporter.cs`
+    never assigned `rotation`, so Unity defaulted it to 0.0f — every terrain
+    tree faced north regardless of the manifest. This guard asserts the
+    `rotation = ... Mathf.Deg2Rad` conversion is present near the
+    `SetTreeInstances` call so the regression cannot silently return.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    importer_path = repo_root / "unity_plugin" / "Editor" / "VbTerrainImporter.cs"
+    source = importer_path.read_text(encoding="utf-8")
+
+    # The rotation assignment must be on the producer-side field
+    # (yaw_degrees) and must convert degrees -> radians for Unity.
+    assert "rotation = tree.yaw_degrees * Mathf.Deg2Rad" in source, (
+        "TreeInstance.rotation must be wired from tree.yaw_degrees * Mathf.Deg2Rad "
+        "(Verifier A #18; PR #114+#118 fixed producer-side, this closes consumer)."
+    )
+
+    # Parse the SetTreeInstances( call site: extract the block of code from the
+    # nearest preceding `new TreeInstance` through the closing `SetTreeInstances(`
+    # and assert that rotation, widthScale, and heightScale all appear inside it.
+    # Using a regex over the actual call block is robust to reformatting and avoids
+    # the brittle str.find() global-offset proximity heuristic.
+    set_tree_instances_idx = source.find(".SetTreeInstances(")
+    assert set_tree_instances_idx > 0, "expected .SetTreeInstances( in VbTerrainImporter.cs"
+    # Walk back from SetTreeInstances to find the enclosing new TreeInstance { block.
+    block_start = source.rfind("new TreeInstance", 0, set_tree_instances_idx)
+    assert block_start > 0, "expected 'new TreeInstance' before .SetTreeInstances( in VbTerrainImporter.cs"
+    call_block = source[block_start:set_tree_instances_idx]
+    assert re.search(r"\brotation\s*=\s*tree\.yaw_degrees\s*\*\s*Mathf\.Deg2Rad\b", call_block), (
+        "rotation = tree.yaw_degrees * Mathf.Deg2Rad must appear inside the "
+        "TreeInstance struct-initializer block before .SetTreeInstances(."
+    )
+    assert re.search(r"\bwidthScale\s*=", call_block), (
+        "widthScale assignment must appear in the same TreeInstance block."
+    )
+    assert re.search(r"\bheightScale\s*=", call_block), (
+        "heightScale assignment must appear in the same TreeInstance block."
+    )
 
 
 def test_public_unity_export_handler_writes_bundle():

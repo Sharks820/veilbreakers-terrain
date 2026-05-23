@@ -1047,6 +1047,9 @@ namespace VeilBreakers.TerrainImport.Editor
                         prototypeIndex = prototypeIndex,
                         widthScale = Mathf.Max(0.1f, tree.width_scale),
                         heightScale = Mathf.Max(0.1f, tree.height_scale),
+                        // TreeInstance.rotation is per-tree yaw in radians;
+                        // the JSON manifest emits yaw_degrees, so convert here.
+                        rotation = tree.yaw_degrees * Mathf.Deg2Rad,
                         color = ToColor(tree.color),
                         lightmapColor = ToColor(tree.lightmap_color),
                     }
