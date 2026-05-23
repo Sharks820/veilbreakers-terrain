@@ -898,6 +898,14 @@ def _filter_multipass_scatter_placements(
 
         placement_local = dict(placement)
         placement_local["position"] = (local_x, local_y)
+        # HOTFIX-7k (supersedes CHECKPOINT-5 cascade-A #129): unit-disambiguate
+        # rotation at the filter boundary.  Read the original radians value from
+        # the explicit "rotation_rad" side-channel when present (re-entrancy-safe
+        # — a placement filtered twice is NOT double-converted), else fall back
+        # to "rotation".  Convert "rotation" to degrees, preserve radians under
+        # "rotation_rad", and stamp "_filtered=True" so the _read_rotation_rad /
+        # _read_rotation_deg helpers can resolve the correct unit downstream even
+        # without the side-channel key.
         _rot_rad_src = float(placement.get("rotation_rad", placement.get("rotation", 0.0)))
         placement_local["rotation"] = math.degrees(_rot_rad_src) % 360.0
         placement_local["rotation_rad"] = _rot_rad_src
@@ -3174,10 +3182,19 @@ def _scatter_pass(
         _pos3: tuple[float, float, float] = (float(_pos2[0]), float(_pos2[1]), _alt * terrain_size)
         _raw_scale = float(_p.get("scale", 1.0))
         _scale3: tuple[float, float, float] = (_raw_scale, _raw_scale, _raw_scale)
-        # Convert yaw rotation (radians, around Z) to unit quaternion (x,y,z,w).
-        # Use _read_rotation_rad so consumers are agnostic to pre/post-filter
-        # unit convention — the helper resolves the right value regardless of
-        # whether _filtered=True or rotation_rad side-channel is present.
+        # Convert yaw rotation (around Z) to a unit quaternion (x, y, z, w).
+        #
+        # CHECKPOINT-5 cascade-A (#129) established the dual-unit problem:
+        # "rotation" is radians pre-filter (_scatter_pass raw output) but
+        # degrees post-filter (_filter_multipass_scatter_placements output),
+        # with the original radians preserved under "rotation_rad".
+        #
+        # HOTFIX-7k (#133) supersedes the inline disambiguation with the
+        # _read_rotation_rad helper, which prefers the explicit "rotation_rad"
+        # side-channel, then falls back to the "_filtered" marker (post-filter
+        # → degrees) and finally to bare "rotation" (pre-filter → radians).
+        # Consumers stay agnostic to how the placement was produced and always
+        # get a correct radians value, guaranteeing a unit quaternion.
         _rot = _read_rotation_rad(_p)
         _half = _rot * 0.5
         _orient: tuple[float, float, float, float] = (0.0, 0.0, math.sin(_half), math.cos(_half))

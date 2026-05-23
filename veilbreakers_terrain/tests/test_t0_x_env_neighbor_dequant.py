@@ -298,14 +298,19 @@ def test_neighbor_loader_except_is_narrow_not_bare():
 
     # Required narrow exception names — every dequant-relevant exception
     # that the WAVE-1 hotfix's narrowing must keep covering.  Adding more
-    # narrow classes (e.g. RuntimeError if a future refactor introduces
-    # one) is fine — they just need to also be Names, not bare Exception.
+    # narrow classes is fine — they just need to also be Names, not bare
+    # Exception.
+    # CHECKPOINT-5 cascade-D: AttributeError added — if ``neighbor`` is None
+    # or a non-dict type (namedtuple/dataclass), calling ``.get()`` raises
+    # AttributeError which was previously not in the tuple and would escape
+    # to crash the tile bake.
     required_narrow: set[str] = {
         "FileNotFoundError",
         "OSError",
         "ValueError",
         "KeyError",
         "TypeError",
+        "AttributeError",
     }
     target_call_name = "_read_neighbor_heightmap_from_manifest"
 
@@ -382,3 +387,84 @@ def test_neighbor_loader_except_is_narrow_not_bare():
         f"the recoverable warn-and-skip-neighbor-edge branch instead of "
         f"crashing the tile bake."
     )
+
+
+# ---------------------------------------------------------------------------
+# CHECKPOINT-5 cascade-D: non-dict neighbor input must NOT raise AttributeError
+# ---------------------------------------------------------------------------
+
+class TestNeighborNonDictInputHandling:
+    """CHECKPOINT-5 cascade-D — _read_neighbor_heightmap_from_manifest must
+    handle non-dict neighbor inputs without raising AttributeError.
+
+    PR #122 narrowed the except tuple to
+    ``(FileNotFoundError, OSError, ValueError, KeyError, TypeError)`` to
+    surface real refactor bugs.  CHECKPOINT-5 found that if ``neighbor`` is
+    ``None`` or a non-dict type (namedtuple, dataclass, …) calling
+    ``neighbor.get(...)`` raises **AttributeError** — previously NOT in the
+    tuple — which escaped and crashed the terrain bake.
+
+    Fix (cascade-D):
+    1. Added ``AttributeError`` to the except tuple at the call site in
+       ``handle_generate_world_terrain``.
+    2. Added an ``isinstance(neighbor, dict)`` early guard at the function
+       entry of ``_read_neighbor_heightmap_from_manifest`` that raises
+       ``TypeError`` (in the except tuple) with a clear message so the
+       caller's warn-and-skip path fires instead of propagating a crash.
+    """
+
+    def test_none_neighbor_does_not_raise_attribute_error(self):
+        """Passing None must raise TypeError (in the except tuple), NOT AttributeError."""
+        with pytest.raises(TypeError, match=r"expected dict"):
+            _read_neighbor_heightmap_from_manifest(None)  # type: ignore[arg-type]
+
+    def test_tuple_neighbor_does_not_raise_attribute_error(self):
+        """Passing a plain tuple must raise TypeError, not AttributeError."""
+        with pytest.raises(TypeError, match=r"expected dict"):
+            _read_neighbor_heightmap_from_manifest(("some", "values"))  # type: ignore[arg-type]
+
+    def test_dataclass_neighbor_does_not_raise_attribute_error(self):
+        """Passing a dataclass instance must raise TypeError, not AttributeError."""
+        import dataclasses
+
+        @dataclasses.dataclass
+        class FakeNeighbor:
+            heightmap_path: str = "/fake/path"
+            resolution: int = 17
+            height_range: tuple[float, float] = (0.0, 100.0)
+
+        with pytest.raises(TypeError, match=r"expected dict"):
+            _read_neighbor_heightmap_from_manifest(FakeNeighbor())  # type: ignore[arg-type]
+
+    def test_non_dict_raises_type_error_not_attribute_error(self):
+        """Confirm the raised exception is TypeError (in the narrow except tuple)
+        and NOT AttributeError (which previously escaped the except tuple).
+        """
+        for bad_input in (None, 42, "string", [1, 2, 3], (1, 2)):
+            try:
+                _read_neighbor_heightmap_from_manifest(bad_input)  # type: ignore[arg-type]
+                pytest.fail(f"Expected TypeError for input {bad_input!r} but no exception raised")
+            except TypeError:
+                pass  # expected — TypeError is in the narrow except tuple
+            except AttributeError as exc:
+                pytest.fail(
+                    f"AttributeError escaped for input {bad_input!r}: {exc}. "
+                    f"CHECKPOINT-5 cascade-D fix not applied — isinstance guard "
+                    f"or AttributeError not in except tuple."
+                )
+
+    def test_non_dict_warns_via_logger(self, caplog: pytest.LogCaptureFixture):
+        """The function must emit a logger.warning before raising TypeError."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="veilbreakers_terrain.handlers.environment"):
+            with pytest.raises(TypeError):
+                _read_neighbor_heightmap_from_manifest(None)  # type: ignore[arg-type]
+
+        assert any(
+            "not a dict" in record.message or "skipping" in record.message
+            for record in caplog.records
+        ), (
+            "Expected a warning log about non-dict neighbor but none found in caplog. "
+            "The logger.warning call in the isinstance guard may be missing."
+        )
