@@ -898,13 +898,18 @@ def _filter_multipass_scatter_placements(
 
         placement_local = dict(placement)
         placement_local["position"] = (local_x, local_y)
-        # CHECKPOINT-5 cascade-A: preserve the original radians value under
-        # "rotation_rad" before converting to degrees.  Downstream quaternion
-        # builders that need the exact radian value (e.g. the early-validation
-        # ScatterPoint build in _scatter_pass) must read "rotation_rad" so they
-        # are not affected by the unit change applied to "rotation" below.
-        placement_local["rotation_rad"] = float(placement.get("rotation", 0.0))
-        placement_local["rotation"] = math.degrees(float(placement.get("rotation", 0.0))) % 360.0
+        # HOTFIX-7k (supersedes CHECKPOINT-5 cascade-A #129): unit-disambiguate
+        # rotation at the filter boundary.  Read the original radians value from
+        # the explicit "rotation_rad" side-channel when present (re-entrancy-safe
+        # — a placement filtered twice is NOT double-converted), else fall back
+        # to "rotation".  Convert "rotation" to degrees, preserve radians under
+        # "rotation_rad", and stamp "_filtered=True" so the _read_rotation_rad /
+        # _read_rotation_deg helpers can resolve the correct unit downstream even
+        # without the side-channel key.
+        _rot_rad_src = float(placement.get("rotation_rad", placement.get("rotation", 0.0)))
+        placement_local["rotation"] = math.degrees(_rot_rad_src) % 360.0
+        placement_local["rotation_rad"] = _rot_rad_src
+        placement_local["_filtered"] = True
         placement_local["moisture"] = moisture
         placement_local["altitude"] = altitude
         # Preserve fine-grained species_id and vegetation_type for concrete
@@ -925,6 +930,42 @@ def _filter_multipass_scatter_placements(
         filtered.append(placement_local)
 
     return filtered
+
+
+def _read_rotation_rad(p: dict[str, Any]) -> float:
+    """Return yaw rotation in RADIANS from a placement dict.
+
+    Understands both pre-filter placements (``rotation`` is radians, no
+    ``_filtered`` marker) and post-filter placements (``rotation`` is
+    degrees, ``_filtered=True``).  Prefers the explicit ``rotation_rad``
+    side-channel when present — writers should always populate it so no
+    unit-guessing is needed.
+    """
+    if "rotation_rad" in p:
+        return float(p["rotation_rad"])
+    raw = float(p.get("rotation", 0.0))
+    if p.get("_filtered"):
+        # Post-filter: rotation key is degrees.
+        return math.radians(raw)
+    # Pre-filter: rotation key is radians.
+    return raw
+
+
+def _read_rotation_deg(p: dict[str, Any]) -> float:
+    """Return yaw rotation in DEGREES from a placement dict.
+
+    Understands both pre-filter placements (``rotation`` is radians) and
+    post-filter placements (``rotation`` is degrees, ``_filtered=True``).
+    Prefers the explicit ``rotation_rad`` side-channel when present.
+    """
+    if "rotation_rad" in p:
+        return math.degrees(float(p["rotation_rad"])) % 360.0
+    raw = float(p.get("rotation", 0.0))
+    if p.get("_filtered"):
+        # Post-filter: rotation key is already degrees.
+        return raw % 360.0
+    # Pre-filter: rotation key is radians; convert.
+    return math.degrees(raw) % 360.0
 
 
 def _yaw_deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
@@ -1029,7 +1070,7 @@ def _build_scatter_point_table_from_placements(
             normal = (0.0, 0.0, 1.0)
         orient = placement.get("orient")
         if not isinstance(orient, (tuple, list)) or len(orient) < 4:
-            orient = _yaw_deg_to_quat(float(placement.get("rotation", 0.0)))
+            orient = _yaw_deg_to_quat(_read_rotation_deg(placement))
         lod_index = int(placement.get("lod", 0))
         wind_profile = "tree" if base_type == "tree" or species_id.startswith("tree_") else base_type
         points.append(
@@ -2809,10 +2850,12 @@ def _scatter_pass(
             if rng.random() > _density_at(pos):
                 continue
             dist = _viewer_dist(wx, wy)
+            _rot_tree = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "tree",
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_tree,
+                "rotation_rad": _rot_tree,
                 "scale": _scale_pm20(1.0),
                 "lod": _lod_for_distance(dist, "tree"),
                 "altitude": _height_at(pos),
@@ -2830,10 +2873,12 @@ def _scatter_pass(
             if rng.random() > min(1.0, _density_at(pos) * 1.1):
                 continue
             dist = _viewer_dist(wx, wy)
+            _rot_bush = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "bush",
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_bush,
+                "rotation_rad": _rot_bush,
                 "scale": _scale_pm20(0.75),
                 "lod": _lod_for_distance(dist, "bush"),
                 "altitude": _height_at(pos),
@@ -2884,10 +2929,12 @@ def _scatter_pass(
             if rng.random() > _density_at(pos):
                 continue
             dist = _viewer_dist(wx, wy)
+            _rot_grass = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": f"grass_{biome_grass}",
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_grass,
+                "rotation_rad": _rot_grass,
                 "scale": _scale_pm20(1.0),
                 "biome": biome_grass,
                 "lod": _lod_for_distance(dist, "grass"),
@@ -2916,10 +2963,12 @@ def _scatter_pass(
                 continue
             base_scale, size_class = _rock_size_from_power_law(rng)
             dist = _viewer_dist(wx, wy)
+            _rot_rock = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "rock",
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_rock,
+                "rotation_rad": _rot_rock,
                 "scale": _scale_pm20(base_scale),
                 "size_class": size_class,
                 "lod": _lod_for_distance(dist, "rock"),
@@ -3069,12 +3118,14 @@ def _scatter_pass(
             _lod = _lod_for_distance(dist, _spec.category if _spec.category in _LOD_THRESHOLDS else "default")
             if dist >= _lod_hint_dist:
                 _lod = 3
+            _rot_foliage = rng.uniform(0.0, 2.0 * math.pi)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": _sid,
                 "species_id": _sid,
                 "category": _spec.category,
-                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "rotation": _rot_foliage,
+                "rotation_rad": _rot_foliage,
                 "scale": _scale_pm20(1.0),
                 "lod": _lod,
                 "altitude": _height_at(pos),
@@ -3131,24 +3182,21 @@ def _scatter_pass(
         _pos3: tuple[float, float, float] = (float(_pos2[0]), float(_pos2[1]), _alt * terrain_size)
         _raw_scale = float(_p.get("scale", 1.0))
         _scale3: tuple[float, float, float] = (_raw_scale, _raw_scale, _raw_scale)
-        # Convert yaw rotation to unit quaternion (x, y, z, w) around Z.
+        # Convert yaw rotation (around Z) to a unit quaternion (x, y, z, w).
         #
-        # CHECKPOINT-5 cascade-A: "rotation" has dual units depending on how
-        # this placement dict was produced:
-        #   • Pre-filter (_scatter_pass raw output): radians in [0, 2π)
-        #   • Post-filter (_filter_multipass_scatter_placements output): degrees
-        #     in [0, 360), with the original radians value preserved under the
-        #     "rotation_rad" key (added by the filter to disambiguate).
-        # Always read "rotation_rad" first (explicit radians); fall back to
-        # math.radians("rotation") only when the placement bypassed the filter
-        # (i.e. came directly from a _scatter_pass raw call site in tests or
-        # the early-validation sub-pass below).  This guarantees a unit
-        # quaternion in both contexts.
-        if "rotation_rad" in _p:
-            _rot_rad = float(_p["rotation_rad"])
-        else:
-            _rot_rad = math.radians(float(_p.get("rotation", 0.0)))
-        _half = _rot_rad * 0.5
+        # CHECKPOINT-5 cascade-A (#129) established the dual-unit problem:
+        # "rotation" is radians pre-filter (_scatter_pass raw output) but
+        # degrees post-filter (_filter_multipass_scatter_placements output),
+        # with the original radians preserved under "rotation_rad".
+        #
+        # HOTFIX-7k (#133) supersedes the inline disambiguation with the
+        # _read_rotation_rad helper, which prefers the explicit "rotation_rad"
+        # side-channel, then falls back to the "_filtered" marker (post-filter
+        # → degrees) and finally to bare "rotation" (pre-filter → radians).
+        # Consumers stay agnostic to how the placement was produced and always
+        # get a correct radians value, guaranteeing a unit quaternion.
+        _rot = _read_rotation_rad(_p)
+        _half = _rot * 0.5
         _orient: tuple[float, float, float, float] = (0.0, 0.0, math.sin(_half), math.cos(_half))
         _lod_int = int(_p.get("lod", 0))
         _lod_bucket = f"lod{max(0, min(_lod_int, 3))}"
@@ -3568,7 +3616,7 @@ def handle_scatter_vegetation(params: dict[str, Any]) -> dict[str, Any]:
         # Align vegetation to terrain normal (slope-perpendicular placement)
         slope_pitch = math.atan2(-dzdy, 1.0)  # tilt around X
         slope_roll = math.atan2(dzdx, 1.0)   # tilt around Y
-        base_rot = _vegetation_rotation(vt, p["rotation"])
+        base_rot = _vegetation_rotation(vt, _read_rotation_deg(p))
         instance.rotation_euler = (
             base_rot[0] + slope_pitch * 0.7,  # partial alignment (70%) for natural look
             base_rot[1] + slope_roll * 0.7,
@@ -3841,7 +3889,15 @@ def handle_scatter_props(params: dict[str, Any]) -> dict[str, Any]:
         )
         wz = terrain_sampler(p["position"][0], p["position"][1]) if terrain_sampler else 0.0
         instance.location = (p["position"][0], p["position"][1], wz)
-        instance.rotation_euler = _prop_rotation(ptype, p["rotation"])
+        # HOTFIX-7k regression fix: the props path consumes context_scatter()
+        # output directly, which emits "rotation" as DEGREES (rng.uniform(0, 360))
+        # with NO "rotation_rad" side-channel and NO "_filtered" marker. It is
+        # never part of the pre/post-filter rad/deg ambiguity that the
+        # _read_rotation_* helpers disambiguate, so routing it through
+        # _read_rotation_deg() hits the helper's "pre-filter → radians" fallback
+        # and applies a spurious math.degrees() (45°→58.3°, 90°→116.6°). Pass the
+        # degrees value straight through, exactly as main did before #133.
+        instance.rotation_euler = _prop_rotation(ptype, float(p.get("rotation", 0.0)))
         s = p["scale"]
         instance.scale = (s, s, s)
         scatter_coll.objects.link(instance)
