@@ -211,6 +211,11 @@ def test_no_bare_channel_macro_color_in_source() -> None:
       - This test file itself is excluded from the search.
     """
     handlers_dir = _REPO_ROOT / "veilbreakers_terrain" / "handlers"
+    assert handlers_dir.is_dir(), (
+        f"Expected production handlers directory to exist: {handlers_dir}. "
+        f"If it was renamed/moved, this gate would silently disable itself "
+        f"(scan finds no files and passes vacuously) — fail loudly instead."
+    )
     result = subprocess.run(
         [
             sys.executable,
