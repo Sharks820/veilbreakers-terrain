@@ -109,8 +109,41 @@ def _finally_frees(try_node: ast.Try, var_name: str) -> bool:
     return False
 
 
-def _walk_blocks(body: list[ast.stmt], findings: list[tuple[int, str, bool]]) -> None:
-    """Recursively scan *body* for ``X = bmesh.new()`` followed by Try/finally."""
+def _walk_blocks(
+    body: list[ast.stmt],
+    findings: list[tuple[int, str, bool]],
+    enclosing_try: ast.Try | None = None,
+) -> None:
+    """Recursively scan *body* for ``X = bmesh.new()`` guarded by Try/finally.
+
+    Two patterns are accepted (WAVE5-6 extension):
+
+    **Pattern A** — assign immediately before Try (original pattern)::
+
+        bm = bmesh.new()
+        try:
+            ...
+        finally:
+            bm.free()
+
+    **Pattern B** — assign inside Try body (canonical Python idiom)::
+
+        try:
+            bm = bmesh.new()
+            ...
+        finally:
+            bm.free()
+
+    A site is marked ``ok=True`` when EITHER pattern is satisfied.  Both
+    patterns correctly ensure ``bm.free()`` runs even if an exception is
+    raised inside the block — Pattern B achieves this because the assign is
+    inside the Try body, so any exception after the assign is caught by the
+    same finally clause.
+
+    The only genuinely unsafe pattern is a ``bmesh.new()`` assignment that is
+    NOT inside any Try/finally block AND is not immediately followed by one.
+    That remains ``ok=False`` and will fail CI.
+    """
     for index, stmt in enumerate(body):
         if (
             isinstance(stmt, ast.Assign)
@@ -119,19 +152,37 @@ def _walk_blocks(body: list[ast.stmt], findings: list[tuple[int, str, bool]]) ->
             and _is_bmesh_new(stmt.value)
         ):
             var_name = stmt.targets[0].id
+            # Pattern A: next sibling statement is a Try with finally(free).
             next_stmt = body[index + 1] if index + 1 < len(body) else None
-            ok = isinstance(next_stmt, ast.Try) and _finally_frees(next_stmt, var_name)
-            findings.append((stmt.lineno, var_name, ok))
+            ok_pattern_a = (
+                isinstance(next_stmt, ast.Try) and _finally_frees(next_stmt, var_name)
+            )
+            # Pattern B: this assignment is inside an enclosing Try block that
+            # already has a finally clause which frees the variable.
+            ok_pattern_b = (
+                enclosing_try is not None
+                and _finally_frees(enclosing_try, var_name)
+            )
+            findings.append((stmt.lineno, var_name, ok_pattern_a or ok_pattern_b))
         # Recurse into every nested statement-list child (function bodies,
         # if/for/while/with/try blocks, etc.).
         for _field, value in ast.iter_fields(stmt):
             if isinstance(value, list) and value and isinstance(value[0], ast.stmt):
-                _walk_blocks(value, findings)
+                # When recursing into the *body* of a Try node, pass that Try
+                # as the enclosing_try so Pattern B detection works for any
+                # bmesh.new() assignment found inside the try block.
+                inner_try = stmt if isinstance(stmt, ast.Try) else enclosing_try
+                _walk_blocks(value, findings, inner_try)
             elif isinstance(value, list):
-                # try.handlers is a list of ExceptHandler, each with .body
+                # try.handlers is a list of ExceptHandler, each with .body.
+                # Assignments inside an except clause are NOT guarded by the
+                # try/finally (they run only on exception, and the finally
+                # still runs, but the except body may itself raise).  Keep the
+                # enclosing_try context so any nested try/finally is still
+                # detected correctly.
                 for item in value:
                     if isinstance(item, ast.ExceptHandler):
-                        _walk_blocks(item.body, findings)
+                        _walk_blocks(item.body, findings, enclosing_try)
 
 
 def _collect_sites(path: Path) -> list[tuple[int, str, bool]]:
