@@ -3889,7 +3889,15 @@ def handle_scatter_props(params: dict[str, Any]) -> dict[str, Any]:
         )
         wz = terrain_sampler(p["position"][0], p["position"][1]) if terrain_sampler else 0.0
         instance.location = (p["position"][0], p["position"][1], wz)
-        instance.rotation_euler = _prop_rotation(ptype, _read_rotation_deg(p))
+        # HOTFIX-7k regression fix: the props path consumes context_scatter()
+        # output directly, which emits "rotation" as DEGREES (rng.uniform(0, 360))
+        # with NO "rotation_rad" side-channel and NO "_filtered" marker. It is
+        # never part of the pre/post-filter rad/deg ambiguity that the
+        # _read_rotation_* helpers disambiguate, so routing it through
+        # _read_rotation_deg() hits the helper's "pre-filter → radians" fallback
+        # and applies a spurious math.degrees() (45°→58.3°, 90°→116.6°). Pass the
+        # degrees value straight through, exactly as main did before #133.
+        instance.rotation_euler = _prop_rotation(ptype, float(p.get("rotation", 0.0)))
         s = p["scale"]
         instance.scale = (s, s, s)
         scatter_coll.objects.link(instance)

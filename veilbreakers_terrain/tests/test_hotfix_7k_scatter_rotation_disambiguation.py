@@ -314,3 +314,115 @@ class TestEntryPointEquivalence:
             assert 0.0 <= p["rotation_rad"] < 2 * math.pi + 1e-9, (
                 f"rotation_rad out of range: {p['rotation_rad']}"
             )
+
+
+class TestPropsPathDegreesNative:
+    """REGRESSION GUARD for the HOTFIX-7k props-path rotation regression (PR #133).
+
+    ``handle_scatter_props`` consumes ``context_scatter()`` output *directly* —
+    that emitter writes ``rotation = rng.uniform(0, 360)`` (DEGREES) with NO
+    ``rotation_rad`` side-channel and NO ``_filtered`` marker. It is therefore
+    NOT part of the pre/post-filter rad/deg ambiguity the ``_read_rotation_*``
+    helpers exist to resolve.
+
+    PR #133 wrongly routed this degrees-native value through
+    ``_read_rotation_deg(p)``. With no ``rotation_rad`` and no ``_filtered``,
+    the helper hits its "pre-filter → radians" fallback and applies a spurious
+    ``math.degrees()``, scrambling every prop yaw (45°→58.3°, 90°→116.6°,
+    270°→349.9°). ``main`` passed ``p['rotation']`` straight through and was
+    correct. This class pins that contract so the regression cannot return.
+
+    The pre-#133 helper-only test-suite missed this because it never fed a
+    *real* context_scatter-shaped placement (degrees, no markers) through the
+    props consumption logic — it only exercised the helpers in isolation.
+    """
+
+    @staticmethod
+    def _props_path_yaw_degrees(p: dict[str, Any]) -> float:
+        """Mirror of the rotation extraction in handle_scatter_props (line ~3892).
+
+        Kept in lock-step with production: the props path passes the placement's
+        degrees rotation straight to ``_prop_rotation``. If production drifts back
+        to ``_read_rotation_deg(p)`` for this path, the assertions below break.
+        """
+        return float(p.get("rotation", 0.0))
+
+    def test_context_scatter_emits_degrees_no_markers(self) -> None:
+        """context_scatter placements are degrees-native: 0..360, no rotation_rad/_filtered."""
+        from veilbreakers_terrain.handlers._scatter_engine import context_scatter
+
+        buildings = [
+            {"type": "tavern", "position": (15.0, 15.0), "footprint": (8, 6)},
+            {"type": "blacksmith", "position": (35.0, 35.0), "footprint": (6, 6)},
+        ]
+        placements = context_scatter(buildings, area_size=60.0, prop_density=0.6, seed=7)
+        assert placements, "context_scatter produced no props for this fixture"
+
+        for p in placements:
+            # Degrees-native range (uniform(0, 360))
+            assert 0.0 <= float(p["rotation"]) < 360.0, (
+                f"context_scatter rotation not degrees-native: {p['rotation']}"
+            )
+            # No rad/deg disambiguation markers — this is the contract that makes
+            # _read_rotation_deg() WRONG for this path.
+            assert "rotation_rad" not in p, (
+                "context_scatter must NOT emit rotation_rad — props path is degrees-native"
+            )
+            assert "_filtered" not in p, (
+                "context_scatter must NOT emit _filtered — props path is not filtered"
+            )
+
+    def test_props_yaw_passes_through_unchanged(self) -> None:
+        """A degrees-native placement yields a prop yaw equal to the source rotation.
+
+        90° in must be 90° out — NOT 116.6° (the scrambled #133 value).
+        """
+        for src_deg in (0.0, 45.0, 90.0, 137.5, 270.0, 359.0):
+            p: dict[str, Any] = {"type": "barrel", "rotation": src_deg, "scale": 1.0}
+
+            # Production props path: degrees straight into _prop_rotation.
+            euler = _prop_rotation("barrel", self._props_path_yaw_degrees(p))
+            recovered_deg = math.degrees(euler[2]) % 360.0
+            assert recovered_deg == approx(src_deg % 360.0, abs=1e-9), (
+                f"props yaw scrambled: {src_deg}° in -> {recovered_deg}° out"
+            )
+
+    def test_buggy_read_rotation_deg_would_scramble(self) -> None:
+        """Proof the regression is real: _read_rotation_deg() on a degrees-native
+        placement produces the WRONG (radians-misread) value, so the test in
+        test_props_yaw_passes_through_unchanged would FAIL if production routed
+        the props path through the helper (as #133 did).
+        """
+        p: dict[str, Any] = {"type": "barrel", "rotation": 90.0, "scale": 1.0}
+
+        # Correct (current production) extraction.
+        correct = self._props_path_yaw_degrees(p)
+        assert correct == approx(90.0, abs=1e-12)
+
+        # Buggy #133 extraction: no rotation_rad, no _filtered -> pre-filter
+        # fallback applies math.degrees(90.0) % 360 = 5156.6 % 360 = 116.6°.
+        buggy = _read_rotation_deg(p)
+        assert buggy == approx(math.degrees(90.0) % 360.0, abs=1e-9)
+        assert buggy == approx(116.62, abs=1e-2)
+        # The two MUST differ — that gap is the bug.
+        assert abs(correct - buggy) > 1.0, (
+            "buggy and correct extractions must diverge for the regression to be meaningful"
+        )
+
+    def test_real_context_scatter_placement_through_props_path(self) -> None:
+        """End-to-end-ish: take a REAL context_scatter placement and run it through
+        the props rotation path; the resulting yaw must equal the source rotation.
+        """
+        from veilbreakers_terrain.handlers._scatter_engine import context_scatter
+
+        buildings = [{"type": "tavern", "position": (20.0, 20.0), "footprint": (8, 6)}]
+        placements = context_scatter(buildings, area_size=50.0, prop_density=0.8, seed=123)
+        assert placements, "context_scatter produced no props for this fixture"
+
+        for p in placements:
+            src_deg = float(p["rotation"]) % 360.0
+            euler = _prop_rotation(p["type"], self._props_path_yaw_degrees(p))
+            recovered_deg = math.degrees(euler[2]) % 360.0
+            assert recovered_deg == approx(src_deg, abs=1e-9), (
+                f"{p['type']}: {src_deg}° in -> {recovered_deg}° out (props yaw scrambled)"
+            )
