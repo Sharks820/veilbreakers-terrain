@@ -114,7 +114,9 @@ _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # _load_baseline_snapshot + _lightweight_water_network_copy module
     # helpers added above ``build_default_pass_sequence`` AND subsequent
     # main-branch additions (PR #117 LOD descriptor, PR #118 fixes).
-    ("handlers/terrain_pipeline.py", 616),
+    # Shifted to 621 by WAVE5-2 fix (5 new comment lines added to
+    # _LABEL_STAMPING_DEFERRABLE_PASSES to document dead-anchor removals).
+    ("handlers/terrain_pipeline.py", 621),
     # terrain_determinism_ci.hash_state — intent recursion for hash only.
     ("handlers/terrain_determinism_ci.py", 87),
     # terrain_io.atomic_write_json — passes allow_nan kwarg through the
