@@ -194,19 +194,20 @@ def test_no_bare_channel_macro_color_in_source() -> None:
 
     The bare name was the pre-PR-125 legacy enum member. PR #125 removed it
     and renamed it to ``Channel.MACRO_COLOR_RGB``. Any surviving bare
-    reference is either:
-      (a) a live production bug (accessor using a deleted enum member), or
-      (b) a stale comment that should be updated.
+    reference in *live code* is a production bug (an accessor using a deleted
+    enum member) that would raise ``AttributeError`` at runtime.
 
-    This test uses a subprocess grep so it catches file-level drift that
-    import-time tests cannot see.
+    This test uses a ``tokenize``-based scan (run in a subprocess so it
+    catches file-level drift that import-time tests cannot see). It detects
+    the token sequence ``Channel`` ``.`` ``MACRO_COLOR`` (where the trailing
+    member name is exactly ``MACRO_COLOR``, not ``MACRO_COLOR_RGB``) in code
+    tokens only.
 
-    Exemptions:
-      - Comment / docstring occurrences of the *string* ``Channel.MACRO_COLOR``
-        (without the attribute-access context) that document the old name
-        for historical reference ARE allowed, but are caught by this grep
-        too — if the test fires, check whether the hit is live code or a
-        doc-only reference and update accordingly.
+    Exemptions (these are genuinely ignored, not merely tolerated):
+      - ``COMMENT`` and ``STRING`` tokens (comments and docstrings). A comment
+        or docstring that mentions the old name for historical reference —
+        e.g. ``# was Channel.MACRO_COLOR before PR #125`` — is NOT a runtime
+        reference and does NOT fail this gate.
       - This test file itself is excluded from the search.
     """
     handlers_dir = _REPO_ROOT / "veilbreakers_terrain" / "handlers"
@@ -214,21 +215,38 @@ def test_no_bare_channel_macro_color_in_source() -> None:
         [
             sys.executable,
             "-c",
-            # Grep via Python so we avoid shell quoting issues on Windows.
+            # Token-based scan via subprocess so we (a) avoid shell quoting
+            # issues on Windows and (b) ignore COMMENT/STRING tokens so that
+            # historical doc/comment references to the old name don't fail CI.
             r"""
-import re, pathlib, sys
+import io, pathlib, sys, token, tokenize
 
-pattern = re.compile(r'\bChannel\.MACRO_COLOR\b(?!_RGB)')
 root = pathlib.Path(sys.argv[1])
 hits = []
 for py_file in root.rglob("*.py"):
     try:
-        text = py_file.read_text(encoding="utf-8", errors="replace")
+        src = py_file.read_text(encoding="utf-8", errors="replace")
     except OSError:
         continue
-    for lineno, line in enumerate(text.splitlines(), 1):
-        if pattern.search(line):
-            hits.append(f"{py_file.relative_to(root.parent.parent)}:{lineno}: {line.rstrip()}")
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(src).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Unparseable file: fall back to a conservative report so drift is
+        # never silently skipped.
+        hits.append(f"{py_file.relative_to(root.parent.parent)}: <tokenize failed>")
+        continue
+    # Keep only code tokens (drop COMMENT, STRING, NL, NEWLINE, INDENT, ...).
+    code = [t for t in toks if t.type in (token.NAME, token.OP)]
+    for i in range(len(code) - 2):
+        a, b, c = code[i], code[i + 1], code[i + 2]
+        if (
+            a.type == token.NAME and a.string == "Channel"
+            and b.type == token.OP and b.string == "."
+            and c.type == token.NAME and c.string == "MACRO_COLOR"
+        ):
+            lineno = a.start[0]
+            line = src.splitlines()[lineno - 1].rstrip() if lineno >= 1 else ""
+            hits.append(f"{py_file.relative_to(root.parent.parent)}:{lineno}: {line}")
 if hits:
     print("\n".join(hits))
     sys.exit(1)
@@ -242,8 +260,8 @@ sys.exit(0)
     )
     assert result.returncode == 0, (
         "Bare 'Channel.MACRO_COLOR' (without _RGB suffix) found in production "
-        "source. These are live references to a deleted enum member and will "
-        "raise AttributeError at runtime. Hits:\n"
+        "source as a live code reference. These are accesses to a deleted "
+        "enum member and will raise AttributeError at runtime. Hits:\n"
         + result.stdout
     )
 
@@ -266,22 +284,41 @@ def test_golden_scenario_fixtures_no_stale_macro_color_dimensionless() -> None:
 
     If no JSON file records a unit for ``macro_color`` at all, the test
     passes vacuously (the risk surface does not exist).
+
+    A malformed fixture (``json.JSONDecodeError``) is treated as fixture
+    corruption/drift and fails the test loudly rather than being silently
+    skipped — a corrupt golden baseline is exactly the kind of regression
+    this gate exists to catch. Transient ``OSError`` on read is still
+    tolerated (skipped) so the gate stays robust to filesystem hiccups.
     """
     fixtures_dir = _REPO_ROOT / "veilbreakers_terrain" / "tests" / "golden_scenarios"
     if not fixtures_dir.exists():
         return  # No fixture directory — risk surface doesn't exist.
 
     stale: list[str] = []
+    malformed: list[str] = []
     for json_file in fixtures_dir.rglob("*.json"):
         try:
-            data = json.loads(json_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            raw = json_file.read_text(encoding="utf-8")
+        except OSError:
+            continue  # Transient read failure — tolerate.
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            # Malformed fixture is real drift/corruption — record and fail.
+            rel = json_file.relative_to(_REPO_ROOT)
+            malformed.append(f"{rel}: {exc}")
             continue
         # Walk the JSON looking for any dict that has both a "channel" or
         # "key" field equal to "macro_color" and a "unit" field equal to
         # "dimensionless".
         _collect_stale_macro_color_entries(data, json_file, stale)
 
+    assert not malformed, (
+        "Golden scenario fixture(s) are not valid JSON. A corrupt golden "
+        "baseline must fail loudly, not be silently skipped. Malformed "
+        "files:\n" + "\n".join(malformed)
+    )
     assert not stale, (
         "Golden scenario fixture(s) contain a stale 'dimensionless' unit "
         "for the 'macro_color' channel. Update them to 'rgb_triplet' to "
