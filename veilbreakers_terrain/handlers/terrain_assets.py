@@ -490,6 +490,14 @@ def _protected_mask(
     shape: Tuple[int, int],
     pass_name: str,
 ) -> np.ndarray:
+    # HOTFIX-7d (Verifier A #13 2026-05-21): use shared schema-tolerant
+    # resolver so this handler now accepts ProtectedZoneSpec dataclasses
+    # AND raw dict-shaped zones with the same code path. Prior to this
+    # fix the inline ``zone.bounds.min_x`` access only worked for the
+    # dataclass case — a stub/test passing a plain dict crashed here.
+    # PR #126 (coderabbit T9): use _zone_permits so dict-shaped zones don't crash.
+    from ._protected_zones import _resolve_protected_zone_aabb, _zone_permits
+
     stack = state.mask_stack
     mask = np.zeros(shape, dtype=bool)
     if not state.intent.protected_zones:
@@ -499,13 +507,14 @@ def _protected_mask(
     xs = stack.world_origin_x + (np.arange(cols) + 0.5) * stack.cell_size
     xg, yg = np.meshgrid(xs, ys)
     for zone in state.intent.protected_zones:
-        if zone.permits(pass_name):
+        if _zone_permits(zone, pass_name):
             continue
+        min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
         inside = (
-            (xg >= zone.bounds.min_x)
-            & (xg <= zone.bounds.max_x)
-            & (yg >= zone.bounds.min_y)
-            & (yg <= zone.bounds.max_y)
+            (xg >= min_x)
+            & (xg <= max_x)
+            & (yg >= min_y)
+            & (yg <= max_y)
         )
         mask |= inside
     return mask

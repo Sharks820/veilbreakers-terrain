@@ -49,6 +49,11 @@ from .terrain_semantics import (
     UnknownPassError,
     ValidationIssue,
 )
+from ._protected_zones import (
+    _resolve_protected_zone_aabb,
+    _zone_bounds_intersect,
+    _zone_permits,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -949,15 +954,16 @@ class TerrainPassController:
         on forbidden cells.
         """
         for zone in self.state.intent.protected_zones:
-            if not zone.bounds.intersects(target_bounds):
+            if not _zone_bounds_intersect(zone, target_bounds):
                 continue
-            if zone.permits(pass_name):
+            if _zone_permits(zone, pass_name):
                 continue
+            z_min_x, z_min_y, z_max_x, z_max_y = _resolve_protected_zone_aabb(zone)
             fully_covers = (
-                zone.bounds.min_x <= target_bounds.min_x
-                and zone.bounds.min_y <= target_bounds.min_y
-                and zone.bounds.max_x >= target_bounds.max_x
-                and zone.bounds.max_y >= target_bounds.max_y
+                z_min_x <= target_bounds.min_x
+                and z_min_y <= target_bounds.min_y
+                and z_max_x >= target_bounds.max_x
+                and z_max_y >= target_bounds.max_y
             )
             if fully_covers:
                 raise ProtectedZoneViolation(
@@ -1849,14 +1855,21 @@ def pass_compute_biome_channels(
     # canonical biome name to translate via ``BIOME_BUCKET_MAP_18_TO_14``
     # to the 14-bucket render palette. Stamp the ordered name list onto
     # the stack so consumers can do ``biome_names[biome_id_value]``.
-    setattr(stack, "biome_names", list(spec.biome_names))
+    #
+    # HOTFIX-7c (Verifier A #7 / 2026-05-21): use ``stack.set`` instead of
+    # raw ``setattr`` so the list participates in compute_hash / to_npz /
+    # from_npz round-trip via ``_OPAQUE_CHANNELS``. Prior code path was
+    # silently dropped on checkpoint restore — downstream macro-color
+    # and Unity-export consumers reverted to the legacy "raw biome_id as
+    # palette index" branch after any rollback.
+    stack.set("biome_names", list(spec.biome_names), "biome_channels")
 
     return PassResult(
         pass_name="biome_channels",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("biome_id", "corruption_map"),
+        produced_channels=("biome_id", "corruption_map", "biome_names"),
         metrics={
             "biome_count": int(len(set(spec.biome_ids.ravel().tolist()))),
             "corruption_mean": float(spec.corruption_map.mean()),
@@ -1872,11 +1885,11 @@ def register_biome_channel_pass() -> None:
             name="biome_channels",
             func=pass_compute_biome_channels,
             requires_channels=("height",),
-            produces_channels=("biome_id", "corruption_map"),
+            produces_channels=("biome_id", "corruption_map", "biome_names"),
             seed_namespace="biome_channels",
             requires_scene_read=False,
             may_modify_geometry=False,
-            description="Populate biome_id and corruption_map from deterministic world-map grammar.",
+            description="Populate biome_id, corruption_map, and biome_names from deterministic world-map grammar.",
         )
     )
 

@@ -574,7 +574,9 @@ def test_export_manifest_records_tile_biome_distribution():
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     stack = _make_stack()
-    stack.biome_names = ["forest", "swamp"]
+    # HOTFIX-7c: biome_names is now a proper opaque channel; route through
+    # the registry so the value survives to_npz / from_npz round-trips.
+    stack.set("biome_names", ["forest", "swamp"], "test")
     stack.set("biome_id", np.array(
         [
             [0, 0, 1, 1, 1],

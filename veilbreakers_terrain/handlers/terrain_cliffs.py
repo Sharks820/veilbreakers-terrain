@@ -2892,6 +2892,9 @@ def _protected_mask_for_cliffs(
     shape: Tuple[int, int],
 ) -> np.ndarray:
     """Build a protected-zone mask for the cliffs pass."""
+    # HOTFIX-7d (Verifier A #13): unified schema-tolerant resolver.
+    from ._protected_zones import _resolve_protected_zone_aabb, _zone_permits
+
     stack = state.mask_stack
     mask = np.zeros(shape, dtype=bool)
     if not state.intent.protected_zones:
@@ -2901,13 +2904,14 @@ def _protected_mask_for_cliffs(
     xs = stack.world_origin_x + (np.arange(cols) + 0.5) * stack.cell_size
     xg, yg = np.meshgrid(xs, ys)
     for zone in state.intent.protected_zones:
-        if zone.permits("cliffs"):
+        if _zone_permits(zone, "cliffs"):
             continue
+        min_x, min_y, max_x, max_y = _resolve_protected_zone_aabb(zone)
         inside = (
-            (xg >= zone.bounds.min_x)
-            & (xg <= zone.bounds.max_x)
-            & (yg >= zone.bounds.min_y)
-            & (yg <= zone.bounds.max_y)
+            (xg >= min_x)
+            & (xg <= max_x)
+            & (yg >= min_y)
+            & (yg <= max_y)
         )
         mask |= inside
     return mask

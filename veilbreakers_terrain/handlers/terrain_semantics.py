@@ -358,6 +358,20 @@ class TerrainMaskStack:
 
     # Material-zoning masks (Pass 7)
     biome_id: Optional[np.ndarray] = None
+    # HOTFIX-7c (Verifier A #7 / 2026-05-21): canonical ordered name list
+    # for the Voronoi cells indexed by ``biome_id`` (0..biome_count-1).
+    # Stamped by ``pass_compute_biome_channels`` and consumed downstream
+    # by ``compute_macro_color``, ``terrain_caves``, ``terrain_unity_export``
+    # to translate per-cell biome indices into canonical names for the
+    # 14-bucket render palette via ``BIOME_BUCKET_MAP_18_TO_14``.
+    #
+    # Registered in ``_OPAQUE_CHANNELS`` so the value survives ``to_npz`` /
+    # ``from_npz`` round-trips and rollback snapshots. Prior to this fix
+    # the list was bolted on with ``setattr(stack, "biome_names", ...)``
+    # which bypassed the channel registry — the list was silently lost on
+    # any checkpoint restore, and downstream macro-color / Unity-export
+    # paths reverted to the legacy "raw biome_id as palette index" branch.
+    biome_names: Optional[List[str]] = None
     corruption_map: Optional[np.ndarray] = None
     material_weights: Optional[np.ndarray] = None
     # Ecotone blend weights for biome-boundary transitions. Shape (H, W, E),
@@ -965,6 +979,11 @@ class TerrainMaskStack:
         # a JSON-native representation; ``LabelStack.from_dict()`` is
         # used by ``from_npz`` to reconstruct the live instance.
         "label_stack",
+        # HOTFIX-7c (Verifier A #7 / 2026-05-21): the ordered Voronoi-cell
+        # name list for biome_id values. ``List[str]`` JSON-serialises
+        # natively so the existing opaque-channel persistence path
+        # round-trips it without extra glue.
+        "biome_names",
     )
 
     def set(self, channel: str, value: Any, pass_name: str) -> None:

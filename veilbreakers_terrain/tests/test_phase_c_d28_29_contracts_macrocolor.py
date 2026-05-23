@@ -470,7 +470,10 @@ class TestPR55BiomeBucketRemap:
         biome = np.zeros((17, 17), dtype=np.int32)
         stack.set("biome_id", biome, "test")
         # Stamp the Voronoi name list (mimics pass_compute_biome_channels).
-        setattr(stack, "biome_names", ["frozen_hollows"])  # bucket 5 (snow)
+        # HOTFIX-7c: biome_names is now a proper channel; use .set() so the
+        # provenance / hash registry observes the write (was a direct
+        # setattr before — bypassed serialization).
+        stack.set("biome_names", ["frozen_hollows"], "test")  # bucket 5 (snow)
 
         # No biome_names arg → must read off stack.
         result = compute_macro_color(stack)
@@ -501,7 +504,7 @@ class TestPR55BiomeBucketRemap:
         stack = _build_stack(tile_size=16)
         biome = np.zeros((17, 17), dtype=np.int32)
         stack.set("biome_id", biome, "test")
-        setattr(stack, "biome_names", ["thornwood_forest"])
+        stack.set("biome_names", ["thornwood_forest"], "test")  # HOTFIX-7c
 
         state = _build_state(stack)
         result = pass_macro_color(state, region=None)
