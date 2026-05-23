@@ -43,17 +43,37 @@ def test_reload_biome_rules_and_reload_material_rules_report_successes(
 
     calls: list[str] = []
 
+    # All modules succeed except _scatter_engine (simulates a missing module).
     def fake_safe_reload(name: str) -> tuple[bool, None]:
         calls.append(name)
-        return (not name.endswith("terrain_banded"), None)
+        return (not name.endswith("_scatter_engine"), None)
 
     monkeypatch.setattr(hot_reload, "_safe_reload", fake_safe_reload)
 
     biome = hot_reload.reload_biome_rules()
     material = hot_reload.reload_material_rules()
 
-    assert "veilbreakers_terrain.handlers.terrain_ecotone_graph" in biome
-    assert "veilbreakers_terrain.handlers.terrain_banded" not in biome
+    # Modules that define @dataclass classes must NOT appear in the reload list
+    # (WAVE4-HOT-RELOAD-DATACLASS-001 — reloading recreates class objects,
+    # silently breaking isinstance() checks for existing instances).
+    _DATACLASS_BANNED = {
+        "veilbreakers_terrain.handlers.terrain_ecotone_graph",
+        "veilbreakers_terrain.handlers.terrain_materials_v2",
+        "veilbreakers_terrain.handlers.terrain_banded",
+        "veilbreakers_terrain.handlers.terrain_foliage_catalog",
+        "veilbreakers_terrain.handlers.procedural_grass",
+        "veilbreakers_terrain.handlers._biome_grammar",
+    }
+    # biome is only the *successful* reloads; _scatter_engine failed → excluded
+    biome_set = set(biome)
+    assert biome_set.isdisjoint(_DATACLASS_BANNED), (
+        f"Dataclass-defining modules in biome reload list: "
+        f"{biome_set & _DATACLASS_BANNED}"
+    )
+    # Modules that are safe (no dataclasses) and succeed should still be present
+    assert "veilbreakers_terrain.handlers.terrain_biome_registry" in biome
+    assert "veilbreakers_terrain.handlers.terrain_banded_advanced" in biome
+    assert "veilbreakers_terrain.handlers._scatter_engine" not in biome
     assert material == list(hot_reload._MATERIAL_RULE_MODULES)
     assert calls == list(hot_reload._BIOME_RULE_MODULES + hot_reload._MATERIAL_RULE_MODULES)
 
