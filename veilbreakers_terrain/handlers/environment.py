@@ -1407,6 +1407,22 @@ def _read_neighbor_heightmap_from_manifest(neighbor: dict[str, Any]) -> np.ndarr
         When the ``neighbor`` dict is missing ``heightmap_path`` or other
         required keys, or when its values are the wrong type.
     """
+    # CHECKPOINT-5 cascade-D: guard against non-dict inputs (None, namedtuple,
+    # dataclass, …).  A future refactor may pass a typed object rather than a
+    # plain dict.  Calling ``.get()`` on a non-dict raises AttributeError which
+    # would escape the narrow ``except`` tuple in the caller and crash the bake.
+    # Return early with a clear warning so the caller's ``except`` tuple does
+    # not need to cover this case — the isinstance check is a cleaner firewall.
+    if not isinstance(neighbor, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+        logger.warning(
+            "_read_neighbor_heightmap_from_manifest: neighbor is not a dict "
+            "(got %s); skipping neighbor edge",
+            type(neighbor).__name__,
+        )
+        raise TypeError(
+            f"_read_neighbor_heightmap_from_manifest: expected dict, got "
+            f"{type(neighbor).__name__}"
+        )
     res = int(neighbor.get("resolution", 257))
     raw = np.fromfile(
         neighbor["heightmap_path"],
@@ -2833,7 +2849,15 @@ def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
             # that represent genuine data-integrity violations (not expected
             # world-edge conditions) are guarded upstream by the manifest
             # validation added in PR #122.
-            except (FileNotFoundError, OSError, ValueError, KeyError, TypeError) as exc:
+            #
+            # CHECKPOINT-5 cascade-D: AttributeError added — if ``neighbor``
+            # is None or a non-dict type (namedtuple/dataclass), calling
+            # ``neighbor.get(...)`` raises AttributeError which previously
+            # escaped the tuple and crashed the terrain bake.  The isinstance
+            # guard in ``_read_neighbor_heightmap_from_manifest`` raises
+            # TypeError for non-dict inputs; AttributeError is kept here as
+            # belt-and-braces for any future refactor path.
+            except (FileNotFoundError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
                 logger.warning(
                     "handle_generate_world_terrain: neighbor heightmap unavailable for tile (%d,%d): %s",
                     tile_x, tile_y, exc,
@@ -5048,7 +5072,11 @@ def _carve_river_banks_into_terrain(
         terrain_height = max(float(getattr(dims, "y")), 1e-6)
         origin_x = float(getattr(loc, "x", 0.0))
         origin_y = float(getattr(loc, "y", 0.0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
+        # AttributeError: dims or loc can be None when terrain_obj does not
+        # have the expected Blender Vector attributes (mock objects, headless
+        # test stubs, non-mesh objects). getattr(None, "x") raises
+        # AttributeError which was not in the tuple before this fix.
         return {"terrain_carved": False, "terrain_carve_reason": "invalid_transform"}
 
     col_scale = (cols - 1) / terrain_width

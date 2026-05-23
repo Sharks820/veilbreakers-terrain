@@ -642,11 +642,18 @@ def apply_quixel_to_layer(
             )
         else:
             # LERP (T1-28): macro_color * (1 - w) + sampled * w
+            # np.clip guards against IEEE-754 rounding drift that can push the
+            # convex combination marginally above 1.0 after many layers.
+            # WAVE4-QUIXEL-MULTI-LAYER-COLOR-SATURATION-001 (2026-05-22).
             blended = (
                 np.asarray(stack.macro_color, dtype=np.float32) * (1.0 - layer_weight_3)
                 + sampled_albedo * layer_weight_3
             )
-            stack.set("macro_color", blended.astype(np.float32), "quixel_ingest")
+            stack.set(
+                "macro_color",
+                np.clip(blended, 0.0, 1.0).astype(np.float32),
+                "quixel_ingest",
+            )
 
     if roughness_array is not None:
         sampled_rough = _bilinear_sample_texture(
