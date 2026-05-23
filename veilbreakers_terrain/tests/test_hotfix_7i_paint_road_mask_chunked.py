@@ -7,13 +7,15 @@ three-axis broadcasting.  At 4096² grid × 500 road segments each array
 is ~67 GB; five such intermediates in the critical path give ~335 GB —
 hard OOM on the 8 GB VRAM target platform.
 
-The fix chunks the broadcast into ``CHUNK_ROWS = 65536`` row batches so
+The fix chunks the broadcast into ``CHUNK_ROWS = 8192`` row batches so
 the peak per-chunk footprint is:
 
-    65 536 rows × 500 segs × 5 arrays × 8 bytes ≈ 1.31 GB/chunk
+    8 192 rows × 500 segs × 5 arrays × 8 bytes ≈ 0.15 GB/chunk
 
 which fits comfortably in host RAM with headroom for the rest of the
-pipeline.
+pipeline. ``8192`` is the production chunk size in
+``environment.py:_paint_road_mask_on_terrain._min_dist_to_path`` (the
+``chunk`` kwarg default), landed by WAVE-1-HOTFIX-2 Bug 2.
 
 These tests verify:
 
@@ -22,7 +24,7 @@ These tests verify:
    variety of path shapes.
 2. **Peak-memory estimate** — analytic upper bound on per-chunk allocation at
    AAA scale (4 096² pixels, 500 segments) confirms it stays within 1 GB/chunk
-   at ``CHUNK_ROWS = 65 536``.
+   at ``CHUNK_ROWS = 8 192``.
 3. **Single-chunk edge case** — when ``n_pixels < CHUNK_ROWS`` the loop runs
    exactly once; the result still matches the un-chunked reference.
 """
@@ -39,8 +41,9 @@ import pytest
 # ---------------------------------------------------------------------------
 
 # Chunk size constant — must stay in sync with the production constant in
-# environment.py:_paint_road_mask_on_terrain._min_dist_to_path.
-_CHUNK_ROWS = 65536
+# environment.py:_paint_road_mask_on_terrain._min_dist_to_path (the ``chunk``
+# kwarg default, ``chunk: int = 8192``, landed by WAVE-1-HOTFIX-2 Bug 2).
+_CHUNK_ROWS = 8192
 
 
 def _min_dist_to_path_reference(
@@ -227,7 +230,7 @@ def test_unchunked_would_exceed_8gb_at_aaa_scale() -> None:
 def test_single_chunk_path_when_pixels_below_chunk_threshold() -> None:
     """When n_pixels < CHUNK_ROWS, the loop runs exactly once; result still correct."""
     rng = np.random.default_rng(7)
-    # Use a pixel count well below the production CHUNK_ROWS=65536
+    # Use a pixel count well below the production CHUNK_ROWS=8192
     n_pixels = 100
     n_segs = 20
     assert n_pixels < _CHUNK_ROWS, "Test prerequisite violated: n_pixels must be < _CHUNK_ROWS"
