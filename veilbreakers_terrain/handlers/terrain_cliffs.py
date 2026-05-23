@@ -2506,8 +2506,8 @@ def insert_hero_cliff_meshes(
         mesh_seed = derive_pass_seed(
             int(state.intent.seed),
             f"terrain_cliffs.cliff_mesh.{cliff.cliff_id}",
-            0,
-            0,
+            state.tile_x,  # HOTFIX-7f C1: was 0 — per-cliff mesh seed must be
+            state.tile_y,  # tile-namespaced; intent.seed alone collapses all tiles.
             None,
         )
 
