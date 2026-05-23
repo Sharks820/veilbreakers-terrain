@@ -83,6 +83,12 @@ def _min_dist_to_path_chunked(
     ab_sq = np.maximum((ab * ab).sum(axis=1), 1e-12)
     n_px = len(px)
     out = np.empty(n_px, dtype=np.float64)
+    # Mirror production's input sanitisation (environment.py:_min_dist_to_path):
+    #   - empty point array -> empty output (avoids a zero-iteration edge case)
+    #   - chunk clamped to >= 1 so range() never receives a 0/negative step
+    if n_px == 0:
+        return out
+    chunk_rows = max(1, int(chunk_rows))
     for _start in range(0, n_px, chunk_rows):
         _stop = min(_start + chunk_rows, n_px)
         _cx = px[_start:_stop]
