@@ -418,7 +418,7 @@ def test_uv_weld_inverse_remap_first_wins(
     """
     get_bm = fake_bm_factory
 
-    from veilbreakers_terrain.handlers._mesh_bridge import mesh_from_spec
+    import veilbreakers_terrain.handlers._mesh_bridge as _mb
 
     # Build the mesh described in the docstring above
     verts = [
@@ -441,7 +441,7 @@ def test_uv_weld_inverse_remap_first_wins(
     ]
     spec = {"vertices": verts, "faces": faces, "uvs": uvs}
 
-    mesh_from_spec(spec)
+    _mb.mesh_from_spec(spec)
 
     bm = get_bm()
     assert bm is not None, "FakeBMesh was not created — Blender path did not run"
@@ -504,7 +504,7 @@ def test_uv_no_weld_identity(
     the common no-weld case.
     """
     get_bm = fake_bm_factory
-    from veilbreakers_terrain.handlers._mesh_bridge import mesh_from_spec
+    import veilbreakers_terrain.handlers._mesh_bridge as _mb
 
     verts = [
         (0.0, 0.0, 0.0),
@@ -519,7 +519,7 @@ def test_uv_no_weld_identity(
     faces = [[0, 1, 2]]
     spec = {"vertices": verts, "faces": faces, "uvs": uvs}
 
-    mesh_from_spec(spec)
+    _mb.mesh_from_spec(spec)
 
     bm = get_bm()
     assert bm is not None
@@ -569,7 +569,7 @@ def test_uv_weld_sparse_inverse_remap_all_slots(
       bm_vi=3 → orig_vi=5 → (0.1,0.1)
     """
     get_bm = fake_bm_factory
-    from veilbreakers_terrain.handlers._mesh_bridge import mesh_from_spec
+    import veilbreakers_terrain.handlers._mesh_bridge as _mb
 
     verts = [
         (0.0, 0.0, 0.0),   # 0 bm0
@@ -592,7 +592,7 @@ def test_uv_weld_sparse_inverse_remap_all_slots(
         [2, 4, 5],
     ]
     spec = {"vertices": verts, "faces": faces, "uvs": uvs}
-    mesh_from_spec(spec)
+    _mb.mesh_from_spec(spec)
 
     bm = get_bm()
     assert bm is not None
