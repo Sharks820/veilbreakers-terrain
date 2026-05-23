@@ -91,10 +91,11 @@ def test_canonical_unit_set_is_closed() -> None:
     the strata_orientation channel which is a (H, W, 3) direction-cosine
     field, not radians.
 
-    CP5-CASCADE Bug 2 (CHECKPOINT-5 V2 hotfix): added ``rgb_triplet`` for
-    the macro_color channel which is a (H, W, 3) float32 RGB triple,
-    not a scalar dimensionless mask. Same Shape-A class as the
-    strata_orientation retag, same closed-set closure pattern.
+    CP5-CASCADE Bug 2 (CHECKPOINT-5 V2 hotfix) / WAVE5-11 Shape-A fix:
+    added ``rgb_triplet`` for Channel.MACRO_COLOR_RGB (formerly MACRO_COLOR
+    tagged "dimensionless"). The channel emits (H, W, 3) float32 RGB arrays
+    — multi-component, not scalar dimensionless. Same Shape-A class as the
+    strata_orientation retag (PR #113).
 
     Adding new units explicitly here keeps the closed-set invariant
     intact while welcoming new classes.
@@ -103,7 +104,8 @@ def test_canonical_unit_set_is_closed() -> None:
 
     allowed = {
         "m", "rad", "deg", "dimensionless", "id", "count",
-        "unit_normal_xyz", "rgb_triplet",
+        "unit_normal_xyz",
+        "rgb_triplet",  # CP5-CASCADE Bug 2 / WAVE5-11: (H, W, 3) float32 RGB channels
     }
     for ch in Channel:
         assert ch.info.unit in allowed, (

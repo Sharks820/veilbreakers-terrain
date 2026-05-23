@@ -2011,7 +2011,14 @@ def pass_water_depth(
         status="ok",
         duration_seconds=_time.perf_counter() - t0,
         produced_channels=("water_depth_m", "shoreline_blend"),
-        consumed_channels=("water_surface_elevation_m", "height_m", "height"),
+        # WAVE5-14: removed "height_m" from consumed_channels — it was a
+        # legacy fallback alias for "height" (line ~1982: stack.get("height_m")
+        # followed by stack.get("height")). The canonical channel is "height"
+        # which is already declared in requires_channels of the PassDefinition.
+        # Listing "height_m" here created a DAG orphan (consumer declared but
+        # no pass produces "height_m"). The fallback read is kept in the pass
+        # body for backward-compat but is not declared as a DAG edge.
+        consumed_channels=("water_surface_elevation_m", "height"),
         metrics={
             "depth_max_m": float(depth.max()),
             "depth_mean_m": float(depth.mean()),
