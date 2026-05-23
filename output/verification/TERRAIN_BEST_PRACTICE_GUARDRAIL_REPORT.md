@@ -1,6 +1,6 @@
 # Terrain Best-Practice Guardrail Report
 
-- Generated: 2026-05-23T16:28:38.249870+00:00
+- Generated: 2026-05-23T17:13:55.300008+00:00
 - Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_09.csv`
 - Live callables: 1942
 - Matrix rows: 1942

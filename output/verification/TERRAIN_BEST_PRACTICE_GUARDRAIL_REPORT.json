@@ -14,7 +14,7 @@
     "duplicate_names_blocking": false,
     "p0_rows_blocking": false,
     "non_a_rows_blocking": false,
-    "grade_status_blocking": false,
+    "grade_status_blocking": true,
     "verification_blocking": true
   },
   "duplicate_names": {
