@@ -898,6 +898,12 @@ def _filter_multipass_scatter_placements(
 
         placement_local = dict(placement)
         placement_local["position"] = (local_x, local_y)
+        # CHECKPOINT-5 cascade-A: preserve the original radians value under
+        # "rotation_rad" before converting to degrees.  Downstream quaternion
+        # builders that need the exact radian value (e.g. the early-validation
+        # ScatterPoint build in _scatter_pass) must read "rotation_rad" so they
+        # are not affected by the unit change applied to "rotation" below.
+        placement_local["rotation_rad"] = float(placement.get("rotation", 0.0))
         placement_local["rotation"] = math.degrees(float(placement.get("rotation", 0.0))) % 360.0
         placement_local["moisture"] = moisture
         placement_local["altitude"] = altitude
@@ -3125,9 +3131,24 @@ def _scatter_pass(
         _pos3: tuple[float, float, float] = (float(_pos2[0]), float(_pos2[1]), _alt * terrain_size)
         _raw_scale = float(_p.get("scale", 1.0))
         _scale3: tuple[float, float, float] = (_raw_scale, _raw_scale, _raw_scale)
-        # Convert yaw rotation (radians, around Z) to unit quaternion (x,y,z,w)
-        _rot = float(_p.get("rotation", 0.0))
-        _half = _rot * 0.5
+        # Convert yaw rotation to unit quaternion (x, y, z, w) around Z.
+        #
+        # CHECKPOINT-5 cascade-A: "rotation" has dual units depending on how
+        # this placement dict was produced:
+        #   • Pre-filter (_scatter_pass raw output): radians in [0, 2π)
+        #   • Post-filter (_filter_multipass_scatter_placements output): degrees
+        #     in [0, 360), with the original radians value preserved under the
+        #     "rotation_rad" key (added by the filter to disambiguate).
+        # Always read "rotation_rad" first (explicit radians); fall back to
+        # math.radians("rotation") only when the placement bypassed the filter
+        # (i.e. came directly from a _scatter_pass raw call site in tests or
+        # the early-validation sub-pass below).  This guarantees a unit
+        # quaternion in both contexts.
+        if "rotation_rad" in _p:
+            _rot_rad = float(_p["rotation_rad"])
+        else:
+            _rot_rad = math.radians(float(_p.get("rotation", 0.0)))
+        _half = _rot_rad * 0.5
         _orient: tuple[float, float, float, float] = (0.0, 0.0, math.sin(_half), math.cos(_half))
         _lod_int = int(_p.get("lod", 0))
         _lod_bucket = f"lod{max(0, min(_lod_int, 3))}"
