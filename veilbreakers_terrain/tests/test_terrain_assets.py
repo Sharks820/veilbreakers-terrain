@@ -796,6 +796,33 @@ def test_validate_asset_overlap_detects_close_pair_at_large_n() -> None:
     assert any(i.code == "SCATTER_OVERLAP" for i in issues)
 
 
+def test_validate_asset_overlap_single_coincident_pair_large_n() -> None:
+    """Pins the bounded k=2 nearest-neighbour path (n > 256): a SINGLE
+    coincident pair among otherwise well-spaced points must still be detected.
+
+    The k=2 query only inspects each point's nearest other point, so this
+    confirms a lone too-close pair (the cheapest case to miss) is not lost
+    when the within-radius pair set is never materialized.
+    """
+    n = 300  # > 256 -> KDTree path
+    side = int(np.ceil(np.sqrt(n)))
+    idx = np.arange(n)
+    # 10 m grid spacing >> cluster_radius_m=1.0, so no incidental overlaps.
+    pts = [(float(k % side) * 10.0, float(k // side) * 10.0, 0.0) for k in idx]
+    # Exactly one coincident pair (0.0 m apart) far from the grid.
+    pts.append((5000.0, 5000.0, 0.0))
+    pts.append((5000.0, 5000.0, 0.0))
+    rule = AssetContextRule(
+        asset_id="grass_clump",
+        role=AssetRole.GROUND_COVER,
+        cluster_radius_m=1.0,
+    )
+    issues = validate_asset_density_and_overlap(
+        {"grass_clump": pts}, [rule], area_m2=1.0e9
+    )
+    assert any(i.code == "SCATTER_OVERLAP" for i in issues)
+
+
 def test_validate_asset_overlap_nonfinite_coords_no_crash_either_path() -> None:
     """Non-finite placement coords must not crash on EITHER path (CE nit).
 

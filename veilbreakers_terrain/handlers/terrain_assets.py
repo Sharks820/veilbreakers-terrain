@@ -771,10 +771,13 @@ def validate_asset_density_and_overlap(
         # is fine — asset counts are bounded per tile", but they are NOT: on
         # large/dense tiles pass_scatter_intelligent produced n=90449 placements,
         # making that array 61 GiB and OOM-crashing the pass (CE-2026-05-24 perf
-        # P0). query_pairs finds all within-radius pairs in O(n log n) memory and
-        # time. The exact O(n^2) path is retained for small n (<=256) where the
-        # tree-build overhead dominates, so existing small-fixture behaviour and
-        # the reported (i, j) pair are byte-identical there.
+        # P0). A bounded k=2 nearest-neighbour query (each point's single closest
+        # OTHER point) detects overlap in O(N) memory and O(n log n) time —
+        # query_pairs would instead materialize every within-radius pair, which
+        # re-introduces the OOM under pathological clustering. The exact O(n^2)
+        # path is retained for small n (<=256) where the tree-build overhead
+        # dominates, so existing small-fixture behaviour and the reported (i, j)
+        # pair are byte-identical there.
         xy = np.ascontiguousarray(arr[:, 0:2])
         if not np.isfinite(xy).all():
             # Non-finite placement coords (only reachable via malformed region
@@ -796,14 +799,20 @@ def validate_asset_density_and_overlap(
 
             # Use KDTree (the stubbed alias; strict pyright can't resolve the
             # ``cKDTree`` re-export symbol — they are the same class at runtime).
-            # query_pairs(output_type="ndarray") is stub-typed as ``set``, so
-            # cast the instance to Any to keep the ndarray ops below clean.
+            # ``query`` is stub-typed loosely, so cast the instance to Any to
+            # keep the ndarray ops below clean.
             tree = cast(Any, KDTree(xy))
-            pairs = tree.query_pairs(r=radius, output_type="ndarray")
-            if pairs.shape[0] > 0:
-                # Report the lowest-index offending pair for stable messaging.
-                order = np.lexsort((pairs[:, 1], pairs[:, 0]))
-                first_pair = (int(pairs[order[0], 0]), int(pairs[order[0], 1]))
+            # Each point's nearest OTHER point (k=2 = self + 1 neighbour); O(N)
+            # memory. query_pairs materializes every within-radius pair -> OOM
+            # under heavy clustering. Strict `< radius` matches the small-n path
+            # exactly (the n<=256 branch uses dist_sq < radius_sq).
+            dd, nn = tree.query(xy, k=2)
+            dd = np.asarray(dd)
+            nn = np.asarray(nn)
+            close = dd[:, 1] < radius
+            if bool(close.any()):
+                ci = int(np.argmax(close))  # first point with a too-close neighbour
+                first_pair = (ci, int(nn[ci, 1]))
         if first_pair is not None:
             i, j = first_pair
             issues.append(

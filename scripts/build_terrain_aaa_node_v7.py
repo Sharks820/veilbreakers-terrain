@@ -548,6 +548,8 @@ def _smooth_terrain_normals(mesh: Any) -> None:
         # Headless-safe: call shade_smooth via override (Blender 4.5)
         bpy.ops.object.shade_smooth()
     except Exception:
+        # best-effort: shade_smooth needs an active-object context that may be
+        # absent headless; flat normals are an acceptable fallback.
         pass
     mesh.update()
 
@@ -814,6 +816,8 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
             world.light_settings.ao_factor = 0.5
             world.light_settings.distance = 8.0
         except Exception:
+            # best-effort: world AO light_settings are optional and vary by
+            # Blender version; render is still valid without them.
             pass
 
         _log("    NISHITA sky strength=0.5, volume scatter density=0.002, AO=0.5")
@@ -826,6 +830,8 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
             world.node_tree.nodes["Background"].inputs["Color"].default_value    = (0.04, 0.05, 0.07, 1.0)
             world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.4
         except Exception:
+            # best-effort: this is already the fallback world after the sky
+            # texture failed; if it also fails the scene keeps Blender's default.
             pass
 
     # ---- Cameras (5 standard from v4) -------------------------------------
@@ -874,6 +880,8 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
         scn.cycles.volume_bounces = 1
         scn.cycles.volume_step_rate = 1.0
     except Exception:
+        # best-effort: these Cycles volume settings are absent on the Eevee
+        # engine / older versions; defaults are fine when unavailable.
         pass
 
     blend_path = str(OUT_DIR / "terrain_aaa_node_v7.blend")

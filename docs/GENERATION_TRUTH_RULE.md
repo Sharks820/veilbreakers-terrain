@@ -12,7 +12,7 @@ The value in this repository is `veilbreakers_terrain/` — the procedural passe
 
 3. **`scripts/` files drive output through generator callables / `COMMAND_HANDLERS`. They never reimplement generation.** A standalone material/mesh/water/scatter factory defined inside a `scripts/` file is a smell — it diverges from (and silently replaces) the real generator path. Canonical offender: `scripts/build_scene_v3.py:make_water_material` (graded D+, "not a default terrain runtime path").
 
-4. **After a generator fix: regenerate → re-render → visually verify.** Read the resulting image and state what is *literally* there before claiming the fix works. (Project visual-verification mandate — see user memory `feedback_visual_verification_mandate_2026_05_17`.)
+4. **After a generator fix: regenerate → re-render → visually verify.** Read the resulting image and state what is *literally* there before claiming the fix works. This is a hard project rule: a fix is not "done" until the render has been opened, inspected, and described — never on the strength of code changes alone.
 
 5. **Render / test `.blend` artifacts are not committed.** They are regenerated on demand. Exception: a small set of `output/` files are CI-gate inputs (`output/verification/*GUARDRAIL_REPORT*`, `output/spreadsheet/CALLABLE_WIRING_*`) — those stay tracked. Render PNGs, test `.blend`/`.blend1`, and scratch logs do not.
 
