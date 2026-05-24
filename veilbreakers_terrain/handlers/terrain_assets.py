@@ -776,6 +776,12 @@ def validate_asset_density_and_overlap(
         # tree-build overhead dominates, so existing small-fixture behaviour and
         # the reported (i, j) pair are byte-identical there.
         xy = np.ascontiguousarray(arr[:, 0:2])
+        if not np.isfinite(xy).all():
+            # Non-finite placement coords (only reachable via malformed region
+            # bounds) crash scipy's KDTree on dense tiles, whereas the small-n
+            # NaN-comparison path silently found no overlap. Skip the overlap
+            # check so BOTH paths behave identically (no path-dependent crash).
+            continue
         first_pair = None
         if xy.shape[0] <= 256:
             dx = xy[:, 0:1] - xy[:, 0:1].T
