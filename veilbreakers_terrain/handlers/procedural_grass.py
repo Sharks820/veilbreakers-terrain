@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 # Import canonical biome IDs from the single source of truth.
 from .terrain_biome_registry import CANONICAL_BIOME_IDS  # noqa: F401,E402 — re-exported
 
+# CE-2026-05-24 #9: reuse the canonical wet predicate so the binary
+# water_surface_mask threshold cannot drift from the seasonal pass / bathymetry.
+from .terrain_water_variants import _is_wet  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Optional scipy SDF
@@ -371,15 +375,17 @@ class ProceduralGrassSystem:
         else:
             # Binary mask path: water_surface_mask is a binary {0,1} extent
             # channel; a cell is water when it exceeds the canonical wet
-            # threshold (0.5).  Exclude those cells from grass.
-            # CE-2026-05-24 #9: use the canonical ``> 0.5`` semantics (matches
-            # pass_bathymetry and the seasonal pass) instead of ``<= 0.0`` —
-            # under ``<= 0.0`` a fractional value like 0.5 was treated as water
-            # while the bathymetry reader (``> 0.5``) treated it as dry land.
+            # threshold.  Exclude those cells from grass.
+            # CE-2026-05-24 #9: use the canonical ``_is_wet`` helper (``> 0.5``,
+            # matches pass_bathymetry and the seasonal pass) instead of the old
+            # ``<= 0.0`` — under ``<= 0.0`` a fractional value like 0.5 was
+            # treated as water while the bathymetry reader (``> 0.5``) treated it
+            # as dry land.  Reusing the shared helper (rather than a hardcoded
+            # 0.5) keeps the threshold from drifting if it ever changes again.
             # W-1: use water_surface_mask exclusively; legacy water_surface fallback removed.
             ws_mask = _stack_attr(stack, "water_surface_mask")
             if ws_mask is not None:
-                mask *= (np.asarray(ws_mask, dtype=np.float32) <= 0.5).astype(np.float32)
+                mask *= (~_is_wet(ws_mask)).astype(np.float32)
 
         # Road SDF: stack.road_sdf_dist is precomputed in metres.
         road_sdf = _stack_attr(stack, "road_sdf_dist")

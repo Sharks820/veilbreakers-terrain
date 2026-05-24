@@ -62,7 +62,7 @@ def _make_stack(
     # Seed elevation with a plausible spill-rim value above the terrain max
     # in the wet region — exact value doesn't matter; we're testing that the
     # seasonal pass overwrites it correctly.
-    stale_elev = np.where(mask > 0.0, height + 5.0, 0.0).astype(np.float32)
+    stale_elev = np.where(mask > 0.5, height + 5.0, 0.0).astype(np.float32)
 
     wetness = (mask * 0.8).astype(np.float32)
     tidal = np.zeros(shape, dtype=np.float32)
@@ -111,12 +111,17 @@ def test_dry_season_updates_elevation() -> None:
     )
 
     # Invariant: wsfm >= height for all wet cells (or wsfm == 0.0 for dry).
-    wet = new_mask > 0.0
+    wet = new_mask > 0.5  # canonical wet predicate (matches _WET_THRESHOLD)
     if wet.any():
         h = np.asarray(stack.height, dtype=np.float32)
         assert np.all(new_elev[wet] >= h[wet]), (
             "wsfm < height for some wet cells after DRY season"
         )
+    # Dry-cell sentinel: every non-wet cell carries the 0.0 elevation sentinel
+    # (the whole-tile flood bug lifted these to the global terrain max).
+    assert np.all(new_elev[~wet] == 0.0), (
+        "DRY season left non-zero water_surface_elevation_m on dry cells"
+    )
 
 
 def test_wet_season_updates_elevation() -> None:
@@ -140,12 +145,17 @@ def test_wet_season_updates_elevation() -> None:
         "WET season did not update water_surface_elevation_m"
     )
 
-    wet = new_mask > 0.0
+    wet = new_mask > 0.5  # canonical wet predicate (matches _WET_THRESHOLD)
     if wet.any():
         h = np.asarray(stack.height, dtype=np.float32)
         assert np.all(new_elev[wet] >= h[wet]), (
             "wsfm < height for some wet cells after WET season"
         )
+    # Dry-cell sentinel: dry cells stay at 0.0 (the flood bug raised them to the
+    # global terrain max).
+    assert np.all(new_elev[~wet] == 0.0), (
+        "WET season left non-zero water_surface_elevation_m on dry cells — flood bug"
+    )
 
 
 def test_frozen_season_updates_elevation() -> None:
@@ -168,12 +178,17 @@ def test_frozen_season_updates_elevation() -> None:
         "FROZEN season did not update water_surface_elevation_m"
     )
 
-    wet = new_mask > 0.0
+    wet = new_mask > 0.5  # canonical wet predicate (matches _WET_THRESHOLD)
     if wet.any():
         h = np.asarray(stack.height, dtype=np.float32)
         assert np.all(new_elev[wet] >= h[wet]), (
             "wsfm < height for some wet cells after FROZEN season"
         )
+    # Dry-cell sentinel: dry cells stay at 0.0 (the flood bug raised them to the
+    # global terrain max).
+    assert np.all(new_elev[~wet] == 0.0), (
+        "FROZEN season left non-zero water_surface_elevation_m on dry cells"
+    )
 
 
 def test_normal_season_elevation_present() -> None:
@@ -272,7 +287,7 @@ def test_wet_cells_have_finite_elevation(season: SeasonalState) -> None:
     elev = np.asarray(elev, dtype=np.float32)
     h = np.asarray(stack.height, dtype=np.float32)
 
-    wet = mask > 0.0
+    wet = mask > 0.5  # canonical wet predicate (matches _WET_THRESHOLD)
     if not wet.any():
         return  # DRY may drain all cells — nothing to check
 
