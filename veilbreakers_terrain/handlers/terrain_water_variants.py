@@ -109,26 +109,40 @@ class SeasonalState(enum.Enum):
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Canonical wet threshold for ``water_surface_mask``.
+# Canonical wet threshold for ``water_surface_mask`` *within this module*.
 #
 # ``water_surface_mask`` is a BINARY ``{0.0, 1.0}`` float32 channel (produced
-# as ``(water_surface > 0.0).astype(float32)``).  Historically the "is this
-# cell wet?" test diverged across the codebase — ``> 0.0`` in the seasonal
-# pass, ``> 0.5`` in ``pass_bathymetry``, ``<= 0.0`` in ``procedural_grass``.
-# That divergence let an additively-nudged value like ``0.15`` (WET) read as
-# wet under ``> 0.0`` while reading as dry under ``> 0.5`` — a silent
-# corruption.  ``0.5`` is the single source of truth: it is the natural
-# midpoint for a ``{0, 1}`` binary, matches the long-standing bathymetry
-# reader, and rejects any sub-1.0 leakage from additive seasonal deltas.
+# as ``(water_surface > 0.0).astype(float32)``).  The "is this cell wet?" test
+# diverged between the two readers that the seasonal-flood fix touches: the
+# seasonal pass here used ``> 0.0`` while ``pass_bathymetry`` used ``> 0.5``.
+# For an additively-nudged value like ``0.15`` (WET) that read wet under
+# ``> 0.0`` and dry under ``> 0.5`` — a silent corruption.  ``0.5`` is the
+# natural midpoint for a ``{0, 1}`` binary, matches the long-standing
+# bathymetry reader, and rejects any sub-1.0 leakage from additive deltas.
+#
+# NOTE: other modules still read ``water_surface_mask`` with non-canonical
+# thresholds (e.g. ``> 0.0`` in terrain_audio_zones / terrain_wildlife_zones /
+# terrain_navmesh_export, ``> 0.1`` in terrain_saliency, ``> 0.01`` in
+# _water_network_ext).  Those have NO live impact while the mask is binary, and
+# some (saliency, _water_network_ext) may be intentionally different — so they
+# are deliberately NOT converted here.  Full cross-module threshold convergence
+# is a tracked #9 follow-up requiring per-reader intent analysis.
 _WET_THRESHOLD: float = 0.5
 
 
 def _is_wet(mask: object) -> np.ndarray:
-    """Boolean wet-mask under the canonical ``_WET_THRESHOLD``.
+    """Boolean wet-mask under the canonical ``_WET_THRESHOLD`` (``> 0.5``).
 
-    The single source of truth for interpreting ``water_surface_mask`` as a
-    boolean wet/dry field.  Use this everywhere instead of an ad-hoc ``> 0``
-    so additive deltas can never leak dry cells into the wet set.
+    The canonical wet/dry interpretation of ``water_surface_mask`` for the
+    seasonal pass and the readers it converges with — the seasonal site here
+    and ``procedural_grass`` (both previously diverged for binary input).  Using
+    it keeps an additive delta from leaking dry cells into the wet set.
+
+    Scope note: this is the single source of truth *for the readers this fix
+    touches*, NOT a claim that every ``water_surface_mask`` reader in the
+    codebase has been converted to ``> 0.5``.  Several other modules still use
+    their own thresholds (some possibly intentional) — converging all of them
+    is a tracked #9 follow-up (see the ``_WET_THRESHOLD`` note above).
     """
     return np.asarray(mask) > _WET_THRESHOLD
 

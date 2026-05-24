@@ -35,15 +35,38 @@ and PASS after the binarize fix.
 
 from __future__ import annotations
 
-import numpy as np
+from typing import Generator
 
-from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+import numpy as np
+import pytest
+
+from veilbreakers_terrain.handlers.terrain_pipeline import (
+    TerrainPassController,
+    pass_water_depth,
+    register_pass_water_depth,
+)
+from veilbreakers_terrain.handlers.terrain_semantics import (
+    BBox,
+    TerrainIntentState,
+    TerrainMaskStack,
+    TerrainPipelineState,
+)
 from veilbreakers_terrain.handlers.terrain_water_variants import (
     SeasonalState,
     apply_seasonal_water_state,
+    pass_bathymetry,
+    register_bathymetry_pass,
 )
 
 SHAPE = (33, 33)
+
+
+@pytest.fixture(autouse=True)
+def clean_registry() -> Generator[None, None, None]:
+    """Isolate the pass registry — the full-chain test registers passes."""
+    TerrainPassController.clear_registry()
+    yield
+    TerrainPassController.clear_registry()
 
 
 def _make_basin_stack() -> TerrainMaskStack:
@@ -86,6 +109,25 @@ def _wet_cell_count(stack: TerrainMaskStack) -> int:
     return int(np.count_nonzero(mask > 0.5))
 
 
+def _dry_high_cell_elevations(stack: TerrainMaskStack) -> np.ndarray:
+    """water_surface_elevation_m sampled on the clearly-dry high plateau.
+
+    The plateau cells (height == 100.0) are unambiguously dry land; under a
+    correct seasonal pass their water-surface elevation must stay at the 0.0
+    dry sentinel.  The flood bug lifted them to the GLOBAL terrain max because
+    the spill-rim treated the whole tile as one connected wet body.  This is
+    the channel the flood actually lives in (the wet-CELL-COUNT under ``> 0.5``
+    never changes on origin/main — see NIT 2 in PR #146), so asserting on it is
+    what makes these tests fail on origin/main.
+    """
+    elev = np.asarray(
+        stack.get("water_surface_elevation_m"), dtype=np.float32
+    )
+    height = np.asarray(stack.height, dtype=np.float32)
+    plateau = height >= 99.0
+    return elev[plateau]
+
+
 def test_wet_season_does_not_flood_whole_tile() -> None:
     """WET season must not turn the entire 33x33 tile into one wet body."""
     stack = _make_basin_stack()
@@ -109,6 +151,19 @@ def test_wet_season_does_not_flood_whole_tile() -> None:
         f"seasonal state must adjust wetness/ice, not open-water extent."
     )
 
+    # (b) THE flood actually lives in the ELEVATION channel — the wet-cell
+    # count above never moves on origin/main (the +0.15 nudge lands at 0.15,
+    # below the canonical 0.5 reader). The dry high plateau's
+    # water_surface_elevation_m must stay at the 0.0 dry sentinel; on
+    # origin/main it is lifted to the global terrain max (100.0). This
+    # assertion is what makes the test FAIL on origin/main and PASS after fix.
+    dry_high_elev = _dry_high_cell_elevations(stack)
+    assert np.all(dry_high_elev == 0.0), (
+        f"WET season raised water_surface_elevation_m on dry high plateau cells "
+        f"(max={float(dry_high_elev.max())}, expected 0.0); the additive-nudge "
+        f"flood collapsed the whole-tile spill rim onto dry land."
+    )
+
 
 def test_frozen_season_does_not_flood_whole_tile() -> None:
     """FROZEN season (+0.1 nudge) must not flood the tile either."""
@@ -124,6 +179,18 @@ def test_frozen_season_does_not_flood_whole_tile() -> None:
         f"(started with {original_wet})."
     )
     assert new_wet == original_wet
+
+    # The flood lives in the ELEVATION channel (the FROZEN +0.1 nudge lands at
+    # 0.1, below the canonical 0.5 reader, so the wet-cell count never moves on
+    # origin/main). Dry high plateau cells must keep the 0.0 sentinel; on
+    # origin/main they are lifted to the global terrain max — this is what makes
+    # the test FAIL on origin/main and PASS after the fix.
+    dry_high_elev = _dry_high_cell_elevations(stack)
+    assert np.all(dry_high_elev == 0.0), (
+        f"FROZEN season raised water_surface_elevation_m on dry high plateau "
+        f"cells (max={float(dry_high_elev.max())}, expected 0.0); the additive-"
+        f"nudge flood collapsed the whole-tile spill rim onto dry land."
+    )
 
 
 def test_dry_high_cells_elevation_stays_zero_after_wet_season() -> None:
@@ -189,4 +256,124 @@ def test_dry_season_does_not_erase_water_extent() -> None:
     assert new_wet == original_wet, (
         f"DRY season erased water extent: {original_wet} -> {new_wet} wet cells "
         f"under the canonical >0.5 threshold."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Full production-chain integration (NIT 3): seasonal -> bathymetry -> depth
+# ---------------------------------------------------------------------------
+
+
+_BASIN_SPILL_RIM_M = 28.0
+_TERRAIN_MAX_M = 190.0
+
+
+def _make_graded_basin_stack() -> TerrainMaskStack:
+    """A graded valley basin: a radial bowl rising from a low wet floor.
+
+    Terrain is a smooth radial bowl — low (~5 m) at the centre, rising to
+    ~190 m at the rim corners.  Open water fills only the floor below the
+    basin spill rim (~28 m).  This is the GRADED-terrain analogue of the
+    showcase scene (valley basin in a mountain bowl) the PR is protecting.
+    """
+    rows = cols = 48
+    yy, xx = np.meshgrid(
+        np.linspace(-1.0, 1.0, rows),
+        np.linspace(-1.0, 1.0, cols),
+        indexing="ij",
+    )
+    radius = np.sqrt(xx * xx + yy * yy)
+    height = (
+        5.0 + (_TERRAIN_MAX_M - 5.0) * np.clip(radius, 0.0, 1.0) ** 1.3
+    ).astype(np.float32)
+
+    # Wet only where the terrain floor sits below the basin spill rim.
+    mask = (height < _BASIN_SPILL_RIM_M).astype(np.float32)
+    elev = np.where(mask > 0.5, _BASIN_SPILL_RIM_M, 0.0).astype(np.float32)
+
+    stack = TerrainMaskStack(
+        tile_size=0,
+        cell_size=4.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    stack.set("water_surface_mask", mask, "setup")
+    stack.set("water_surface_elevation_m", elev, "setup")
+    stack.set("wetness", (mask * 0.8).astype(np.float32), "setup")
+    stack.set("tidal", np.zeros((rows, cols), dtype=np.float32), "setup")
+    return stack
+
+
+def test_full_chain_wet_season_depth_stays_bounded_by_basin_rim() -> None:
+    """Real chain seasonal -> pass_bathymetry -> pass_water_depth must stay bounded.
+
+    On origin/main, WET season inflates ``water_surface_elevation_m`` to the
+    GLOBAL terrain max; ``pass_bathymetry`` then carries that inflated surface
+    onto the (still-wet) basin cells, and ``pass_water_depth`` computes
+    ``depth = max(ws_elev - h, 0)`` ~= the full bowl height (~183 m on a 190 m
+    bowl) instead of the basin depth (~26 m below the ~28 m spill rim).
+
+    This is the production blast radius of the seasonal bug — it floods the
+    basin to mountain height.  The test runs the REAL registered passes (not a
+    reimplementation), asserting the resulting surface/depth stays bounded by
+    the basin spill rim, NOT the global terrain max.  It FAILS on origin/main
+    (depth ~= 183 m) and PASSES after the binarize fix (depth ~= 26 m).
+    """
+    register_bathymetry_pass()
+    register_pass_water_depth()
+
+    stack = _make_graded_basin_stack()
+    height = np.asarray(stack.height, dtype=np.float32)
+    rows, cols = height.shape
+
+    # The real production pass order.
+    apply_seasonal_water_state(stack, SeasonalState.WET)
+
+    region = BBox(
+        0.0, 0.0, float(cols) * stack.cell_size, float(rows) * stack.cell_size
+    )
+    intent = TerrainIntentState(
+        seed=1,
+        region_bounds=region,
+        tile_size=rows,
+        cell_size=stack.cell_size,
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    bathy_result = pass_bathymetry(state, region)
+    depth_result = pass_water_depth(state, region)
+    assert bathy_result.status == "ok"
+    assert depth_result.status == "ok"
+
+    ws_elev = np.asarray(
+        stack.get("water_surface_elevation_m"), dtype=np.float32
+    )
+    depth = np.asarray(stack.get("water_depth_m"), dtype=np.float32)
+
+    # The basin spill rim is ~28 m; the flood-fill rim may sit a little above
+    # it because it uses the highest DRY rim neighbour (a band of cells just
+    # above 28 m). Allow a generous margin and still be far below the 190 m
+    # global terrain max, so the test is unambiguous.
+    rim_bound = _BASIN_SPILL_RIM_M + 10.0  # 38 m — still << 190 m
+
+    assert float(ws_elev.max()) <= rim_bound, (
+        f"water_surface_elevation_m inflated to {float(ws_elev.max()):.1f} m "
+        f"(basin spill rim ~{_BASIN_SPILL_RIM_M:.0f} m, global terrain max "
+        f"{_TERRAIN_MAX_M:.0f} m); the seasonal flood collapsed the surface to "
+        f"the whole-bowl rim."
+    )
+    assert float(depth.max()) <= rim_bound, (
+        f"water_depth_m inflated to {float(depth.max()):.1f} m through the real "
+        f"seasonal -> bathymetry -> depth chain (expected <= {rim_bound:.0f} m, "
+        f"basin floor to spill rim). On origin/main this floods to ~"
+        f"{_TERRAIN_MAX_M - 5.0:.0f} m (mountain height) — the production bug."
+    )
+    # Sanity: the basin is genuinely wet (the test isn't vacuously passing on an
+    # empty mask) and the depth is a real, positive pool.
+    assert float(depth.max()) > 1.0, (
+        "expected a real water pool in the basin floor; got near-zero depth — "
+        "the chain produced no water at all."
     )
