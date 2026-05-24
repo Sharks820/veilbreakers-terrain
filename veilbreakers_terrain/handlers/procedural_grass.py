@@ -369,11 +369,17 @@ class ProceduralGrassSystem:
             ws = np.asarray(ws_elev, dtype=np.float32)
             mask *= (height >= ws).astype(np.float32)
         else:
-            # Binary mask path: water_surface_mask > 0 means cell IS water — exclude it.
+            # Binary mask path: water_surface_mask is a binary {0,1} extent
+            # channel; a cell is water when it exceeds the canonical wet
+            # threshold (0.5).  Exclude those cells from grass.
+            # CE-2026-05-24 #9: use the canonical ``> 0.5`` semantics (matches
+            # pass_bathymetry and the seasonal pass) instead of ``<= 0.0`` —
+            # under ``<= 0.0`` a fractional value like 0.5 was treated as water
+            # while the bathymetry reader (``> 0.5``) treated it as dry land.
             # W-1: use water_surface_mask exclusively; legacy water_surface fallback removed.
             ws_mask = _stack_attr(stack, "water_surface_mask")
             if ws_mask is not None:
-                mask *= (np.asarray(ws_mask, dtype=np.float32) <= 0.0).astype(np.float32)
+                mask *= (np.asarray(ws_mask, dtype=np.float32) <= 0.5).astype(np.float32)
 
         # Road SDF: stack.road_sdf_dist is precomputed in metres.
         road_sdf = _stack_attr(stack, "road_sdf_dist")

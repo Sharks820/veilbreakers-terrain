@@ -109,6 +109,29 @@ class SeasonalState(enum.Enum):
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Canonical wet threshold for ``water_surface_mask``.
+#
+# ``water_surface_mask`` is a BINARY ``{0.0, 1.0}`` float32 channel (produced
+# as ``(water_surface > 0.0).astype(float32)``).  Historically the "is this
+# cell wet?" test diverged across the codebase — ``> 0.0`` in the seasonal
+# pass, ``> 0.5`` in ``pass_bathymetry``, ``<= 0.0`` in ``procedural_grass``.
+# That divergence let an additively-nudged value like ``0.15`` (WET) read as
+# wet under ``> 0.0`` while reading as dry under ``> 0.5`` — a silent
+# corruption.  ``0.5`` is the single source of truth: it is the natural
+# midpoint for a ``{0, 1}`` binary, matches the long-standing bathymetry
+# reader, and rejects any sub-1.0 leakage from additive seasonal deltas.
+_WET_THRESHOLD: float = 0.5
+
+
+def _is_wet(mask: object) -> np.ndarray:
+    """Boolean wet-mask under the canonical ``_WET_THRESHOLD``.
+
+    The single source of truth for interpreting ``water_surface_mask`` as a
+    boolean wet/dry field.  Use this everywhere instead of an ad-hoc ``> 0``
+    so additive deltas can never leak dry cells into the wet set.
+    """
+    return np.asarray(mask) > _WET_THRESHOLD
+
 
 def _compute_spill_rim_elevation(
     h: np.ndarray, wet_mask: np.ndarray
@@ -773,7 +796,7 @@ def apply_seasonal_water_state(
     stack: TerrainMaskStack,
     state: object,
 ) -> None:
-    """Mutate wetness / water_surface_mask / tidal in-place per seasonal state.
+    """Mutate wetness / tidal / ice in-place per seasonal state.
 
     **IMPORTANT:** This function edits ``stack`` in place. Callers that
     need to recover the prior state must checkpoint via
@@ -782,6 +805,16 @@ def apply_seasonal_water_state(
     W-1 migration: this function no longer writes to the legacy
     ``water_surface`` channel. All binary water presence is written to
     ``water_surface_mask`` exclusively.
+
+    CE-2026-05-24 #1/#9: seasonal state adjusts ``wetness`` (saturation),
+    ``tidal`` (frozen lock), and the recomputed ``water_surface_elevation_m``
+    — but it does NOT change the open-water *extent*.  ``water_surface_mask``
+    is a binary ``{0, 1}`` EXTENT channel; widening/shrinking open water
+    requires a hydrology sim, not a per-cell additive nudge.  The previous
+    additive/scaling nudges on the mask silently flooded the whole tile
+    (WET/FROZEN ``> 0.0`` leak) or erased it (DRY ``*0.5`` under the canonical
+    ``> 0.5``).  The mask extent is therefore preserved exactly across seasons
+    and re-stamped to a clean binary at the canonical ``_WET_THRESHOLD``.
     """
     if not isinstance(state, SeasonalState):
         raise TypeError(f"state must be SeasonalState, got {type(state).__name__}")
@@ -798,6 +831,16 @@ def apply_seasonal_water_state(
         water_surface_mask = np.zeros(shape, dtype=np.float32)
     water_surface_mask = np.asarray(water_surface_mask, dtype=np.float32).copy()
 
+    # CE-2026-05-24 #1/#9: capture the ORIGINAL open-water extent under the
+    # canonical wet threshold BEFORE any seasonal mutation.  ``water_surface_mask``
+    # is a binary {0,1} EXTENT channel and seasonal state must not corrupt it:
+    # WET/FROZEN additively nudged it (+0.15 / +0.1) so every dry cell read
+    # ``> 0.0`` wet, and DRY scaled it (``*0.5``) so every wet cell dropped to
+    # 0.5 and read DRY under the canonical ``> 0.5``.  Open-water EXTENT only
+    # changes under a hydro sim, never an additive nudge — so the extent is
+    # preserved exactly across seasons and the binary contract stays clean.
+    original_wet = _is_wet(water_surface_mask)
+
     tidal = stack.get("tidal")
     if tidal is None:
         tidal = np.zeros(shape, dtype=np.float32)
@@ -805,17 +848,22 @@ def apply_seasonal_water_state(
 
     if state is SeasonalState.DRY:
         wetness *= 0.3
-        water_surface_mask *= 0.5
     elif state is SeasonalState.NORMAL:
         pass  # no-op; canonical state
     elif state is SeasonalState.WET:
         wetness = np.clip(wetness * 1.5 + 0.2, 0.0, 1.0)
-        water_surface_mask = np.clip(water_surface_mask + 0.15, 0.0, 1.0)
     elif state is SeasonalState.FROZEN:
         # Frozen: surface water becomes ice; tidal is locked to max.
-        water_surface_mask = np.clip(water_surface_mask + 0.1, 0.0, 1.0)
         wetness *= 0.6
         tidal[:] = 1.0
+
+    # CE-2026-05-24 #1/#9: re-stamp the binary EXTENT to the canonical
+    # {0,1} from the original wet set.  Seasonal state adjusts wetness /
+    # tidal / ice (above) but NOT which cells are open water.  This both
+    # (a) stops WET/FROZEN additive deltas from leaking dry cells into the
+    # wet set (the silent whole-tile flood), and (b) stops DRY's old ``*0.5``
+    # from silently erasing every wet cell under the canonical ``> 0.5``.
+    water_surface_mask = original_wet.astype(np.float32)
 
     stack.set("wetness", wetness, "water_variants_seasonal")
     # W-1: write only to water_surface_mask; do NOT write legacy water_surface.
@@ -823,17 +871,22 @@ def apply_seasonal_water_state(
     stack.set("tidal", tidal, "water_variants_seasonal")
 
     # HOTFIX-7j (Verifier A 2026-05-21 #24): recompute water_surface_elevation_m
-    # against the *new* seasonal mask so caustic rendering reads a fresh spill-rim
-    # elevation that matches the mutated mask.  Without this, every season other
+    # against the seasonal mask so caustic rendering reads a fresh spill-rim
+    # elevation that matches the stored mask.  Without this, every season other
     # than NORMAL left water_surface_elevation_m stale (pre-mutation topology)
     # while water_surface_mask reflected the new state — the visible misalignment.
     #
+    # CE-2026-05-24 #1/#9: feed the canonical ``_is_wet`` boolean (``> 0.5``),
+    # NOT a raw ``> 0.0``.  The extent is binary now, so ``> 0.5`` == ``> 0.0``
+    # here, but using ``_is_wet`` keeps the wet predicate consistent with every
+    # other reader and is robust if the channel ever carries fractional noise.
+    #
     # _compute_spill_rim_elevation returns 0.0 for every dry cell, so an all-dry
-    # mask (DRY season draining to zero) correctly yields an all-zero array as the
-    # sentinel (matches the invariant used throughout pass_water_variants).
+    # mask correctly yields an all-zero array as the sentinel (matches the
+    # invariant used throughout pass_water_variants).
     water_surface_elevation_m = _compute_spill_rim_elevation(
         np.asarray(stack.height, dtype=np.float32),
-        water_surface_mask > 0.0,
+        _is_wet(water_surface_mask),
     )
     stack.set(
         "water_surface_elevation_m",
