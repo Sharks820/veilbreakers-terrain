@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
+import site
 import sys
 import traceback
 from pathlib import Path
@@ -35,6 +37,29 @@ import bpy
 import bmesh
 import numpy as np
 from mathutils import Vector
+
+
+def _ensure_blender_deps() -> None:
+    """Inject VB_BLENDER_DEPS onto sys.path.
+
+    Blender 4.2+ runs its embedded Python in isolated mode (sys.flags.isolated),
+    which ignores PYTHONPATH and the user site-packages. Generator code reached
+    via the COMMAND_HANDLERS (water, bridge, scatter) needs scipy, which is not
+    in Blender's bundled site-packages. Point VB_BLENDER_DEPS at a dir holding a
+    numpy-1.26-compatible scipy, e.g.:
+        "<blender>/python/bin/python.exe" -m pip install \\
+            --no-deps --target <dir> scipy==1.13.1
+    No-op if the env var is unset (the upstream ModuleNotFoundError then tells
+    you to set it). See docs/GENERATION_TRUTH_RULE.md.
+    """
+    dep = os.environ.get("VB_BLENDER_DEPS")
+    if dep and os.path.isdir(dep) and dep not in sys.path:
+        site.addsitedir(dep)
+        if dep not in sys.path:
+            sys.path.insert(0, dep)
+
+
+_ensure_blender_deps()
 
 Heightmap: TypeAlias = Any
 MeshSpec: TypeAlias = dict[str, Any]
@@ -1075,95 +1100,6 @@ def _sample_river_path(hm: Heightmap, src: list[tuple[float, float, float]], *,
     return pts, widths
 
 
-def _build_water_depth_disk(hm: Heightmap, water_mats: list[bpy.types.Material],
-                            bed_mat: bpy.types.Material) -> bpy.types.Object:
-    ring_n = 144
-    bm = bmesh.new()
-
-    def lake_rel(x: float, y: float) -> float:
-        ang = math.atan2(y - LAKE_XY[1], x - LAKE_XY[0])
-        return math.hypot(x - LAKE_XY[0], y - LAKE_XY[1]) / max(float(lake_shore_radius(ang)), 0.001)
-
-    # Use clipped quads instead of a triangle fan. The old center fan created a
-    # radial shading/normal artifact that read as a fake island in hero renders.
-    step = 7.0
-    pad = LAKE_RADIUS * 1.08
-    x0 = LAKE_XY[0] - pad
-    y0 = LAKE_XY[1] - pad
-    nx = int((pad * 2.0) / step) + 1
-    ny = int((pad * 2.0) / step) + 1
-    grid: dict[tuple[int, int], bmesh.types.BMVert] = {}
-
-    def grid_vert(ix: int, iy: int) -> bmesh.types.BMVert:
-        key = (ix, iy)
-        if key not in grid:
-            x = x0 + ix * step
-            y = y0 + iy * step
-            grid[key] = bm.verts.new((x, y, LAKE_WATER_LEVEL + 0.045))
-        return grid[key]
-
-    for iy in range(ny):
-        for ix in range(nx):
-            cx = x0 + (ix + 0.5) * step
-            cy = y0 + (iy + 0.5) * step
-            if lake_rel(cx, cy) > 0.985:
-                continue
-            try:
-                face = bm.faces.new((
-                    grid_vert(ix, iy),
-                    grid_vert(ix + 1, iy),
-                    grid_vert(ix + 1, iy + 1),
-                    grid_vert(ix, iy + 1),
-                ))
-                face.material_index = 0
-            except ValueError:
-                pass
-    bm.normal_update()
-    lake_mesh = bpy.data.meshes.new("VB_Lake_Mesh")
-    bm.to_mesh(lake_mesh)
-    bm.free()
-    for p in lake_mesh.polygons:
-        p.use_smooth = False
-    lake_obj = bpy.data.objects.new("VB_Lake", lake_mesh)
-    bpy.context.collection.objects.link(lake_obj)
-    lake_obj.visible_shadow = False
-    for mat in water_mats:
-        lake_obj.data.materials.append(mat)
-
-    bed_bm = bmesh.new()
-    bed_fracs = [0.10, 0.36, 0.62, 0.84, 1.02]
-    bed_rings: list[list[bmesh.types.BMVert]] = []
-    for ri, frac in enumerate(bed_fracs):
-        row = []
-        for k in range(ring_n):
-            ang = 2 * math.pi * k / ring_n
-            r = float(lake_shore_radius(ang)) * frac
-            x = LAKE_XY[0] + r * math.cos(ang)
-            y = LAKE_XY[1] + r * math.sin(ang)
-            row.append(bed_bm.verts.new((x, y, sample_h(hm, x, y) + 0.075)))
-        bed_rings.append(row)
-    for ri in range(len(bed_rings) - 1):
-        inner = bed_rings[ri]
-        outer = bed_rings[ri + 1]
-        for k in range(ring_n):
-            nk = (k + 1) % ring_n
-            try:
-                bed_bm.faces.new((inner[k], outer[k], outer[nk], inner[nk]))
-            except ValueError:
-                pass
-    bed_bm.normal_update()
-    bed_mesh = bpy.data.meshes.new("VB_LakeBedDepth_Mesh")
-    bed_bm.to_mesh(bed_mesh)
-    bed_bm.free()
-    bed_obj = bpy.data.objects.new("VB_LakeBedDepth", bed_mesh)
-    bpy.context.collection.objects.link(bed_obj)
-    bed_obj.data.materials.append(bed_mat)
-    bed_obj.visible_shadow = False
-    bed_obj.hide_render = True
-    bed_obj.hide_viewport = True
-    return lake_obj
-
-
 def _build_waterfall_volume(hm: Heightmap, material: bpy.types.Material,
                             foam_mat: bpy.types.Material) -> None:
     """Layered falling water volume, replacing the former terrain-hugging strip."""
@@ -1540,8 +1476,6 @@ def _load_model_asset_templates(asset_specs: list[tuple[str, Path, int, float]])
 
 
 def build_water_surfaces(hm: Heightmap) -> None:
-    lake_bed_mat = _simple_principled_material("VB_LakeBedWetSilt", (0.045, 0.070, 0.055, 1),
-                                               roughness=0.94)
     stream_bed_mat = _simple_principled_material("VB_StreamBedPebbleSilt", (0.085, 0.105, 0.080, 1),
                                                  roughness=0.96)
     damp_bank_mat = _simple_principled_material("VB_DampBankSedgeMud", (0.070, 0.125, 0.075, 1),
@@ -1549,11 +1483,42 @@ def build_water_surfaces(hm: Heightmap) -> None:
     foam_mat = _simple_principled_material("VB_WaterFoam", (0.52, 0.66, 0.62, 0.10),
                                            roughness=0.76, alpha=0.13)
 
-    lake_mats = [
-        make_water_material("WaterLakeUnified", tint=(0.010, 0.055, 0.060, 1),
-                            roughness=0.54, emission=0.0, transparency=0.0),
-    ]
-    _build_water_depth_disk(hm, lake_mats, lake_bed_mat)
+    # Generation Truth (docs/GENERATION_TRUTH_RULE.md): the lake is built by the
+    # generator's water command handler -- not a fixture-local flat disc. Routing
+    # through handle_create_water -> _build_level_water_surface_from_terrain +
+    # _ensure_water_material gives the lake real depth (flow_vc shallow/deep
+    # gradient + Volume Absorption) and the hardened, animatable, grey-mirror-
+    # capped water material. VB_Terrain's base mesh is a regular grid (the cave
+    # boolean is a LIVE modifier and does not alter mesh data), so the terrain-
+    # footprint water builder applies; mask_center/radius constrains it to the lake.
+    from veilbreakers_terrain.handlers.environment import handle_create_water
+
+    # Isolate the lake (CE review P1): a lake failure must NOT abort the rivers/
+    # waterfall/mist that follow (own try/except), and a silent fallback to a
+    # rectangular/spline surface (water-level miss, non-grid terrain) must be
+    # surfaced via log_fail rather than shipped as a wrong-shaped lake.
+    lake_result: dict[str, Any] = {}
+    try:
+        lake_result = handle_create_water({
+            "name": "VB_Lake",
+            "terrain_name": "VB_Terrain",
+            "water_level": LAKE_WATER_LEVEL,
+            "mask_center": [LAKE_XY[0], LAKE_XY[1]],
+            "mask_radius": LAKE_RADIUS,
+            "material_name": "VB_WaterLake_AAA",
+            "preview_fast": False,
+        })
+    except Exception as exc:
+        log_fail("lake", exc)
+    lake_mode = lake_result.get("surface_mode")
+    if lake_result and lake_mode != "terrain_mask":
+        log_fail("lake_surface_mode", RuntimeError(
+            f"lake fell back to surface_mode={lake_mode!r}; expected 'terrain_mask' "
+            "(water_level/footprint miss) -- lake geometry is not the terrain basin"))
+    log(f"lake: generator water -> {lake_result.get('name')} mode={lake_mode} "
+        f"verts={lake_result.get('vertex_count')} "
+        f"flow_vc={lake_result.get('has_flow_vertex_colors')} "
+        f"flow_data={lake_result.get('has_flow_data_layer')} area={lake_result.get('area')}")
 
     def sampled_path(src: list[tuple[float, float, float]], name: str,
                      water_lift: float, width_scale: float,

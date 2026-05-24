@@ -746,3 +746,103 @@ def test_pass_unity_ready_shape(
     assert np.all(tp[:, 3] <= 360.0 + 1e-6)
     # Prototype IDs are non-negative integers-as-float
     assert np.all(tp[:, 4] >= 0.0)
+
+
+def test_validate_asset_overlap_scales_without_oom() -> None:
+    """Regression (CE-2026-05-24 perf P0): the overlap check must NOT allocate
+    an (N, N) pairwise matrix. Pre-fix, n~90k placements OOM'd at 61 GiB inside
+    pass_scatter_intelligent; the cKDTree path handles 100k in O(n log n).
+
+    100k well-spaced points (2 m grid >> 0.5 m cluster radius) -> no overlap.
+    This test would MemoryError on the pre-fix O(n^2) implementation.
+    """
+    n = 100_000
+    side = int(np.ceil(np.sqrt(n)))
+    idx = np.arange(n)
+    xs = (idx % side) * 2.0
+    ys = (idx // side) * 2.0
+    pts = [(float(x), float(y), 0.0) for x, y in zip(xs, ys)]
+    rule = AssetContextRule(
+        asset_id="grass_clump",
+        role=AssetRole.GROUND_COVER,
+        cluster_radius_m=0.5,
+    )
+    issues = validate_asset_density_and_overlap(
+        {"grass_clump": pts}, [rule], area_m2=1.0e9
+    )
+    assert not any(i.code == "SCATTER_OVERLAP" for i in issues)
+
+
+def test_validate_asset_overlap_detects_close_pair_at_large_n() -> None:
+    """The cKDTree path (n > 256) still detects a genuine overlap: a planted
+    0.1 m-apart pair among 5k well-spaced points must raise SCATTER_OVERLAP."""
+    n = 5_000
+    side = int(np.ceil(np.sqrt(n)))
+    idx = np.arange(n)
+    xs = (idx % side) * 5.0
+    ys = (idx // side) * 5.0
+    pts = [(float(x), float(y), 0.0) for x, y in zip(xs, ys)]
+    # Planted overlapping pair, 0.1 m apart << cluster_radius_m=1.0
+    pts.append((1000.0, 1000.0, 0.0))
+    pts.append((1000.1, 1000.0, 0.0))
+    rule = AssetContextRule(
+        asset_id="grass_clump",
+        role=AssetRole.GROUND_COVER,
+        cluster_radius_m=1.0,
+    )
+    issues = validate_asset_density_and_overlap(
+        {"grass_clump": pts}, [rule], area_m2=1.0e9
+    )
+    assert any(i.code == "SCATTER_OVERLAP" for i in issues)
+
+
+def test_validate_asset_overlap_single_coincident_pair_large_n() -> None:
+    """Pins the bounded k=2 nearest-neighbour path (n > 256): a SINGLE
+    coincident pair among otherwise well-spaced points must still be detected.
+
+    The k=2 query only inspects each point's nearest other point, so this
+    confirms a lone too-close pair (the cheapest case to miss) is not lost
+    when the within-radius pair set is never materialized.
+    """
+    n = 300  # > 256 -> KDTree path
+    side = int(np.ceil(np.sqrt(n)))
+    idx = np.arange(n)
+    # 10 m grid spacing >> cluster_radius_m=1.0, so no incidental overlaps.
+    pts = [(float(k % side) * 10.0, float(k // side) * 10.0, 0.0) for k in idx]
+    # Exactly one coincident pair (0.0 m apart) far from the grid.
+    pts.append((5000.0, 5000.0, 0.0))
+    pts.append((5000.0, 5000.0, 0.0))
+    rule = AssetContextRule(
+        asset_id="grass_clump",
+        role=AssetRole.GROUND_COVER,
+        cluster_radius_m=1.0,
+    )
+    issues = validate_asset_density_and_overlap(
+        {"grass_clump": pts}, [rule], area_m2=1.0e9
+    )
+    assert any(i.code == "SCATTER_OVERLAP" for i in issues)
+
+
+def test_validate_asset_overlap_nonfinite_coords_no_crash_either_path() -> None:
+    """Non-finite placement coords must not crash on EITHER path (CE nit).
+
+    scipy's KDTree (n > 256 path) rejects non-finite input with ValueError,
+    while the small-n comparison path silently ignored it — a path-dependent
+    crash. The finiteness guard makes both paths skip the overlap check
+    gracefully, so a NaN coord never raises regardless of placement count.
+    """
+    rule = AssetContextRule(
+        asset_id="grass_clump",
+        role=AssetRole.GROUND_COVER,
+        cluster_radius_m=1.0,
+    )
+    for n in (10, 1000):  # small-n path and KDTree path
+        side = int(np.ceil(np.sqrt(n)))
+        idx = np.arange(n)
+        pts = [(float(k % side) * 5.0, float(k // side) * 5.0, 0.0) for k in idx]
+        pts[n // 2] = (float("nan"), 5.0, 0.0)  # inject a non-finite coord
+        # Must not raise on either path; the asset is skipped for overlap.
+        issues = validate_asset_density_and_overlap(
+            {"grass_clump": pts}, [rule], area_m2=1.0e9
+        )
+        assert all(i.code != "SCATTER_OVERLAP" for i in issues)
