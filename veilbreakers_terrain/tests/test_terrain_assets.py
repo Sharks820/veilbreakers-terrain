@@ -746,3 +746,51 @@ def test_pass_unity_ready_shape(
     assert np.all(tp[:, 3] <= 360.0 + 1e-6)
     # Prototype IDs are non-negative integers-as-float
     assert np.all(tp[:, 4] >= 0.0)
+
+
+def test_validate_asset_overlap_scales_without_oom() -> None:
+    """Regression (CE-2026-05-24 perf P0): the overlap check must NOT allocate
+    an (N, N) pairwise matrix. Pre-fix, n~90k placements OOM'd at 61 GiB inside
+    pass_scatter_intelligent; the cKDTree path handles 100k in O(n log n).
+
+    100k well-spaced points (2 m grid >> 0.5 m cluster radius) -> no overlap.
+    This test would MemoryError on the pre-fix O(n^2) implementation.
+    """
+    n = 100_000
+    side = int(np.ceil(np.sqrt(n)))
+    idx = np.arange(n)
+    xs = (idx % side) * 2.0
+    ys = (idx // side) * 2.0
+    pts = [(float(x), float(y), 0.0) for x, y in zip(xs, ys)]
+    rule = AssetContextRule(
+        asset_id="grass_clump",
+        role=AssetRole.GROUND_COVER,
+        cluster_radius_m=0.5,
+    )
+    issues = validate_asset_density_and_overlap(
+        {"grass_clump": pts}, [rule], area_m2=1.0e9
+    )
+    assert not any(i.code == "SCATTER_OVERLAP" for i in issues)
+
+
+def test_validate_asset_overlap_detects_close_pair_at_large_n() -> None:
+    """The cKDTree path (n > 256) still detects a genuine overlap: a planted
+    0.1 m-apart pair among 5k well-spaced points must raise SCATTER_OVERLAP."""
+    n = 5_000
+    side = int(np.ceil(np.sqrt(n)))
+    idx = np.arange(n)
+    xs = (idx % side) * 5.0
+    ys = (idx // side) * 5.0
+    pts = [(float(x), float(y), 0.0) for x, y in zip(xs, ys)]
+    # Planted overlapping pair, 0.1 m apart << cluster_radius_m=1.0
+    pts.append((1000.0, 1000.0, 0.0))
+    pts.append((1000.1, 1000.0, 0.0))
+    rule = AssetContextRule(
+        asset_id="grass_clump",
+        role=AssetRole.GROUND_COVER,
+        cluster_radius_m=1.0,
+    )
+    issues = validate_asset_density_and_overlap(
+        {"grass_clump": pts}, [rule], area_m2=1.0e9
+    )
+    assert any(i.code == "SCATTER_OVERLAP" for i in issues)

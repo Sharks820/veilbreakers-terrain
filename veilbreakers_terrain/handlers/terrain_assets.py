@@ -766,14 +766,35 @@ def validate_asset_density_and_overlap(
         arr = np.asarray(pts, dtype=np.float64)
         if arr.shape[0] < 2:
             continue
-        # O(n^2) is fine — asset counts are bounded per tile
-        dx = arr[:, 0:1] - arr[:, 0:1].T
-        dy = arr[:, 1:2] - arr[:, 1:2].T
-        dist_sq = dx * dx + dy * dy
-        np.fill_diagonal(dist_sq, np.inf)
-        too_close = np.argwhere(dist_sq < radius_sq)
-        if too_close.size > 0:
-            i, j = int(too_close[0, 0]), int(too_close[0, 1])
+        # Neighbour search via scipy cKDTree. The prior implementation built an
+        # (n, n) float64 pairwise-distance matrix — the comment claimed "O(n^2)
+        # is fine — asset counts are bounded per tile", but they are NOT: on
+        # large/dense tiles pass_scatter_intelligent produced n=90449 placements,
+        # making that array 61 GiB and OOM-crashing the pass (CE-2026-05-24 perf
+        # P0). query_pairs finds all within-radius pairs in O(n log n) memory and
+        # time. The exact O(n^2) path is retained for small n (<=256) where the
+        # tree-build overhead dominates, so existing small-fixture behaviour and
+        # the reported (i, j) pair are byte-identical there.
+        xy = np.ascontiguousarray(arr[:, 0:2])
+        first_pair = None
+        if xy.shape[0] <= 256:
+            dx = xy[:, 0:1] - xy[:, 0:1].T
+            dy = xy[:, 1:2] - xy[:, 1:2].T
+            dist_sq = dx * dx + dy * dy
+            np.fill_diagonal(dist_sq, np.inf)
+            too_close = np.argwhere(dist_sq < radius_sq)
+            if too_close.size > 0:
+                first_pair = (int(too_close[0, 0]), int(too_close[0, 1]))
+        else:
+            from scipy.spatial import cKDTree
+
+            pairs = cKDTree(xy).query_pairs(r=radius, output_type="ndarray")
+            if pairs.shape[0] > 0:
+                # Report the lowest-index offending pair for stable messaging.
+                order = np.lexsort((pairs[:, 1], pairs[:, 0]))
+                first_pair = (int(pairs[order[0], 0]), int(pairs[order[0], 1]))
+        if first_pair is not None:
+            i, j = first_pair
             issues.append(
                 ValidationIssue(
                     code="SCATTER_OVERLAP",
