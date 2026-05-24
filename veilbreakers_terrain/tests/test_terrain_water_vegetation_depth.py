@@ -412,17 +412,72 @@ def test_seasonal_dry_reduces_wetness():
     assert float(wetness.mean()) < 0.8
 
 
-def test_seasonal_wet_increases_wetness_and_water_surface():
+def test_seasonal_wet_raises_wetness_and_preserves_extent_no_legacy_write():
+    """WET season raises wetness, preserves open-water extent, never writes legacy.
+
+    CE-2026-05-24 #1/#9 rewrite (mirrors the test_hotfix_7j rewrite in PR #146):
+    this test previously asserted ``water_surface.mean() > 0.2`` — that the WET
+    season INCREASES the legacy ``water_surface`` channel. That behaviour was
+    REMOVED by the W-1 migration (``apply_seasonal_water_state`` no longer writes
+    the legacy ``water_surface`` channel) AND by the seasonal-flood fix (seasonal
+    state adjusts wetness/ice, NOT open-water extent). The old assertion only
+    survived by a float32 rounding accident: the setup wrote 0.2 as float32
+    (stored as 0.20000003) and the seasonal pass left it untouched, so
+    ``0.20000003 > 0.2`` (float64 literal) was incidentally True. An exact value
+    would have failed. The corrected contract:
+
+      1. WET raises ``wetness`` (saturation), the real seasonal effect.
+      2. The seasonal pass does NOT write the legacy ``water_surface`` channel
+         (W-1): a pre-set legacy value is left byte-for-byte untouched.
+      3. Open-water EXTENT (``water_surface_mask``) is preserved exactly —
+         seasonal state does not widen/shrink open water (that needs a hydro sim).
+    """
     stack = _make_stack()
     _set_channel(stack, "wetness", np.full(stack.height.shape, 0.3, dtype=np.float32))
-    _set_channel(stack, "water_surface", np.full(stack.height.shape, 0.2, dtype=np.float32))
+
+    # Seed a binary open-water extent: lower-left quadrant is wet.
+    rows, cols = stack.height.shape
+    mask = np.zeros(stack.height.shape, dtype=np.float32)
+    mask[: rows // 2, : cols // 2] = 1.0
+    _set_channel(stack, "water_surface_mask", mask.copy())
+
+    # Pre-set the LEGACY water_surface channel to prove the seasonal pass leaves
+    # it untouched (W-1: it is no longer a seasonal output).
+    legacy_before = np.full(stack.height.shape, 0.2, dtype=np.float32)
+    _set_channel(stack, "water_surface", legacy_before.copy())
+
+    original_wet = int(np.count_nonzero(mask > 0.5))
+
     apply_seasonal_water_state(stack, SeasonalState.WET)
+
+    # 1. WET raises wetness.
     wetness = stack.wetness
-    water_surface = stack.water_surface
     assert wetness is not None
+    assert float(wetness.mean()) > 0.3, "WET season must raise wetness saturation"
+
+    # 2. The legacy water_surface channel is NOT mutated by the seasonal pass.
+    water_surface = stack.water_surface
     assert water_surface is not None
-    assert float(wetness.mean()) > 0.3
-    assert float(water_surface.mean()) > 0.2
+    np.testing.assert_array_equal(
+        np.asarray(water_surface, dtype=np.float32),
+        legacy_before,
+        err_msg=(
+            "WET season wrote the legacy water_surface channel; per W-1 the "
+            "seasonal pass must only write water_surface_mask."
+        ),
+    )
+
+    # 3. Open-water EXTENT is preserved exactly (no flood, no erase).
+    new_mask = np.asarray(stack.get("water_surface_mask"), dtype=np.float32)
+    new_wet = int(np.count_nonzero(new_mask > 0.5))
+    assert new_wet == original_wet, (
+        f"WET season changed open-water extent {original_wet} -> {new_wet}; "
+        f"seasonal state must adjust wetness/ice, not extent."
+    )
+    # The stored mask stays a clean binary {0, 1}.
+    assert np.all(np.isin(np.unique(new_mask), (0.0, 1.0))), (
+        "WET season left non-binary values in water_surface_mask."
+    )
 
 
 def test_seasonal_frozen_sets_tidal():
