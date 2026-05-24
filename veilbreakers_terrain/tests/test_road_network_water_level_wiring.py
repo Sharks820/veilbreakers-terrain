@@ -112,10 +112,10 @@ class TestPassRoadNetworkWaterLevelWiring:
         so the bridge-detection block (gated on `water_level is not None`) never
         runs and bridge_count is 0.
         """
-        from veilbreakers_terrain.handlers.road_network import pass_road_network
+        import veilbreakers_terrain.handlers.road_network as rn
 
         state = _make_water_crossing_state(size=24)
-        result = pass_road_network(state, region=None)
+        result = rn.pass_road_network(state, region=None)
 
         assert result.status == "ok", f"Pass failed: {result}"
         assert result.metrics["bridge_count"] > 0, (
