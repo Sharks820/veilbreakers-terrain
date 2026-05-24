@@ -1762,8 +1762,11 @@ def pass_road_network(
     Consumes
     --------
     height : required — used for A* routing and worn-path rasterisation.
-    water_surface_elevation_m : optional — enables bridge detection.
-    water_surface_mask : optional — water avoidance cost map.
+    water_surface_elevation_m : optional — per-cell water surface metres. The
+        median over wet cells supplies the scalar ``water_level`` that arms the
+        A* water-cost penalty and bridge detection in ``compute_road_network``.
+    water_surface_mask : optional — wet/dry mask (``> 0.5`` = wet); selects the
+        cells used to derive ``water_level`` and the water-avoidance cost map.
     rock_hardness : optional — additional A* cost layer.
 
     The pass extracts road waypoints from ``state.intent.composition_hints``
@@ -1816,12 +1819,33 @@ def pass_road_network(
     if rock_hardness is not None:
         cost_map = np.asarray(rock_hardness, dtype=np.float32) * 500.0
 
+    # CE-2026-05-24 audit #2: derive a representative scalar ``water_level`` from
+    # the per-cell ``water_surface_elevation_m`` over WET cells and forward it to
+    # ``compute_road_network``.  Both the water-cost A* penalty and bridge
+    # detection inside ``compute_road_network`` are gated on
+    # ``water_level is not None``; without this the in-pipeline road path routed
+    # straight through water with ZERO bridges (the MCP handler already forwards
+    # ``params['water_level']``, so only this pass was affected).  The median over
+    # finite wet-cell elevations is robust to outliers/NaNs and matches the
+    # canonical wet threshold (``> 0.5``) used by ``_detect_bridges`` and the rest
+    # of the water stack.
+    water_level = None
+    if water_elev is not None and water_mask is not None:
+        we = np.asarray(water_elev, dtype=np.float64)
+        wm = np.asarray(water_mask, dtype=np.float64) > 0.5  # canonical wet threshold
+        if wm.any():
+            wet_vals = we[wm]
+            finite = wet_vals[np.isfinite(wet_vals)]
+            if finite.size:
+                water_level = float(np.median(finite))
+
     seed = int(getattr(intent, "seed", 42) or 42)
 
     result = compute_road_network(
         waypoints,
         seed=seed,
         heightmap=hmap,
+        water_level=water_level,
         water_mask=water_mask,
         water_surface_elevation_m=water_elev,
         cost_map=cost_map,
