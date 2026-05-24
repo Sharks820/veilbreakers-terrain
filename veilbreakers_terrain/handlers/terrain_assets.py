@@ -38,7 +38,7 @@ import enum
 import math
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 
@@ -786,9 +786,14 @@ def validate_asset_density_and_overlap(
             if too_close.size > 0:
                 first_pair = (int(too_close[0, 0]), int(too_close[0, 1]))
         else:
-            from scipy.spatial import cKDTree
+            from scipy.spatial import KDTree
 
-            pairs = cKDTree(xy).query_pairs(r=radius, output_type="ndarray")
+            # Use KDTree (the stubbed alias; strict pyright can't resolve the
+            # ``cKDTree`` re-export symbol — they are the same class at runtime).
+            # query_pairs(output_type="ndarray") is stub-typed as ``set``, so
+            # cast the instance to Any to keep the ndarray ops below clean.
+            tree = cast(Any, KDTree(xy))
+            pairs = tree.query_pairs(r=radius, output_type="ndarray")
             if pairs.shape[0] > 0:
                 # Report the lowest-index offending pair for stable messaging.
                 order = np.lexsort((pairs[:, 1], pairs[:, 0]))
