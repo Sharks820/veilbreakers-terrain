@@ -1778,8 +1778,11 @@ def pass_road_network(
     water_surface_elevation_m : optional — per-cell water surface metres. The
         median over wet cells supplies the scalar ``water_level`` that arms the
         A* water-cost penalty and bridge detection in ``compute_road_network``.
-    water_surface_mask : optional — wet/dry mask (``> 0.5`` = wet); selects the
-        cells used to derive ``water_level`` and the water-avoidance cost map.
+    water_surface_mask : optional — wet/dry mask (``> 0.5`` = wet). Selects the
+        wet cells used to derive ``water_level``, and is forwarded to
+        ``compute_road_network``, where (per CE-2026-05-24 #1) it is the
+        preferred source for the A* water-avoidance cost layer — falling back to
+        a synthetic ``hmap < water_level`` mask only when no mask is supplied.
     rock_hardness : optional — additional A* cost layer.
 
     The pass extracts road waypoints from ``state.intent.composition_hints``
