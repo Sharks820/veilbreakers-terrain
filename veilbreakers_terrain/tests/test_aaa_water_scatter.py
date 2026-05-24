@@ -665,6 +665,95 @@ class TestWaterMaterialProperties(unittest.TestCase):
             _environment_mod.bpy = orig_bpy
             _environment_mod.bmesh = orig_bmesh
 
+    def test_scene_v3_lake_contract_keys_present_via_terrain_mask(self):
+        """C4 boundary (Generation Truth): scripts/build_scene_v3.build_water_surfaces
+        routes the lake through handle_create_water -- passing mask_center as a LIST --
+        and reads back a fixed key tuple. Pin that the terrain-footprint branch returns
+        surface_mode='terrain_mask' plus those exact keys, so a future generator contract
+        change is caught before it silently breaks the scene fixture.
+        """
+        bpy_stub, bmesh_stub = _build_full_bpy_stubs()
+        orig_bpy = _environment_mod.bpy
+        orig_bmesh = _environment_mod.bmesh
+
+        def _vec(x: float, y: float, z: float) -> types.SimpleNamespace:
+            return types.SimpleNamespace(x=float(x), y=float(y), z=float(z))
+
+        grid = (-6.0, -2.0, 2.0, 6.0)
+        verts: list[types.SimpleNamespace] = []
+        for y in grid:
+            for x in grid:
+                z = -1.0 if abs(x) <= 2.0 and abs(y) <= 2.0 else 1.2
+                verts.append(types.SimpleNamespace(co=_vec(x, y, z)))
+
+        def _update_terrain_mesh() -> None:
+            return None
+
+        terrain_mesh = types.SimpleNamespace(
+            vertices=verts, materials=[], polygons=[], update=_update_terrain_mesh,
+        )
+        terrain_obj = types.SimpleNamespace(
+            name="VB_Terrain",
+            data=terrain_mesh,
+            location=_vec(0.0, 0.0, 0.0),
+            dimensions=types.SimpleNamespace(x=12.0, y=12.0, z=2.2),
+        )
+
+        created_objects: dict[str, object] = {}
+        orig_objects = bpy_stub.data.objects
+
+        def _new_object(name: str, mesh: object) -> object:
+            obj = orig_objects.new(name, mesh)
+            created_objects[name] = obj
+            return obj
+
+        def _get_object(name: str) -> object | None:
+            if name == terrain_obj.name:
+                return terrain_obj
+            return created_objects.get(name)
+
+        def _remove_object(obj: object, **kwargs: object) -> None:
+            created_objects.pop(cast(types.SimpleNamespace, obj).name, None)
+
+        def _link_object(obj: object) -> None:
+            return None
+
+        def _unlink_object(obj: object) -> None:
+            return None
+
+        bpy_stub.data.objects = types.SimpleNamespace(
+            new=_new_object, get=_get_object, remove=_remove_object,
+        )
+        bpy_stub.context.collection.objects = types.SimpleNamespace(
+            link=_link_object, unlink=_unlink_object,
+        )
+
+        _environment_mod.bpy = bpy_stub
+        _environment_mod.bmesh = bmesh_stub
+        try:
+            result = handle_create_water({
+                "name": "VB_Lake",
+                "terrain_name": terrain_obj.name,
+                "water_level": 0.0,
+                "mask_center": [0.0, 0.0],
+                "mask_radius": 5.0,
+                "material_name": "VB_WaterLake_AAA",
+                "preview_fast": False,
+            })
+            self.assertEqual(
+                result.get("surface_mode"), "terrain_mask",
+                "lake must build from the terrain footprint, not the rectangular fallback",
+            )
+            for key in ("name", "vertex_count", "has_flow_vertex_colors",
+                        "has_flow_data_layer", "area"):
+                self.assertIn(
+                    key, result,
+                    f"build_scene_v3 reads result[{key!r}]; generator contract dropped it",
+                )
+        finally:
+            _environment_mod.bpy = orig_bpy
+            _environment_mod.bmesh = orig_bmesh
+
     def test_preserve_path_shape_skips_resmoothing(self):
         path = [[0.0, -10.0, 0.0], [0.0, 0.0, -0.5], [0.0, 10.0, -1.0]]
         with patch.object(_environment_mod, "_smooth_river_path_points", side_effect=AssertionError("unexpected smoothing")):
