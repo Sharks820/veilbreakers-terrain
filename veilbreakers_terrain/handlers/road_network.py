@@ -1460,14 +1460,27 @@ def compute_road_network(
     # Renamed the local to ``auto_water_mask`` and gated the named-param
     # rebind behind ``water_mask is None`` so callers can pass an explicit
     # water mask without losing it.
+    #
+    # CE-2026-05-24 #1 (root-cause flood fix): the synthetic
+    # ``hmap < water_level`` cost mask floods the WHOLE tile whenever the derived
+    # ``water_level`` sits at/above the surrounding terrain (e.g. a wide or
+    # perched water surface).  That marks every cell 1e6 cost, A* contorts, and
+    # the result is dozens of phantom bridges with out-of-bounds decks
+    # (62 bridges / 2581 m on a 24 m tile).  When the caller supplied a real
+    # per-cell ``water_mask`` (the in-pipeline pass and the MCP path both can),
+    # use IT for the cost layer; only synthesise from ``hmap < water_level`` as a
+    # last resort when no mask is available (preserving the legacy MCP behaviour
+    # for callers that pass ``water_level`` without a mask).
     if water_level is not None and hmap is not None and hasattr(hmap, 'shape'):
         import numpy as np
-        auto_water_mask = hmap < float(water_level)
-        if water_mask is None:
-            water_mask = auto_water_mask
-        if auto_water_mask.any():
+        if water_mask is not None:
+            cost_mask = np.asarray(water_mask) > 0.5
+        else:
+            cost_mask = hmap < float(water_level)
+            water_mask = cost_mask
+        if cost_mask.any():
             water_cost = np.zeros(hmap.shape, dtype=np.float32)
-            water_cost[auto_water_mask] = 1e6
+            water_cost[cost_mask] = 1e6
             if cost_map is not None and hasattr(cost_map, 'shape') and cost_map.shape == water_cost.shape:
                 cost_map = cost_map + water_cost
             else:
@@ -1762,8 +1775,14 @@ def pass_road_network(
     Consumes
     --------
     height : required — used for A* routing and worn-path rasterisation.
-    water_surface_elevation_m : optional — enables bridge detection.
-    water_surface_mask : optional — water avoidance cost map.
+    water_surface_elevation_m : optional — per-cell water surface metres. The
+        median over wet cells supplies the scalar ``water_level`` that arms the
+        A* water-cost penalty and bridge detection in ``compute_road_network``.
+    water_surface_mask : optional — wet/dry mask (``> 0.5`` = wet). Selects the
+        wet cells used to derive ``water_level``, and is forwarded to
+        ``compute_road_network``, where (per CE-2026-05-24 #1) it is the
+        preferred source for the A* water-avoidance cost layer — falling back to
+        a synthetic ``hmap < water_level`` mask only when no mask is supplied.
     rock_hardness : optional — additional A* cost layer.
 
     The pass extracts road waypoints from ``state.intent.composition_hints``
@@ -1816,12 +1835,41 @@ def pass_road_network(
     if rock_hardness is not None:
         cost_map = np.asarray(rock_hardness, dtype=np.float32) * 500.0
 
+    # CE-2026-05-24 audit #2: derive a representative scalar ``water_level`` from
+    # the per-cell ``water_surface_elevation_m`` over WET cells and forward it to
+    # ``compute_road_network``.  Both the water-cost A* penalty and bridge
+    # detection inside ``compute_road_network`` are gated on
+    # ``water_level is not None``; without this the in-pipeline road path routed
+    # straight through water with ZERO bridges (the MCP handler already forwards
+    # ``params['water_level']``, so only this pass was affected).  The median over
+    # finite wet-cell elevations is robust to outliers/NaNs.  The wet test below
+    # matches the ``> 0.5`` threshold in ``_detect_bridges``; canonical water
+    # masks are binary so this agrees with the ``> 0.0`` producer in
+    # ``terrain_water_variants.py``.
+    #
+    # CE-2026-05-24 #2 (robustness): guard ``we[wm]`` behind a shape match — the
+    # two channels are independently sourced, and a shape mismatch would raise
+    # IndexError here, flipping the whole pass ok->failed and rolling back every
+    # road channel.  On mismatch ``water_level`` stays None (byte-identical to
+    # the pre-wiring behaviour — graceful degrade, no crash).  The mask is kept
+    # boolean (no needless float64 upcast).
+    water_level = None
+    if water_elev is not None and water_mask is not None:
+        we = np.asarray(water_elev, dtype=np.float64)
+        wm = np.asarray(water_mask) > 0.5  # canonical wet threshold; stays boolean
+        if wm.shape == we.shape and wm.any():
+            wet_vals = we[wm]
+            finite = wet_vals[np.isfinite(wet_vals)]
+            if finite.size:
+                water_level = float(np.median(finite))
+
     seed = int(getattr(intent, "seed", 42) or 42)
 
     result = compute_road_network(
         waypoints,
         seed=seed,
         heightmap=hmap,
+        water_level=water_level,
         water_mask=water_mask,
         water_surface_elevation_m=water_elev,
         cost_map=cost_map,
