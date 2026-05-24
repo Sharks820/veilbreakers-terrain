@@ -38,7 +38,7 @@ import enum
 import math
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 
@@ -766,14 +766,55 @@ def validate_asset_density_and_overlap(
         arr = np.asarray(pts, dtype=np.float64)
         if arr.shape[0] < 2:
             continue
-        # O(n^2) is fine — asset counts are bounded per tile
-        dx = arr[:, 0:1] - arr[:, 0:1].T
-        dy = arr[:, 1:2] - arr[:, 1:2].T
-        dist_sq = dx * dx + dy * dy
-        np.fill_diagonal(dist_sq, np.inf)
-        too_close = np.argwhere(dist_sq < radius_sq)
-        if too_close.size > 0:
-            i, j = int(too_close[0, 0]), int(too_close[0, 1])
+        # Neighbour search via scipy cKDTree. The prior implementation built an
+        # (n, n) float64 pairwise-distance matrix — the comment claimed "O(n^2)
+        # is fine — asset counts are bounded per tile", but they are NOT: on
+        # large/dense tiles pass_scatter_intelligent produced n=90449 placements,
+        # making that array 61 GiB and OOM-crashing the pass (CE-2026-05-24 perf
+        # P0). A bounded k=2 nearest-neighbour query (each point's single closest
+        # OTHER point) detects overlap in O(N) memory and O(n log n) time —
+        # query_pairs would instead materialize every within-radius pair, which
+        # re-introduces the OOM under pathological clustering. The exact O(n^2)
+        # path is retained for small n (<=256) where the tree-build overhead
+        # dominates, so existing small-fixture behaviour and the reported (i, j)
+        # pair are byte-identical there.
+        xy = np.ascontiguousarray(arr[:, 0:2])
+        if not np.isfinite(xy).all():
+            # Non-finite placement coords (only reachable via malformed region
+            # bounds) crash scipy's KDTree on dense tiles, whereas the small-n
+            # NaN-comparison path silently found no overlap. Skip the overlap
+            # check so BOTH paths behave identically (no path-dependent crash).
+            continue
+        first_pair = None
+        if xy.shape[0] <= 256:
+            dx = xy[:, 0:1] - xy[:, 0:1].T
+            dy = xy[:, 1:2] - xy[:, 1:2].T
+            dist_sq = dx * dx + dy * dy
+            np.fill_diagonal(dist_sq, np.inf)
+            too_close = np.argwhere(dist_sq < radius_sq)
+            if too_close.size > 0:
+                first_pair = (int(too_close[0, 0]), int(too_close[0, 1]))
+        else:
+            from scipy.spatial import KDTree
+
+            # Use KDTree (the stubbed alias; strict pyright can't resolve the
+            # ``cKDTree`` re-export symbol — they are the same class at runtime).
+            # ``query`` is stub-typed loosely, so cast the instance to Any to
+            # keep the ndarray ops below clean.
+            tree = cast(Any, KDTree(xy))
+            # Each point's nearest OTHER point (k=2 = self + 1 neighbour); O(N)
+            # memory. query_pairs materializes every within-radius pair -> OOM
+            # under heavy clustering. Strict `< radius` matches the small-n path
+            # exactly (the n<=256 branch uses dist_sq < radius_sq).
+            dd, nn = tree.query(xy, k=2)
+            dd = np.asarray(dd)
+            nn = np.asarray(nn)
+            close = dd[:, 1] < radius
+            if bool(close.any()):
+                ci = int(np.argmax(close))  # first point with a too-close neighbour
+                first_pair = (ci, int(nn[ci, 1]))
+        if first_pair is not None:
+            i, j = first_pair
             issues.append(
                 ValidationIssue(
                     code="SCATTER_OVERLAP",
