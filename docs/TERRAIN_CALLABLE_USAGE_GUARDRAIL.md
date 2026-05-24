@@ -14,7 +14,7 @@ Every callable used for terrain generation must satisfy its matrix row: best-pra
 - Use `foliage_assets` callables for species catalogs, vegetation prototypes, LOD paths, impostors, billboards, wind profiles, and asset fallback metadata. Matrix rows: 19. P0 blockers: 0.
 - Use `generic` callables only for small shared helpers; connect them to a domain contract before they become production terrain behavior. Matrix rows: 430. P0 blockers: 0.
 - Use `heightfield_geomorph` callables for terrain shape, heightfields, cliffs, caves, erosion, talus, strata, geology, weathering, slope, curvature, and landform masks. Matrix rows: 209. P0 blockers: 0.
-- Use `hydrology` callables for water systems: rivers, lakes, waterfalls, wetlands, flow direction, velocity, depth, foam, mist, wet rock, caustics, and seam continuity. Matrix rows: 177. P0 blockers: 0.
+- Use `hydrology` callables for water systems: rivers, lakes, waterfalls, wetlands, flow direction, velocity, depth, foam, mist, wet rock, caustics, and seam continuity. Matrix rows: 178. P0 blockers: 0.
 - Use `mesh_blender` callables for Blender/DCC bridge work: mesh creation, named attributes, GLB import safety, viewport/scene readback, Geometry Nodes-style recipes, and screenshot proof. Matrix rows: 193. P0 blockers: 0.
 - Use `pathing_roads` callables for roads, paths, navmesh, A*, bridges, fords, splines, cost fields, and traversal constraints. Matrix rows: 65. P0 blockers: 0.
 - Use `scatter_ecology` callables for point distribution, vegetation placement, biome/ecotone logic, wildlife zones, density masks, and exclusion rules. Matrix rows: 203. P0 blockers: 0.
