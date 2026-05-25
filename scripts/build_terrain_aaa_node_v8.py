@@ -717,6 +717,16 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
 
     terrain_obj.data.materials.append(mat)
 
+    # AAA visuals (single source of truth: scripts/aaa_render_visuals.py).
+    # Override the flat splat with world-space procedural PBR proven in the
+    # hero-render iteration (multi-octave albedo, micro-relief bump, noise-broken
+    # biome bands so cliffs show no contour 'layers'; no Voronoi splotches).
+    try:
+        from scripts.aaa_render_visuals import apply_aaa_terrain_material_pbr
+        apply_aaa_terrain_material_pbr(terrain_obj)
+    except Exception as e:
+        _fail("aaa_terrain_material", e)
+
     # ---- Displacement modifier (strength<=1.0 to avoid 'white contour' bug) -
     _log("  Adding displacement modifier...")
     try:
@@ -811,6 +821,18 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
     except Exception as e:
         _fail("water_surface", e)
 
+    # AAA visuals: replace the faceted footprint water with a flat plane at the
+    # water level so the shoreline follows the terrain organically (no blocky edge).
+    try:
+        from mathutils import Vector as _Vec
+        from scripts.aaa_render_visuals import build_aaa_water
+        _cs = [terrain_obj.matrix_world @ _Vec(c) for c in terrain_obj.bound_box]
+        build_aaa_water(min(c.x for c in _cs), max(c.x for c in _cs),
+                        min(c.y for c in _cs), max(c.y for c in _cs),
+                        water_level_dyn, replace_name="Water_Gorge")
+    except Exception as e:
+        _fail("aaa_water_plane", e)
+
     # ---- Lighting (v6: lower energy, AO, denoising, volume scatter) -------
     _log("  Setting up lighting...")
     sun = bpy.data.lights.new("Sun_KeyLight", type="SUN")
@@ -884,6 +906,14 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
             # texture failed; if it also fails the scene keeps Blender's default.
             pass
 
+    # AAA visuals: override the Nishita world with the dim cool gradient sky
+    # (a bright Nishita dome washes the scene to milky haze under AgX).
+    try:
+        from scripts.aaa_render_visuals import setup_aaa_sky
+        setup_aaa_sky(bpy.context.scene)
+    except Exception as e:
+        _fail("aaa_sky", e)
+
     # ---- Cameras (5 standard from v4) -------------------------------------
     _log("  Placing cameras...")
     cam_specs = [
@@ -903,6 +933,15 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
         bpy.context.scene.collection.objects.link(co)
         _look_at(co, target)
         cameras.append(co)
+
+    # AAA visuals: real CC0 (Poly Haven) foliage scattered in ecological strata
+    # (canopy / understory / grass / ground / deadfall / rock) via Python-owned
+    # Bridson placement. See aaa_asset_foliage.py + docs/AAA_FREE_ASSET_PIPELINE.md.
+    try:
+        from scripts.aaa_asset_foliage import scatter_asset_biome
+        scatter_asset_biome(terrain_obj, water_level_dyn)
+    except Exception as e:
+        _fail("aaa_foliage", e)
 
     # ---- Render settings (v6: 1920x1080 / 64 samples / denoising / 2 bounces) ----
     scn = bpy.context.scene
