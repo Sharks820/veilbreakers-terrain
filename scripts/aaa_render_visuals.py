@@ -216,7 +216,7 @@ def _img_node(nt: Any, image: Any, vec: Any, *, non_color: bool = False,
         try:
             image.colorspace_settings.name = "Non-Color"
         except Exception:
-            pass
+            pass  # best-effort: colorspace name varies by Blender build; non-fatal
     if vec is not None:
         nt.links.new(vec, n.inputs["Vector"])
     return n
@@ -233,8 +233,8 @@ def make_terrain_material_pbr(name: str = "VB_TerrainPBR", tile_m: float = 9.0,
         img[k] = {m: _load_img(d / f"{sid}_{suf}_1k.jpg")
                   for m, suf in (("diff", "diff"), ("nor", "nor_gl"),
                                  ("rough", "rough"))}
-    if not all(img[k]["diff"] for k in sets):
-        _log("  PBR texture sets missing -> procedural terrain material")
+    if not all(img[k][m] for k in sets for m in ("diff", "nor", "rough")):
+        _log("  PBR texture set incomplete -> procedural terrain material")
         return make_terrain_material_aaa(name)
 
     mat = bpy.data.materials.new(name)
@@ -405,7 +405,7 @@ def setup_aaa_sky(scene: Any = None) -> None:
         world.light_settings.ao_factor = 0.4
         world.light_settings.distance = 8.0
     except Exception:
-        pass
+        pass  # best-effort: world AO settings absent on some engines; non-fatal
     _log("sky -> dim cool gradient (strength 0.6)")
 
 

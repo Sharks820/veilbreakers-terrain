@@ -24,7 +24,7 @@ This is why Geo-Scatter/Botaniq were dead-ends but Poly Haven CC0 works.
 
 ## Asset layout (git-ignored — do not commit; large)
 
-```
+```text
 assets/foliage_cc0/<category>/<asset_id>/<id>_1k.gltf + .bin + textures/
 assets/terrain_pbr/<texture_id>/<id>_{diff,nor_gl,rough}_1k.jpg
 ```
@@ -52,8 +52,8 @@ Acquire with: `python scripts/_fetch_cc0_foliage.py --curated` (foliage kit) and
 
 ## Foliage (ecological strata)
 
-`scatter_asset_biome(terrain, water_z)` — `LIBRARY_SPEC` maps assets to 5 layers
-(canopy / understory / ground / deadfall / rock); `LAYER_PARAMS` sets per-layer
+`scatter_asset_biome(terrain, water_z)` — `LIBRARY_SPEC` maps assets to 6 layers
+(canopy / understory / grass / ground / deadfall / rock); `LAYER_PARAMS` sets per-layer
 spacing, slope/height limits, instance caps, and ground-sink. Each layer is a
 Bridson (cluster-density) scatter, raycast onto the displaced terrain, with
 water/slope/treeline rejection. Add assets by editing `LIBRARY_SPEC`.

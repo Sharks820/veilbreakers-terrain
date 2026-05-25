@@ -717,13 +717,24 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
 
     terrain_obj.data.materials.append(mat)
 
+    # Adaptive water level — computed up-front so the terrain material's shoreline
+    # band and the water plane below share ONE level. The hand-authored gorge has
+    # a WIDE FLAT floor at the clamp elevation, so a plain percentile lands ON the
+    # floor (0 depth, dry); instead set the surface a fixed fraction of the total
+    # relief ABOVE the floor, flooding the floor to a real depth while the high
+    # banks stay dry.
+    _hf = np.asarray(heightmap, dtype=np.float64)
+    _hmin, _hmax = float(_hf.min()), float(_hf.max())
+    water_level_dyn = _hmin + 0.09 * (_hmax - _hmin)
+
     # AAA visuals (single source of truth: scripts/aaa_render_visuals.py).
     # Override the flat splat with world-space procedural PBR proven in the
     # hero-render iteration (multi-octave albedo, micro-relief bump, noise-broken
-    # biome bands so cliffs show no contour 'layers'; no Voronoi splotches).
+    # biome bands so cliffs show no contour 'layers'; no Voronoi splotches). Pass
+    # the dynamic water level so the shoreline band lands at the real waterline.
     try:
         from scripts.aaa_render_visuals import apply_aaa_terrain_material_pbr
-        apply_aaa_terrain_material_pbr(terrain_obj)
+        apply_aaa_terrain_material_pbr(terrain_obj, water_level=water_level_dyn)
     except Exception as e:
         _fail("aaa_terrain_material", e)
 
@@ -790,14 +801,7 @@ def build_blender_scene(heightmap: Any, stack: Any) -> None:
     # regular grid (see verts above), so the terrain-footprint builder fills the
     # gorge channel wherever terrain <= GORGE_WATER_LEVEL. No mask -> the whole
     # wet channel fills. See docs/GENERATION_TRUTH_RULE.md.
-    # Adaptive water level: the hand-authored gorge has a WIDE FLAT floor at the
-    # clamp elevation, so a percentile lands exactly ON the floor (0 depth, dry).
-    # Instead set the surface a fixed fraction of the total relief ABOVE the
-    # floor, so the floor floods to a real river/lake depth while the high banks
-    # stay dry — a proper gorge river.
-    _hf = np.asarray(heightmap, dtype=np.float64)
-    _hmin, _hmax = float(_hf.min()), float(_hf.max())
-    water_level_dyn = _hmin + 0.09 * (_hmax - _hmin)
+    # (water_level_dyn computed up-front, near the terrain material — see above.)
     _log(f"  Creating water surface (generator terrain-footprint, "
          f"level={water_level_dyn:.1f}m)...")
     try:

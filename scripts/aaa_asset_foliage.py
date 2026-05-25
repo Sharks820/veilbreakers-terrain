@@ -5,7 +5,7 @@ Pipeline: import glTF headless -> recenter to base -> decimate heavy meshes ->
 normalize height -> hide as a template -> Bridson-cluster scatter per layer with
 water/slope/height rejection (placement = the same Python ownership rule).
 
-Layers (canopy / understory / ground / deadfall / rock) follow real forest
+Layers (canopy / understory / grass / ground / deadfall / rock) follow real
 vertical strata. Asset folders live under assets/foliage_cc0/<category>/<id>/.
 
 Used by the hero-render iteration script and (once proven) the production
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import random
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,7 @@ def _import_templates(gltf_path: Path | None, target_height: float | None = None
             try:
                 bpy.data.objects.remove(o, do_unlink=True)
             except Exception:
-                pass
+                pass  # best-effort: a locked/linked datablock is harmless to keep
     out = []
     for i, obj in enumerate(meshes):
         bpy.ops.object.select_all(action="DESELECT")
@@ -63,14 +64,14 @@ def _import_templates(gltf_path: Path | None, target_height: float | None = None
         try:
             bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
         except Exception:
-            pass
+            pass  # best-effort: transform_apply can fail on odd glTF data; non-fatal
         if decimate_ratio and len(obj.data.vertices) > 40000:
             m = obj.modifiers.new("Dec", "DECIMATE")
             m.ratio = decimate_ratio
             try:
                 bpy.ops.object.modifier_apply(modifier=m.name)
             except Exception:
-                pass
+                pass  # best-effort: decimate can fail on non-manifold; keep full-res
         # recenter origin to base. Use a LOW PERCENTILE of Z (not absolute min)
         # so a few drooping leaves/branches don't define the base and leave the
         # trunk hovering -> this is the main "floating foliage" fix.
@@ -93,7 +94,7 @@ def _import_templates(gltf_path: Path | None, target_height: float | None = None
             try:
                 bpy.ops.object.transform_apply(scale=True)
             except Exception:
-                pass
+                pass  # best-effort: scale apply is cosmetic; instance scale set below
         obj.name = f"tmpl_{tag}_{i}"
         obj.hide_render = True
         # leave the template linked; instances reference obj.data directly
@@ -147,12 +148,20 @@ def _bounds(obj: Any) -> tuple[float, float, float, float]:
 def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -> int:
     """Build the CC0 asset library and scatter all layers onto the terrain."""
     from veilbreakers_terrain.handlers._scatter_engine import poisson_disk_sample
+    np = None
+    cluster_density_map = None
     try:
         import numpy as np
         from veilbreakers_terrain.handlers._scatter_engine import cluster_density_map
     except Exception:
-        np = None
-        cluster_density_map = None
+        pass  # numpy / scatter-engine absent -> uniform (no cluster-density) scatter
+
+    # Idempotent: clear any prior foliage so re-running on an already-populated
+    # .blend (e.g. the iteration harness) does not stack duplicate instances.
+    for _coll in [c for c in bpy.data.collections if c.name.startswith("Foliage_")]:
+        for _o in list(_coll.objects):
+            bpy.data.objects.remove(_o, do_unlink=True)
+        bpy.data.collections.remove(_coll)
 
     # ---- build library ----
     library = {}
@@ -184,7 +193,7 @@ def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -
             try:
                 dmap = cluster_density_map(width, depth, resolution=256,
                                            cluster_size=60.0, noise_amount=0.4,
-                                           seed=seed + hash(layer) % 999)
+                                           seed=seed + zlib.crc32(layer.encode()) % 997)
                 dmap = np.clip(0.2 + 0.8 * dmap, 0.05, 1.0).astype("float32")
             except Exception:
                 dmap = None

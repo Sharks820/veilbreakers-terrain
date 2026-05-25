@@ -8,6 +8,7 @@ Downloads land under assets/foliage_cc0/<category>/<asset_id>/ preserving the
 glTF relative-path layout (so Blender can import the .gltf with its textures).
 """
 import json
+import shutil
 import sys
 import urllib.request
 from pathlib import Path
@@ -52,8 +53,19 @@ def _dl(url: str, dest: Path) -> int:
     dest.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=180) as r, open(dest, "wb") as fh:
-        fh.write(r.read())
+        shutil.copyfileobj(r, fh)  # stream in chunks (no full-buffer load)
     return dest.stat().st_size
+
+
+def _safe_dest(base: Path, relpath: str) -> Path | None:
+    """Join relpath under base, rejecting path traversal. The relpath/url
+    segments come from the remote API and must not escape the asset dir."""
+    dest = (base / relpath).resolve()
+    try:
+        dest.relative_to(base.resolve())
+    except ValueError:
+        return None
+    return dest
 
 
 def get_asset(aid: str, category: str, fmt: str = "gltf", res: str = "1k") -> int:
@@ -70,9 +82,15 @@ def get_asset(aid: str, category: str, fmt: str = "gltf", res: str = "1k") -> in
     for _key, entry in block.items():
         if not isinstance(entry, dict) or "url" not in entry:
             continue
-        total += _dl(entry["url"], base / entry["url"].split("/")[-1])
+        main = _safe_dest(base, entry["url"].split("/")[-1])
+        if main is not None:
+            total += _dl(entry["url"], main)
         for relpath, info in entry.get("include", {}).items():
-            total += _dl(info["url"], base / relpath)
+            dest = _safe_dest(base, relpath)
+            if dest is None:
+                print(f"  !! skip unsafe path {relpath!r} for {aid}")
+                continue
+            total += _dl(info["url"], dest)
     print(f"  {aid} -> {category}/  ({total // 1024} KB, fmt={fmt} res={res})")
     return total
 
