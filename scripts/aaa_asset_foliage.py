@@ -153,6 +153,13 @@ def _bounds(obj: Any) -> tuple[float, float, float, float]:
     return min(xs), max(xs), min(ys), max(ys)
 
 
+def _layer_seed(seed: int, layer: str) -> int:
+    """Deterministic per-layer seed from the layer NAME. `seed + len(layer)`
+    collides same-length layers (canopy/ground are both 6 chars); crc32 of the
+    name does not, and is stable across runs/processes (unlike hash())."""
+    return (seed + zlib.crc32(layer.encode("utf-8"))) % (2 ** 31)
+
+
 def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -> int:
     """Build the CC0 asset library and scatter all layers onto the terrain."""
     from veilbreakers_terrain.handlers._scatter_engine import poisson_disk_sample
@@ -207,7 +214,7 @@ def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -
                 dmap = np.clip(0.2 + 0.8 * dmap, 0.35, 1.0).astype("float32")
             except Exception:
                 dmap = None
-        lseed = (seed + zlib.crc32(layer.encode("utf-8"))) % (2 ** 31)
+        lseed = _layer_seed(seed, layer)
         pts = poisson_disk_sample(width, depth, min_d, seed=lseed,
                                   density_map=dmap)
         coll = bpy.data.collections.new(f"Foliage_{layer}")
