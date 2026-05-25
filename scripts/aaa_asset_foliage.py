@@ -76,6 +76,12 @@ def _import_templates(gltf_path: Path | None, target_height: float | None = None
         # so a few drooping leaves/branches don't define the base and leave the
         # trunk hovering -> this is the main "floating foliage" fix.
         vs = obj.data.vertices
+        if len(vs) == 0:
+            # node-only/empty glTF mesh (or a decimate that collapsed to 0
+            # verts): min()/max() below would raise and abort the whole
+            # layer, so drop it -- one bad asset must not wipe all foliage.
+            bpy.data.objects.remove(obj, do_unlink=True)
+            continue
         xs = [v.co[0] for v in vs]
         ys = [v.co[1] for v in vs]
         zs = [v.co[2] for v in vs]
@@ -164,6 +170,8 @@ def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -
         for _o in list(_coll.objects):
             bpy.data.objects.remove(_o, do_unlink=True)
         bpy.data.collections.remove(_coll)
+    for _o in [o for o in bpy.data.objects if o.name.startswith("tmpl_")]:
+        bpy.data.objects.remove(_o, do_unlink=True)  # drop leaked templates
 
     # ---- build library ----
     library = {}
@@ -196,14 +204,15 @@ def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -
                 dmap = cluster_density_map(width, depth, resolution=256,
                                            cluster_size=60.0, noise_amount=0.4,
                                            seed=seed + zlib.crc32(layer.encode()) % 997)
-                dmap = np.clip(0.2 + 0.8 * dmap, 0.05, 1.0).astype("float32")
+                dmap = np.clip(0.2 + 0.8 * dmap, 0.35, 1.0).astype("float32")
             except Exception:
                 dmap = None
-        pts = poisson_disk_sample(width, depth, min_d, seed=seed + len(layer),
+        lseed = (seed + zlib.crc32(layer.encode("utf-8"))) % (2 ** 31)
+        pts = poisson_disk_sample(width, depth, min_d, seed=lseed,
                                   density_map=dmap)
         coll = bpy.data.collections.new(f"Foliage_{layer}")
         bpy.context.scene.collection.children.link(coll)
-        rng = random.Random(seed + len(layer) * 7)
+        rng = random.Random(lseed ^ 0x9E3779B1)
         placed = 0
         for (px, py) in pts:
             if placed >= cap:

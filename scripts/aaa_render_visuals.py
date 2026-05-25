@@ -425,8 +425,14 @@ def make_water_material_aaa(name: str = "VB_WaterAAA") -> Any:
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nt = mat.node_tree
-    out = nt.nodes.get("Material Output")
-    b = nt.nodes.get("Principled BSDF")
+    # Build nodes explicitly (like the terrain materials) rather than fetching
+    # the auto-created defaults by English display name -- nodes.get() returns
+    # None on a locale/version where the name differs, and the next .inputs
+    # access would raise an opaque AttributeError.
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    b = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    nt.links.new(b.outputs["BSDF"], out.inputs["Surface"])
     # Surface: near-black, fully transmissive glass. The visible colour comes
     # from the VOLUME (below), so the surface must not double-tint the gradient;
     # it only contributes Fresnel sky reflection + the ripple normal.

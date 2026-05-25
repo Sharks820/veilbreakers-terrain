@@ -8,11 +8,13 @@ Downloads land under assets/foliage_cc0/<category>/<asset_id>/ preserving the
 glTF relative-path layout (so Blender can import the .gltf with its textures).
 """
 import json
+import re
 import shutil
 import sys
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 API = "https://api.polyhaven.com"
 ROOT = Path(__file__).resolve().parents[1] / "assets" / "foliage_cc0"
@@ -23,7 +25,21 @@ WANT = ("tree", "plant", "nature", "rock", "boulder", "bush", "grass",
         "branch", "shrub", "trunk", "cliff")
 
 
+_SAFE_NAME = re.compile(r"\A[A-Za-z0-9._-]+\Z")
+
+
+def _check_url(url: str) -> None:
+    """Refuse non-https URLs. The remote API JSON supplies every fetched
+    url, and the default urllib opener also honours file://, ftp:// and
+    data: -- a spoofed/compromised endpoint could otherwise read local
+    files or reach internal hosts (CWE-918/CWE-20)."""
+    p = urlparse(url)
+    if p.scheme != "https" or not p.netloc:
+        raise ValueError(f"refusing non-https url: {url!r}")
+
+
 def _get_json(url: str) -> Any:
+    _check_url(url)
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=40) as r:
         return json.load(r)
@@ -50,6 +66,7 @@ def inspect(aid: str) -> None:
 
 
 def _dl(url: str, dest: Path) -> int:
+    _check_url(url)
     dest.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=180) as r, open(dest, "wb") as fh:
@@ -69,6 +86,8 @@ def _safe_dest(base: Path, relpath: str) -> Path | None:
 
 
 def get_asset(aid: str, category: str, fmt: str = "gltf", res: str = "1k") -> int:
+    if not (_SAFE_NAME.match(aid) and _SAFE_NAME.match(category)):
+        raise ValueError(f"unsafe asset id/category: {aid!r}/{category!r}")
     f = _get_json(f"{API}/files/{aid}")
     if fmt not in f:
         print(f"  {aid}: fmt {fmt!r} N/A; have {list(f.keys())}")
@@ -141,6 +160,8 @@ def list_textures() -> None:
 
 
 def get_texture(aid: str, res: str = "1k") -> int:
+    if not _SAFE_NAME.match(aid):
+        raise ValueError(f"unsafe texture id: {aid!r}")
     f = _get_json(f"{API}/files/{aid}")
     base = TEX_ROOT / aid
     total = 0
