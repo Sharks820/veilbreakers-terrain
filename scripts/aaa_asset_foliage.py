@@ -127,14 +127,16 @@ LAYER_PARAMS = {
     "understory": (5.5,   34.0,    125.0,   1.0,        4500,   0.10),
     "grass":     (3.0,    32.0,    120.0,   0.3,        24000,  0.04),
     "ground":    (5.0,    30.0,    120.0,   0.4,        7000,   0.03),
-    "deadfall":  (24.0,   26.0,    130.0,   1.0,        260,    0.20),
+    "deadfall":  (24.0,   22.0,    130.0,   1.0,        260,    0.28),
     "rock":      (17.0,   58.0,    260.0,  -2.0,        700,    0.40),
 }
 
 # how much each layer tilts to the terrain normal (Horizon ZD convention):
-# grasses/ground cover follow the slope; trees stay upright.
+# grasses/ground cover follow the slope; trees stay upright. Deadfall (fallen
+# logs/branches) lies ALONG the slope (align 0.7) so a long horizontal log
+# rests on the ground at both ends instead of floating one end off a bank.
 LAYER_ALIGN = {"canopy": 0.0, "understory": 0.4, "grass": 0.65,
-               "ground": 0.6, "deadfall": 0.0, "rock": 0.0}
+               "ground": 0.6, "deadfall": 0.7, "rock": 0.0}
 
 
 def _bounds(obj: Any) -> tuple[float, float, float, float]:
