@@ -413,15 +413,27 @@ def setup_aaa_sky(scene: Any = None) -> None:
 #  Water
 # --------------------------------------------------------------------------- #
 def make_water_material_aaa(name: str = "VB_WaterAAA") -> Any:
-    """Reflective deep water with a subtle ripple normal + light transmission."""
+    """Refractive water with Beer-Lambert depth colour (shallow teal -> deep
+    navy) via Volume Absorption, plus a subtle ripple-normal surface.
+
+    Depth colour is physically driven: the camera ray refracts through the
+    near-black transmissive surface and accumulates volume absorption over the
+    water column down to the terrain, so deeper water (longer in-volume path)
+    reads darker and bluer. Needs the water mesh to have downward thickness
+    (see `build_aaa_water`) so a water column actually exists to absorb through.
+    """
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nt = mat.node_tree
+    out = nt.nodes.get("Material Output")
     b = nt.nodes.get("Principled BSDF")
-    b.inputs["Base Color"].default_value = (0.012, 0.045, 0.060, 1.0)
-    b.inputs["Roughness"].default_value = 0.045
+    # Surface: near-black, fully transmissive glass. The visible colour comes
+    # from the VOLUME (below), so the surface must not double-tint the gradient;
+    # it only contributes Fresnel sky reflection + the ripple normal.
+    b.inputs["Base Color"].default_value = (0.01, 0.02, 0.025, 1.0)
+    b.inputs["Roughness"].default_value = 0.04
     if "Transmission Weight" in b.inputs:
-        b.inputs["Transmission Weight"].default_value = 0.5
+        b.inputs["Transmission Weight"].default_value = 1.0
     if "IOR" in b.inputs:
         b.inputs["IOR"].default_value = 1.333
     geo = nt.nodes.new("ShaderNodeNewGeometry")
@@ -434,13 +446,30 @@ def make_water_material_aaa(name: str = "VB_WaterAAA") -> Any:
     bump.inputs["Distance"].default_value = 0.15
     nt.links.new(h, bump.inputs["Height"])
     nt.links.new(bump.outputs["Normal"], b.inputs["Normal"])
+    # Beer-Lambert depth colour via a Principled Volume: its teal scatter-albedo
+    # "Color" makes the shallows glow teal (single-scatter), while it absorbs the
+    # complement (red, then green) with depth so the deep column trends navy ->
+    # dark. One physically-based node = shallow-teal -> deep-navy in a single pass.
+    # Density sets the falloff over the ~2-18 m water column in this scene.
+    vol = nt.nodes.new("ShaderNodeVolumePrincipled")
+    vol.inputs["Color"].default_value = (0.08, 0.45, 0.52, 1.0)
+    vol.inputs["Density"].default_value = 0.10
+    if "Anisotropy" in vol.inputs:
+        vol.inputs["Anisotropy"].default_value = 0.0
+    if "Emission Strength" in vol.inputs:
+        vol.inputs["Emission Strength"].default_value = 0.0
+    nt.links.new(vol.outputs["Volume"], out.inputs["Volume"])
     return mat
 
 
 def build_aaa_water(minx: float, maxx: float, miny: float, maxy: float,
-                    water_z: float, replace_name: str = "Water_Gorge") -> Any:
-    """Flat water plane at water_z -> organic shoreline (no blocky mesh edge).
-    Removes the generator's footprint mesh `replace_name` if present."""
+                    water_z: float, replace_name: str = "Water_Gorge",
+                    depth_m: float = 40.0) -> Any:
+    """Water surface at water_z with `depth_m` of downward thickness so the
+    Principled-Volume water material renders Beer-Lambert depth colour (shallow ->
+    deep). The visible shoreline is still the terrain<->top-face intersection
+    (organic, no blocky edge). Removes the generator footprint mesh
+    `replace_name` if present."""
     old = bpy.data.objects.get(replace_name)
     if old is not None:
         bpy.data.objects.remove(old, do_unlink=True)
@@ -452,7 +481,13 @@ def build_aaa_water(minx: float, maxx: float, miny: float, maxy: float,
     plane.name = "Water_Flat"
     plane.scale = ((maxx - minx) * 0.5 + pad, (maxy - miny) * 0.5 + pad, 1.0)
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    # Downward thickness -> a closed water volume to absorb through. offset=-1
+    # extrudes on the -normal (-Z) side so the top face stays exactly at water_z.
+    sol = plane.modifiers.new("WaterDepth", "SOLIDIFY")
+    sol.thickness = depth_m
+    sol.offset = -1.0
     plane.data.materials.clear()
     plane.data.materials.append(make_water_material_aaa())
-    _log(f"water -> flat plane at z={water_z:.1f}m (organic shoreline)")
+    _log(f"water -> {depth_m:.0f}m-deep volume, top at z={water_z:.1f}m "
+         f"(Beer-Lambert depth colour)")
     return plane
