@@ -468,6 +468,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # so its strat_erosion_delta is composed into ``height`` by
             # ``integrate_deltas``.
             *(("stratigraphy",) if has_scene_read else ()),
+            *(("karst",) if has_scene_read else ()),
             # Codex round-3 fix (PR #58 thread 1): ``topographic_indices``
             # was previously inserted HERE (before water/coastline/
             # waterfall/integrate_deltas/talus), so its outputs were

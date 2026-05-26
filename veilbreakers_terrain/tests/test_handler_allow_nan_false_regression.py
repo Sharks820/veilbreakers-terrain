@@ -124,7 +124,7 @@ _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # json.dumps callsite further down. The ast.Call node.lineno of the
     # ``json.dumps(`` callsite in derive_pass_seed is verified at 661 in the
     # fully-merged terrain_pipeline.py (def derive_pass_seed @ 648).
-    ("handlers/terrain_pipeline.py", 661),
+    ("handlers/terrain_pipeline.py", 662),
     # terrain_determinism_ci.hash_state — intent recursion for hash only.
     ("handlers/terrain_determinism_ci.py", 87),
     # terrain_io.atomic_write_json — passes allow_nan kwarg through the

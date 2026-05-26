@@ -889,7 +889,7 @@ def pass_water_flow_speed(
         issues.append(
             ValidationIssue(
                 code="WATER_FLOW_SPEED_SLOPE_UNIT_ERROR",
-                severity="soft",
+                severity="hard",
                 message=_msg,
             )
         )
@@ -934,7 +934,7 @@ def pass_water_flow_speed(
 
     return PassResult(
         pass_name="pass_water_flow_speed",
-        status="ok" if not issues else "warning",
+        status="ok" if not issues else ("failed" if any(i.is_hard() for i in issues) else "warning"),
         duration_seconds=_time.perf_counter() - t0,
         produced_channels=("flow_speed",),
         consumed_channels=("flow_direction", "flow_accumulation", "slope"),
