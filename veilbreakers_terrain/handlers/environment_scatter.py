@@ -589,7 +589,8 @@ def _collapse_detail_density(detail_dens_raw: Any) -> "np.ndarray | None":
         stacked = np.stack(
             [np.asarray(layer, dtype=np.float32) for layer in layers], axis=0
         )
-        return np.nanmean(stacked, axis=0)
+        result = np.nanmean(stacked, axis=0)
+        return np.nan_to_num(result, nan=0.0)
     # Fallback: treat as raw array
     arr = np.asarray(detail_dens_raw, dtype=np.float32)
     return arr if arr.ndim == 2 else None
