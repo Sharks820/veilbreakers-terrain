@@ -87,11 +87,12 @@ def test_water_flow_speed_validation_does_not_crash_pipeline(monkeypatch):
         f"Expected WATER_FLOW_SPEED_SLOPE_UNIT_ERROR in issues, got: {warning_codes}"
     )
 
-    # All emitted issues must be soft (non-blocking) — not hard.
+    # Slope-unit-error issues must be hard (pipeline-blocking) per audit fix.
     for issue in result.issues:
-        assert issue.severity == "soft", (
-            f"Expected severity='soft', got {issue.severity!r} for issue {issue.code!r}"
-        )
+        if issue.code == "WATER_FLOW_SPEED_SLOPE_UNIT_ERROR":
+            assert issue.severity == "hard", (
+                f"Expected severity='hard', got {issue.severity!r} for issue {issue.code!r}"
+            )
 
     # The message must include the actual max_slope value for diagnostics.
     slope_issue = next(
