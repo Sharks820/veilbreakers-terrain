@@ -34,7 +34,6 @@ SCRIPT_CI_TOOLS = {
 SCENE_BUILD_TOOLS = {
     # build_aaa_node_v1.py through v5.py deprecated; v6 is the current scene build script.
     "scripts/build_terrain_aaa_node_v6.py",
-    "scripts/build_scene_v3.py",
     "scripts/phase_l_triple_judge.py",
 }
 

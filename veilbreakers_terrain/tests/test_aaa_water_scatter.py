@@ -665,12 +665,12 @@ class TestWaterMaterialProperties(unittest.TestCase):
             _environment_mod.bpy = orig_bpy
             _environment_mod.bmesh = orig_bmesh
 
-    def test_scene_v3_lake_contract_keys_present_via_terrain_mask(self):
-        """C4 boundary (Generation Truth): scripts/build_scene_v3.build_water_surfaces
-        routes the lake through handle_create_water -- passing mask_center as a LIST --
-        and reads back a fixed key tuple. Pin that the terrain-footprint branch returns
-        surface_mode='terrain_mask' plus those exact keys, so a future generator contract
-        change is caught before it silently breaks the scene fixture.
+    def test_lake_contract_keys_present_via_terrain_mask(self):
+        """C4 boundary (Generation Truth): a renderable-surface consumer routes the
+        lake through handle_create_water -- passing mask_center as a LIST -- and reads
+        back a fixed key tuple. Pin that the terrain-footprint branch returns
+        surface_mode='terrain_mask' plus those exact keys, so a future generator
+        contract change is caught before it silently breaks a consumer.
         """
         bpy_stub, bmesh_stub = _build_full_bpy_stubs()
         orig_bpy = _environment_mod.bpy
@@ -748,7 +748,7 @@ class TestWaterMaterialProperties(unittest.TestCase):
                         "has_flow_data_layer", "area"):
                 self.assertIn(
                     key, result,
-                    f"build_scene_v3 reads result[{key!r}]; generator contract dropped it",
+                    f"a consumer reads result[{key!r}]; generator contract dropped it",
                 )
         finally:
             _environment_mod.bpy = orig_bpy

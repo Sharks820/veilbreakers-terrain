@@ -76,6 +76,12 @@ def _import_templates(gltf_path: Path | None, target_height: float | None = None
         # so a few drooping leaves/branches don't define the base and leave the
         # trunk hovering -> this is the main "floating foliage" fix.
         vs = obj.data.vertices
+        if len(vs) == 0:
+            # node-only/empty glTF mesh (or a decimate that collapsed to 0
+            # verts): min()/max() below would raise and abort the whole
+            # layer, so drop it -- one bad asset must not wipe all foliage.
+            bpy.data.objects.remove(obj, do_unlink=True)
+            continue
         xs = [v.co[0] for v in vs]
         ys = [v.co[1] for v in vs]
         zs = [v.co[2] for v in vs]
@@ -127,14 +133,16 @@ LAYER_PARAMS = {
     "understory": (5.5,   34.0,    125.0,   1.0,        4500,   0.10),
     "grass":     (3.0,    32.0,    120.0,   0.3,        24000,  0.04),
     "ground":    (5.0,    30.0,    120.0,   0.4,        7000,   0.03),
-    "deadfall":  (24.0,   26.0,    130.0,   1.0,        260,    0.20),
+    "deadfall":  (24.0,   22.0,    130.0,   1.0,        260,    0.28),
     "rock":      (17.0,   58.0,    260.0,  -2.0,        700,    0.40),
 }
 
 # how much each layer tilts to the terrain normal (Horizon ZD convention):
-# grasses/ground cover follow the slope; trees stay upright.
+# grasses/ground cover follow the slope; trees stay upright. Deadfall (fallen
+# logs/branches) lies ALONG the slope (align 0.7) so a long horizontal log
+# rests on the ground at both ends instead of floating one end off a bank.
 LAYER_ALIGN = {"canopy": 0.0, "understory": 0.4, "grass": 0.65,
-               "ground": 0.6, "deadfall": 0.0, "rock": 0.0}
+               "ground": 0.6, "deadfall": 0.7, "rock": 0.0}
 
 
 def _bounds(obj: Any) -> tuple[float, float, float, float]:
@@ -143,6 +151,13 @@ def _bounds(obj: Any) -> tuple[float, float, float, float]:
     xs = [c.x for c in cs]
     ys = [c.y for c in cs]
     return min(xs), max(xs), min(ys), max(ys)
+
+
+def _layer_seed(seed: int, layer: str) -> int:
+    """Deterministic per-layer seed from the layer NAME. `seed + len(layer)`
+    collides same-length layers (canopy/ground are both 6 chars); crc32 of the
+    name does not, and is stable across runs/processes (unlike hash())."""
+    return (seed + zlib.crc32(layer.encode("utf-8"))) % (2 ** 31)
 
 
 def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -> int:
@@ -162,6 +177,8 @@ def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -
         for _o in list(_coll.objects):
             bpy.data.objects.remove(_o, do_unlink=True)
         bpy.data.collections.remove(_coll)
+    for _o in [o for o in bpy.data.objects if o.name.startswith("tmpl_")]:
+        bpy.data.objects.remove(_o, do_unlink=True)  # drop leaked templates
 
     # ---- build library ----
     library = {}
@@ -194,14 +211,15 @@ def scatter_asset_biome(terrain: Any, water_z: float, *, seed: int = 20260525) -
                 dmap = cluster_density_map(width, depth, resolution=256,
                                            cluster_size=60.0, noise_amount=0.4,
                                            seed=seed + zlib.crc32(layer.encode()) % 997)
-                dmap = np.clip(0.2 + 0.8 * dmap, 0.05, 1.0).astype("float32")
+                dmap = np.clip(0.2 + 0.8 * dmap, 0.35, 1.0).astype("float32")
             except Exception:
                 dmap = None
-        pts = poisson_disk_sample(width, depth, min_d, seed=seed + len(layer),
+        lseed = _layer_seed(seed, layer)
+        pts = poisson_disk_sample(width, depth, min_d, seed=lseed,
                                   density_map=dmap)
         coll = bpy.data.collections.new(f"Foliage_{layer}")
         bpy.context.scene.collection.children.link(coll)
-        rng = random.Random(seed + len(layer) * 7)
+        rng = random.Random(lseed ^ 0x9E3779B1)
         placed = 0
         for (px, py) in pts:
             if placed >= cap:
