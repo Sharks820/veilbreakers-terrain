@@ -1298,28 +1298,28 @@ class TerrainMaskStack:
         # trips via from_npz into Unity-export-scalar fields (height_min_m,
         # height_max_m, cell_size, world_origin_x/y). NaN in any of these
         # would silently corrupt the Unity export at the next bake.
-        arrays["__meta__"] = np.array(
-            json.dumps(
-                meta,
-                default=lambda obj: (
-                    obj.tolist()
-                    if isinstance(obj, np.ndarray)
-                    else obj.item()
-                    if isinstance(obj, np.generic)
-                    else str(obj)
-                ),
-                allow_nan=False,
+        meta_json = json.dumps(
+            meta,
+            default=lambda obj: (
+                obj.tolist()
+                if isinstance(obj, np.ndarray)
+                else obj.item()
+                if isinstance(obj, np.generic)
+                else str(obj)
             ),
-            dtype=object,
+            allow_nan=False,
+        )
+        arrays["__meta__"] = np.frombuffer(
+            meta_json.encode("utf-8"), dtype=np.uint8
         )
         np.savez_compressed(path, **arrays)
 
     @classmethod
     def from_npz(cls, path: Path) -> "TerrainMaskStack":
         path = Path(path)
-        with np.load(path, allow_pickle=True) as data:
-            meta_raw = data["__meta__"].item()
-            meta = json.loads(meta_raw)
+        with np.load(path, allow_pickle=False) as data:
+            meta_bytes = bytes(data["__meta__"])
+            meta = json.loads(meta_bytes.decode("utf-8"))
             height = np.array(data["height"])
             # BUG-R8-A9-035: restore Unity-export scalar metadata from the
             # persisted meta dict so the round-tripped stack is bit-exact.

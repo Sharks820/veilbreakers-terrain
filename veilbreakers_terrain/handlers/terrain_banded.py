@@ -1060,7 +1060,11 @@ def pass_banded_macro(
     region_mask = np.zeros_like(height, dtype=np.bool_)
     region_mask[r_slice, c_slice] = True
     writable = region_mask & ~protected
-    new_height[writable] = bands.composite[writable]
+    alpha = 0.4
+    new_height[writable] = (
+        (1.0 - alpha) * height[writable]
+        + alpha * bands.composite[writable]
+    )
 
     stack.set("height", new_height, "banded_macro")
 

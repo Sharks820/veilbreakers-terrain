@@ -2784,8 +2784,17 @@ def _dispatch_biome_surface_features(
             # apply_desert_pavement returns (heightmap, mask); hot_spring returns
             # (heightmap, list).  We take only the first element (the array).
             raw = raw[0]
-        # Convert to delta by subtracting the original
-        delta = np.asarray(raw, dtype=np.float64) - heightmap
+        # Detect whether the function returned a delta (near zero) or a
+        # modified heightmap (near the original). 27/30 functions return
+        # deltas; 3 return modified heightmaps. Subtracting heightmap from
+        # a delta produces ~(-heightmap) which is catastrophically wrong.
+        arr = np.asarray(raw, dtype=np.float64)
+        h_mean = float(np.abs(heightmap).mean())
+        r_mean = float(np.abs(arr).mean())
+        if h_mean > 1e-6 and r_mean > h_mean * 0.5:
+            delta = arr - heightmap
+        else:
+            delta = arr
         results.append(delta)
     return results
 
