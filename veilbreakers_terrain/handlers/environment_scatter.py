@@ -589,7 +589,8 @@ def _collapse_detail_density(detail_dens_raw: Any) -> "np.ndarray | None":
         stacked = np.stack(
             [np.asarray(layer, dtype=np.float32) for layer in layers], axis=0
         )
-        return np.mean(stacked, axis=0)
+        result = np.nanmean(stacked, axis=0)
+        return np.nan_to_num(result, nan=0.0)
     # Fallback: treat as raw array
     arr = np.asarray(detail_dens_raw, dtype=np.float32)
     return arr if arr.ndim == 2 else None
@@ -2651,7 +2652,12 @@ try:
         # add every fine species_id as its own constraint row.
         if _sid not in _SPECIES_CONSTRAINTS:
             _SPECIES_CONSTRAINTS[_sid] = _entry
-except Exception:  # pragma: no cover - defensive
+except Exception as _catalog_err:  # pragma: no cover - defensive
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "Failed to import foliage catalog; Phase-H species disabled: %s",
+        _catalog_err,
+    )
     _CATALOG = {}  # type: ignore[assignment]
 
 
