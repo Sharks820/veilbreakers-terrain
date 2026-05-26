@@ -99,15 +99,14 @@ _GUARDED_FILES: tuple[str, ...] = (
 # though strictness is the runtime default.
 _HASH_DIGEST_ALLOWLIST: frozenset[tuple[str, int]] = frozenset({
     # terrain_semantics.compute_hash — hashes intent dict for content key.
-    # PR #126: line shifted +19 by the biome_names dataclass field + its
-    # _OPAQUE_CHANNELS registration added earlier in the file (was 1153).
-    ("handlers/terrain_semantics.py", 1172),
+    # PR #126: +19 biome_names. PR #151: +1 road_segments in _OPAQUE_CHANNELS.
+    ("handlers/terrain_semantics.py", 1173),
     # terrain_semantics.compute_hash — hashes per-channel opaque payloads.
-    # PR #126: shifted +19 by the biome_names addition (was 1210).
-    ("handlers/terrain_semantics.py", 1229),
+    # PR #126: +19 biome_names. PR #151: +1 road_segments.
+    ("handlers/terrain_semantics.py", 1230),
     # terrain_semantics — biome-grammar payload hash for determinism check.
-    # PR #126: shifted +19 by the biome_names addition (was 1552).
-    ("handlers/terrain_semantics.py", 1571),
+    # PR #126: +19 biome_names. PR #151: +1 road_segments.
+    ("handlers/terrain_semantics.py", 1572),
     # terrain_mask_cache.compute_cache_key — intent hash fallback.
     ("handlers/terrain_mask_cache.py", 82),
     # terrain_mask_cache.compute_cache_key — payload digest for cache key.

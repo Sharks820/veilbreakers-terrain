@@ -3922,7 +3922,7 @@ def pass_caves(
     stack.set("cave_mesh_specs", cave_mesh_specs, "caves")
 
     hard_issues = [i for i in issues if i.is_hard()]
-    status = "ok" if not hard_issues else "warning"
+    status = "ok" if not hard_issues else "failed"
 
     speleothem_cells = int((stalactite_acc > 0.0).sum() + (stalagmite_acc > 0.0).sum())
 
