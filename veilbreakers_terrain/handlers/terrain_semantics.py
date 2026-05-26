@@ -984,6 +984,7 @@ class TerrainMaskStack:
         # natively so the existing opaque-channel persistence path
         # round-trips it without extra glue.
         "biome_names",
+        "road_segments",
     )
 
     def set(self, channel: str, value: Any, pass_name: str) -> None:

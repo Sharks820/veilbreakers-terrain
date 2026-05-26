@@ -2536,7 +2536,7 @@ def pass_waterfalls(
 
     issues = validate_waterfall_system(chains)
     hard = [i for i in issues if i.is_hard()]
-    status = "ok" if not hard else "warning"
+    status = "ok" if not hard else "failed"
 
     produced = [
         "waterfall_lip_candidate",

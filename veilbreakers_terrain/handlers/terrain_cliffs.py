@@ -2870,7 +2870,7 @@ def pass_cliffs(
         issues.extend(validate_cliff_readability(cliff, stack))
 
     hard_issues = [i for i in issues if i.is_hard()]
-    status = "ok" if not hard_issues else "warning"
+    status = "ok" if not hard_issues else "failed"
 
     return PassResult(
         pass_name="cliffs",
