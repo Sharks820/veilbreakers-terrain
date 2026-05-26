@@ -102,9 +102,9 @@ def test_water_flow_speed_validation_does_not_crash_pipeline(monkeypatch):
         f"Issue message should include the actual slope value, got: {slope_issue.message!r}"
     )
 
-    # Pipeline status should reflect the warning.
-    assert result.status == "warning", (
-        f"Expected status='warning' when issues present, got {result.status!r}"
+    # Pipeline status should be 'failed' when hard issues present (audit fix).
+    assert result.status == "failed", (
+        f"Expected status='failed' when hard issues present, got {result.status!r}"
     )
 
 
