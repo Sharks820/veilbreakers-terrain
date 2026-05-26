@@ -2924,11 +2924,8 @@ def _scatter_pass(
             wy = pos[1] - terrain_half_y
             if not _passes_species_constraints("grass", pos):
                 continue
-            if building_zones:
-                in_bz = any(bz[0] <= wx <= bz[2] and bz[1] <= wy <= bz[3]
-                            for bz in building_zones)
-                if in_bz:
-                    continue
+            if _in_building(wx, wy) or _in_clearing(wx, wy):
+                continue
             ri, ci = _cell(pos)
             if (ri, ci) in tree_cell_set:
                 continue
@@ -2960,11 +2957,8 @@ def _scatter_pass(
             wy = pos[1] - terrain_half_y
             if not _passes_species_constraints("rock", pos):
                 continue
-            if building_zones:
-                in_bz = any(bz[0] <= wx <= bz[2] and bz[1] <= wy <= bz[3]
-                            for bz in building_zones)
-                if in_bz:
-                    continue
+            if _in_building(wx, wy) or _in_clearing(wx, wy):
+                continue
             if rng.random() > _density_at(pos) * 1.2:  # rocks slightly more aggressive
                 continue
             base_scale, size_class = _rock_size_from_power_law(rng)
