@@ -238,7 +238,6 @@
     "veilbreakers_terrain/handlers/terrain_wind_erosion.py|reportConstantRedefinition": 1,
     "veilbreakers_terrain/handlers/terrain_wind_erosion.py|reportUnnecessaryComparison": 2,
     "veilbreakers_terrain/handlers/terrain_wind_erosion.py|reportUnusedFunction": 1,
-    "veilbreakers_terrain/handlers/terrain_wind_erosion.py|reportUnusedVariable": 1,
     "veilbreakers_terrain/handlers/terrain_wind_field.py|reportMissingTypeArgument": 3,
     "veilbreakers_terrain/handlers/terrain_wind_field.py|reportUnnecessaryComparison": 1,
     "veilbreakers_terrain/handlers/vegetation_lsystem.py|reportConstantRedefinition": 1,

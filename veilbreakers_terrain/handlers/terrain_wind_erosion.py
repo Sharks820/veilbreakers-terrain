@@ -378,6 +378,9 @@ def generate_dunes(
             arm_u = xs * math.cos(arm_angle) + ys * math.sin(arm_angle)
             arm_v = -xs * math.sin(arm_angle) + ys * math.cos(arm_angle)
             arm_profile = np.sin(2.0 * math.pi * arm_v / wavelength)
+            # Taper profile along the arm direction so arms peak at center
+            arm_taper = np.exp(-0.5 * (arm_u / (wavelength * 1.5)) ** 2)
+            arm_profile = arm_profile * arm_taper
             # Arms radiate from same central peak — weight by proximity to centre
             centre_r = np.sqrt((xs - W * 0.5) ** 2 + (ys - H * 0.5) ** 2)
             radial_mod = np.exp(-0.5 * (centre_r / (min(H, W) * 0.35)) ** 2)

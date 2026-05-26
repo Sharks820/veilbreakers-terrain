@@ -1955,7 +1955,7 @@ def pass_road_network(
         {"start": list(s), "end": list(e), "width": float(w), "road_type": str(rt)}
         for s, e, w, rt in segments
     ]
-    stack.road_segments = segment_dicts
+    stack.set("road_segments", segment_dicts, "pass_road_network")
 
     # FIX-B14-18: apply worn-path erosion and write road_worn_path_delta
     worn_paths = result.get("worn_paths", [])
