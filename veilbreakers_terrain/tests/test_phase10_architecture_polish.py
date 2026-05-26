@@ -135,51 +135,6 @@ def test_phase10_mesh_bridge_uses_blender_41_normals_api():
     assert "use_auto_smooth" in source
 
 
-def test_phase10_hunyuan_generate_blocking_uses_abc_job_flow(monkeypatch, tmp_path: Path):
-    from veilbreakers_terrain.providers.external_asset_provider import (
-        AssetGenerationRequest,
-        AssetJobResult,
-    )
-    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
-
-    calls: list[str] = []
-
-    def _fake_generate(self, request, dest_dir):
-        calls.append("worker")
-        out = Path(dest_dir) / f"{request.species_id}.glb"
-        out.write_bytes(b"glb")
-        return out
-
-    def _fake_validate(self, glb_path, *, species_id, max_tris=100_000, require_pbr=True):
-        calls.append("validate")
-        return AssetJobResult(
-            job_id="",
-            provider=self.provider_id,
-            species_id=species_id,
-            glb_path=Path(glb_path),
-            pbr_channels=[],
-            poly_count=1,
-            validated=True,
-            validation_issues=[],
-        )
-
-    monkeypatch.setattr(Hunyuan3D2Provider, "_hf_generate_blocking", _fake_generate)
-    monkeypatch.setattr(Hunyuan3D2Provider, "validate", _fake_validate)
-
-    provider = Hunyuan3D2Provider(timeout_s=1.0)
-    result = provider.generate_blocking(
-        AssetGenerationRequest(species_id="oak", prompt="oak", require_pbr=False),
-        tmp_path,
-        poll_interval_s=0.0,
-        timeout_s=1.0,
-    )
-
-    assert result.provider == "hunyuan3d2"
-    assert result.species_id == "oak"
-    assert calls == ["worker", "validate"]
-    assert result.job_id
-
-
 def test_phase10_meshy_init_is_keyless_but_submit_requires_key(monkeypatch):
     from veilbreakers_terrain.providers.external_asset_provider import AssetGenerationRequest
     from veilbreakers_terrain.providers.meshy_provider import MeshyProvider

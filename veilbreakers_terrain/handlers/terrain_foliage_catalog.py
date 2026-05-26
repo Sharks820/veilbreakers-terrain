@@ -1211,7 +1211,7 @@ def validate_asset_manifest_entry(
     """Validate one foliage asset manifest row for production intake.
 
     The existing fallback entries are intentionally light. Real imported
-    PlantFactory, PlantCatalog, The Plant Library, Hunyuan/Meshy, or hand-authored
+    PlantFactory, PlantCatalog, The Plant Library, Meshy, or hand-authored
     assets must carry source, license, LOD, pivot, bounds, triangle, collider,
     wind, impostor, and QA evidence before they can replace placeholders.
     """

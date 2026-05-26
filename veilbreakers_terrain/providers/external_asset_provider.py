@@ -1,6 +1,6 @@
 """Provider-neutral interface for AI-generated 3D terrain assets.
 
-All external generation backends (Hunyuan3D-2, Rodin, etc.) implement this ABC.
+All external generation backends (Meshy, Rodin, etc.) implement this ABC.
 Generated assets must pass validate() before entering terrain scatter.
 """
 

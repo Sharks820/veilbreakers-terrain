@@ -1,6 +1,6 @@
 """Resource-bounded AAA terrain generation planning.
 
-This module does not run Blender, Hunyuan, or live generation. It builds a
+This module does not run Blender or live generation. It builds a
 deterministic execution plan that preserves the requested final quality profile
 while forcing expensive work into checkpointed, one-at-a-time stages.
 """
@@ -31,7 +31,6 @@ class ResourceEnvelope:
     tile_batch_size: int
     material_batch_size: int
     asset_batch_size: int
-    allow_local_hunyuan: bool
     provider_id: str
     max_asset_tris: int
 
@@ -84,8 +83,7 @@ LOCAL_8GB_AAA_ENVELOPE = ResourceEnvelope(
     tile_batch_size=1,
     material_batch_size=1,
     asset_batch_size=1,
-    allow_local_hunyuan=False,
-    provider_id="hunyuan3d2",
+    provider_id="meshy",
     max_asset_tris=50_000,
 )
 
@@ -266,8 +264,8 @@ def build_staged_aaa_generation_plan(
         "execution_policy": {
             "run_heavy_stages_serially": True,
             "resume_from_checkpoint": True,
-            "remote_asset_generation_only": not envelope.allow_local_hunyuan,
-            "local_hunyuan_allowed": envelope.allow_local_hunyuan,
+            "remote_asset_generation_only": not False,
+            "local_hunyuan_allowed": False,
         },
     }
 
@@ -306,8 +304,8 @@ def build_external_asset_request_plan(
                 require_pbr=True,
                 extra={
                     "provider_id": envelope.provider_id,
-                    "remote_only": not envelope.allow_local_hunyuan,
-                    "local_hunyuan_allowed": envelope.allow_local_hunyuan,
+                    "remote_only": not False,
+                    "local_hunyuan_allowed": False,
                     "batch_size": envelope.asset_batch_size,
                     "cache_key": _cache_key(recipe.reference_image_uri, species_id),
                     "source_category": spec.category,

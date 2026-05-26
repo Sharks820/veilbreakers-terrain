@@ -4,7 +4,6 @@ from .external_asset_provider import (
     ExternalAssetProvider,
     JobStatus,
 )
-from .hunyuan3d2_provider import Hunyuan3D2Provider
 from .meshy_provider import MeshyProvider
 
 __all__ = [
@@ -12,6 +11,5 @@ __all__ = [
     "AssetJobResult",
     "ExternalAssetProvider",
     "JobStatus",
-    "Hunyuan3D2Provider",
     "MeshyProvider",
 ]
