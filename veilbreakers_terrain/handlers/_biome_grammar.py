@@ -2836,9 +2836,9 @@ def pass_biome_surface_features(
         if biome_id_channel is not None:
             biome_index = int(np.bincount(np.asarray(biome_id_channel).ravel().astype(np.int32)).argmax())
             # Map index to biome name using the pipeline's biome list
-            biome_list = list(BIOME_CLIMATE_PARAMS.keys())
-            if 0 <= biome_index < len(biome_list):
-                biome_name = biome_list[biome_index]
+            biome_list = stack.get("biome_names") or list(BIOME_CLIMATE_PARAMS.keys())
+            if isinstance(biome_list, (list, tuple)) and 0 <= biome_index < len(biome_list):
+                biome_name = str(biome_list[biome_index])
 
     intensity = float(
         dict(getattr(intent, "composition_hints", {}) or {}).get("surface_feature_intensity", 0.6)
