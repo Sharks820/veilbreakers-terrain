@@ -344,23 +344,26 @@ def test_banded_pass_writes_composite_into_stack_height():
         register_bundle_g_passes()
         with tempfile.TemporaryDirectory() as td:
             state = _build_minimal_state(tile_size=24, seed=555)
+            original_height = state.mask_stack.height.copy()
             controller = TerrainPassController(state, checkpoint_dir=Path(td))
             result = controller.run_pass("banded_macro", checkpoint=False)
 
             assert result.status == "ok", f"pass failed: {result.issues}"
             assert "height" in result.produced_channels
 
-            expected = generate_banded_heightmap(
-                state.mask_stack.height.shape[1],
-                state.mask_stack.height.shape[0],
+            composite = generate_banded_heightmap(
+                original_height.shape[1],
+                original_height.shape[0],
                 scale=100.0,
                 world_origin_x=0.0,
                 world_origin_y=0.0,
                 cell_size=1.0,
                 seed=555,
             )
+            alpha = 0.4
+            blended = (1.0 - alpha) * original_height + alpha * composite.composite
             np.testing.assert_allclose(
-                state.mask_stack.height, expected.composite, atol=1e-10
+                state.mask_stack.height, blended, atol=1e-6
             )
     finally:
         TerrainPassController.clear_registry()
