@@ -195,7 +195,6 @@ def _restore_pass_state(
     """Restore a copy-on-write pass snapshot in place."""
     for channel, value in snapshot["channels"].items():
         if value is _ABSENT_CHANNEL:
-            object.__setattr__(stack, channel, None)
             continue
         object.__setattr__(stack, channel, _copy_checkpoint_value(value))
     stack.populated_by_pass.clear()
