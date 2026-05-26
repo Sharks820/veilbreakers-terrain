@@ -1153,6 +1153,11 @@ def compute_stream_power_erosion(
     np.ndarray
         Eroded DEM same shape and dtype as input.
     """
+    if abs(n - 1.0) > 1e-6:
+        raise NotImplementedError(
+            f"Stream-power slope exponent n={n} is not yet supported; "
+            "only n=1.0 is implemented (implicit linear solver)."
+        )
     h = np.asarray(dem, dtype=np.float64).copy()
     rows, cols = h.shape
 

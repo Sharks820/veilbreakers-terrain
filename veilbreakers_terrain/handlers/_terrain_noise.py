@@ -1189,8 +1189,8 @@ def _apply_geological_constraints(
     lap_norm = laplacian / lap_std  # standardised Laplacian
 
     # Ridges: lap_norm < -1 sigma (convex peak); valleys: lap_norm > +1 sigma
-    ridge_strength = np.clip(-lap_norm - 1.0, 0.0, None) * ridge_rise * h_range
-    valley_depth = np.clip(lap_norm - 1.0, 0.0, None) * river_valley_sink * h_range
+    ridge_strength = np.clip(-lap_norm - 1.0, 0.0, 4.0) * ridge_rise * h_range
+    valley_depth = np.clip(lap_norm - 1.0, 0.0, 4.0) * river_valley_sink * h_range
 
     return hmap + ridge_strength - valley_depth
 
