@@ -457,6 +457,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # entry is already populated by the macro/banded/erosion passes
             # earlier in the sequence.
             *(("wind_erosion",) if has_scene_read else ()),
+            *(("karst",) if has_scene_read else ()),
             # Phase C D26-27 (Task #39 follow-up to Phase A D8-9):
             # ``stratigraphy`` is the third Bundle I orphan called out by
             # the R1.5 verifier. Phase A D8 deferred it because its
